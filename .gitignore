@@ -1,0 +1,30 @@
+# Dependencies and build output
+node_modules/
+target/
+dist/
+coverage/
+.vite/
+
+# Local development data and tooling
+.cache/
+.tools/
+.artifacts/
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# Secrets and machine configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa
+id_ed25519
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
