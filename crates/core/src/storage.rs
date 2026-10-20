@@ -38,13 +38,13 @@ impl Library {
         let mut connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 3 {
+        if version > 4 {
             return Err(Error::Conflict("书库来自较新版本，请使用匹配的程序".into()));
         }
         connection.execute_batch(
             "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;",
         )?;
-        if (1..3).contains(&version) {
+        if (1..4).contains(&version) {
             let backup =
                 path.with_file_name(format!("library-v{version}-backup-{}.db", Uuid::new_v4()));
             let reserved = OpenOptions::new()
@@ -96,6 +96,15 @@ impl Library {
                 ALTER TABLE job_items ADD COLUMN error_kind TEXT;
                 PRAGMA user_version=3;",
             )?;
+            transaction.commit()?;
+        }
+        if version < 4 {
+            let transaction = connection.transaction()?;
+            transaction.execute_batch("CREATE TABLE exports (
+                id TEXT PRIMARY KEY,book_id TEXT NOT NULL REFERENCES books(id),job_id TEXT REFERENCES jobs(id),
+                path TEXT NOT NULL,format TEXT NOT NULL,saved INTEGER NOT NULL,total INTEGER NOT NULL,partial INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+                PRAGMA user_version=4;")?;
             transaction.commit()?;
         }
         connection.execute(
@@ -161,7 +170,9 @@ impl Library {
         cancelled: &AtomicBool,
         mut committed: impl FnMut(u32),
     ) -> Result<JobSnapshot> {
-        self.start_job(job_id)?;
+        if !self.start_job(job_id, cancelled)? {
+            return self.job(job_id);
+        }
         let result = self.run_items(job_id, cancelled, &mut committed);
         if let Err(error) = &result {
             self.connection()?.execute(
@@ -180,6 +191,9 @@ impl Library {
         committed: &mut impl FnMut(u32),
     ) -> Result<()> {
         loop {
+            if !self.is_running(job_id)? {
+                return Ok(());
+            }
             if cancelled.load(Ordering::Acquire) {
                 self.connection()?.execute(
                     "UPDATE jobs SET state='cancelled' WHERE id=?1 AND state='running'",
@@ -206,6 +220,12 @@ impl Library {
             {
                 let mut connection = self.connection()?;
                 let transaction = connection.transaction()?;
+                let state: String =
+                    transaction
+                        .query_row("SELECT state FROM jobs WHERE id=?1", [job_id], |r| r.get(0))?;
+                if state != "running" {
+                    return Ok(());
+                }
                 if cancelled.load(Ordering::Acquire) {
                     transaction
                         .execute("UPDATE jobs SET state='cancelled' WHERE id=?1", [job_id])?;
@@ -226,8 +246,13 @@ impl Library {
         }
     }
 
-    pub(crate) fn start_job(&self, job_id: &str) -> Result<()> {
+    pub(crate) fn start_job(&self, job_id: &str, cancelled: &AtomicBool) -> Result<bool> {
         let connection = self.connection()?;
+        let current: String =
+            connection.query_row("SELECT state FROM jobs WHERE id=?1", [job_id], |r| r.get(0))?;
+        if cancelled.load(Ordering::Acquire) && matches!(current.as_str(), "paused" | "cancelled") {
+            return Ok(false);
+        }
         let changed = connection.execute(
             "UPDATE jobs SET state='running',error=NULL WHERE id=?1 AND state IN ('queued','paused','cancelled','failed','partial','blocked')
              AND NOT EXISTS (SELECT 1 FROM jobs other WHERE other.book_id=jobs.book_id AND other.id!=jobs.id AND other.state='running')",
@@ -236,6 +261,45 @@ impl Library {
         if changed != 1 {
             return Err(Error::Conflict("任务不存在、正在执行或已经完成".into()));
         }
+        Ok(true)
+    }
+
+    pub fn pause_job(&self, job_id: &str) -> Result<()> {
+        self.request_stop(job_id, true, None)
+    }
+
+    pub fn cancel_job(&self, job_id: &str) -> Result<()> {
+        self.request_stop(job_id, false, None)
+    }
+
+    pub fn request_stop(
+        &self,
+        job_id: &str,
+        paused: bool,
+        token: Option<&AtomicBool>,
+    ) -> Result<()> {
+        let connection = self.connection()?;
+        let state = if paused { "paused" } else { "cancelled" };
+        let changed=connection.execute("UPDATE jobs SET state=?2,error=NULL WHERE id=?1 AND (state IN ('queued','running') OR (?2='cancelled' AND state='paused'))",[job_id,state])?;
+        if changed != 1 {
+            return Err(Error::Conflict("任务不在可停止状态".into()));
+        }
+        if let Some(token) = token {
+            token.store(true, Ordering::Release);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn is_running(&self, job_id: &str) -> Result<bool> {
+        Ok(self.connection()?.query_row(
+            "SELECT state='running' FROM jobs WHERE id=?1",
+            [job_id],
+            |r| r.get(0),
+        )?)
+    }
+
+    pub fn record_worker_failure(&self, job_id: &str, message: &str) -> Result<()> {
+        self.connection()?.execute("UPDATE jobs SET state='failed',error=?2 WHERE id=?1 AND state IN ('queued','failed','partial','blocked')",[job_id,message])?;
         Ok(())
     }
 

@@ -1,6 +1,7 @@
 mod domain;
 mod downloads;
 mod export;
+mod reading;
 pub mod sources;
 mod storage;
 

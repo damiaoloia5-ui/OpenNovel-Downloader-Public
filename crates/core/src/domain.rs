@@ -151,7 +151,69 @@ pub struct ExportReceipt {
     pub partial: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportRecord {
+    pub id: String,
+    pub book_id: String,
+    pub job_id: Option<String>,
+    pub path: String,
+    pub format: String,
+    pub saved: u32,
+    pub total: u32,
+    pub partial: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadingChapter {
+    pub id: String,
+    pub title: String,
+    pub position: u32,
+    pub saved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BookDetails {
+    pub book: BookSummary,
+    pub description: String,
+    pub acquired_at: String,
+    pub chapters: Vec<ReadingChapter>,
+    pub exports: Vec<ExportRecord>,
+}
+
 pub(crate) struct BookContent {
     pub summary: BookSummary,
     pub chapters: Vec<ImportChapter>,
+}
+
+pub fn parse_selection(input: &str, total: usize) -> Result<Vec<usize>> {
+    let mut positions = std::collections::BTreeSet::new();
+    if input.trim().is_empty() {
+        return Err(Error::Invalid("请输入章节序号，例如 1,3,5-8".into()));
+    }
+    for part in input.split([',', '，']) {
+        let bounds = part
+            .trim()
+            .split('-')
+            .map(|v| {
+                v.trim()
+                    .parse::<usize>()
+                    .map_err(|_| Error::Invalid("选章格式应为 1,3,5-8".into()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let (first, last) = match bounds.as_slice() {
+            [one] => (*one, *one),
+            [first, last] => (*first, *last),
+            _ => return Err(Error::Invalid("选章范围格式错误".into())),
+        };
+        if first == 0 || first > last || last > total || total > MAX_CHAPTERS {
+            return Err(Error::Invalid("选章范围超出目录".into()));
+        }
+        for p in first..=last {
+            if !positions.insert(p) {
+                return Err(Error::Invalid("章节选择重复".into()));
+            }
+        }
+    }
+    Ok(positions.into_iter().collect())
 }

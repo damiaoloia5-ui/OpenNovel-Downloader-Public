@@ -18,6 +18,8 @@ pub struct Catalog {
     pub remote_id: String,
     pub title: String,
     pub author: String,
+    #[serde(default)]
+    pub description: String,
     pub chapters: Vec<ChapterRef>,
 }
 

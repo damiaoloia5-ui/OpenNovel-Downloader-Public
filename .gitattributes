@@ -8,3 +8,8 @@
 *.css text eol=lf
 *.html text eol=lf
 *.yml text eol=lf
+*.mjs text eol=lf
+Cargo.lock text eol=lf
+# Upstream license bytes are verified by SHA-256, including their original whitespace.
+/LICENSE -text
+/third_party/licenses/** -text whitespace=-blank-at-eol

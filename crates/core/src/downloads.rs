@@ -9,12 +9,29 @@ use uuid::Uuid;
 impl Library {
     /// Persist the catalog and selected remote chapter identities before any text request.
     pub fn create_download(&self, catalog: &Catalog, first: usize, last: usize) -> Result<String> {
+        if first == 0 || last < first || last > catalog.chapters.len() {
+            return Err(Error::Invalid("章节范围超出目录；序号从 1 开始".into()));
+        }
+        self.create_download_selected(catalog, &(first..=last).collect::<Vec<_>>())
+    }
+
+    pub fn create_download_selected(
+        &self,
+        catalog: &Catalog,
+        positions: &[usize],
+    ) -> Result<String> {
         catalog.validate()?;
         if catalog.source != "fanqie-web" {
             return Err(Error::Invalid("尚未接入该网络来源".into()));
         }
-        if first == 0 || last < first || last > catalog.chapters.len() {
-            return Err(Error::Invalid("章节范围超出目录；序号从 1 开始".into()));
+        let selected: std::collections::BTreeSet<_> = positions.iter().copied().collect();
+        if selected.is_empty()
+            || selected.len() != positions.len()
+            || selected
+                .iter()
+                .any(|p| *p == 0 || *p > catalog.chapters.len())
+        {
+            return Err(Error::Invalid("章节选择为空、重复或超出目录".into()));
         }
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
@@ -82,8 +99,7 @@ impl Library {
             .chapters
             .iter()
             .enumerate()
-            .take(last)
-            .skip(first - 1)
+            .filter(|(position, _)| selected.contains(&(position + 1)))
         {
             let saved: bool = transaction.query_row(
                 "SELECT EXISTS(SELECT 1 FROM chapters WHERE book_id=?1 AND chapter_id=?2)",
@@ -174,6 +190,16 @@ impl Library {
         {
             let mut connection = self.connection()?;
             let transaction = connection.transaction()?;
+            let current: String =
+                transaction
+                    .query_row("SELECT state FROM jobs WHERE id=?1", [job_id], |r| r.get(0))?;
+            if cancelled.load(Ordering::Acquire)
+                && matches!(current.as_str(), "paused" | "cancelled")
+            {
+                drop(transaction);
+                drop(connection);
+                return self.job(job_id);
+            }
             if let Some(chapters) = selection {
                 let count:usize=transaction.query_row("SELECT COUNT(*) FROM job_items WHERE job_id=?1 AND state='failed' AND chapter_id IN (SELECT value FROM json_each(?2))",params![job_id,selected],|row|row.get(0))?;
                 if count != chapters.len() {
@@ -211,6 +237,9 @@ impl Library {
     ) -> Result<()> {
         let mut last_error = None::<String>;
         loop {
+            if !self.is_running(job_id)? {
+                return Ok(());
+            }
             if cancelled.load(Ordering::Acquire) {
                 return self.finish_cancel(job_id);
             }
@@ -254,6 +283,14 @@ impl Library {
                 Ok(content) => {
                     let mut connection = self.connection()?;
                     let transaction = connection.transaction()?;
+                    let state: String = transaction.query_row(
+                        "SELECT state FROM jobs WHERE id=?1",
+                        [job_id],
+                        |r| r.get(0),
+                    )?;
+                    if state != "running" {
+                        return Ok(());
+                    }
                     if cancelled.load(Ordering::Acquire) {
                         drop(transaction);
                         drop(connection);

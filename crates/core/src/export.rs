@@ -27,7 +27,47 @@ impl Library {
         format: ExportFormat,
     ) -> Result<ExportReceipt> {
         let content = self.content(book_id)?;
-        let directory = directory.as_ref();
+        self.persist_export(book_id, None, content, directory.as_ref(), format)
+    }
+
+    pub fn export_job(
+        &self,
+        job_id: &str,
+        directory: impl AsRef<Path>,
+        format: ExportFormat,
+    ) -> Result<ExportReceipt> {
+        let job = self.job(job_id)?;
+        let mut content = self.content(&job.book_id)?;
+        let selected = self
+            .connection()?
+            .prepare("SELECT chapter_id FROM job_items WHERE job_id=?1")?
+            .query_map([job_id], |r| r.get::<_, String>(0))?
+            .collect::<std::result::Result<std::collections::HashSet<_>, _>>()?;
+        content.chapters.retain(|c| selected.contains(&c.id));
+        if content.chapters.is_empty() {
+            return Err(Error::Conflict("所选任务尚无已保存正文".into()));
+        }
+        content.summary.id = job_id.into();
+        content.summary.title.push_str("（任务选章）");
+        content.summary.total_chapters = selected.len() as u32;
+        content.summary.saved_chapters = content.chapters.len() as u32;
+        self.persist_export(
+            &job.book_id,
+            Some(job_id),
+            content,
+            directory.as_ref(),
+            format,
+        )
+    }
+
+    fn persist_export(
+        &self,
+        book_id: &str,
+        job_id: Option<&str>,
+        content: BookContent,
+        directory: &Path,
+        format: ExportFormat,
+    ) -> Result<ExportReceipt> {
         std::fs::create_dir_all(directory)?;
         let partial = content.summary.saved_chapters != content.summary.total_chapters;
         let extension = match format {
@@ -44,7 +84,11 @@ impl Library {
         } else {
             String::new()
         };
-        let path = directory.join(format!("{}{suffix}.{extension}", content.summary.id));
+        let prefix = if job_id.is_some() { "job-" } else { "" };
+        let path = std::path::absolute(directory.join(format!(
+            "{prefix}{}{suffix}.{extension}",
+            content.summary.id
+        )))?;
         let mut temporary = NamedTempFile::new_in(directory)?;
         match format {
             ExportFormat::Txt => write_txt(&mut temporary, &content)?,
@@ -55,6 +99,7 @@ impl Library {
         temporary
             .persist_noclobber(&path)
             .map_err(|error| Error::Io(error.error))?;
+        self.connection()?.execute("INSERT INTO exports (id,book_id,job_id,path,format,saved,total,partial) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",rusqlite::params![uuid::Uuid::new_v4().to_string(),book_id,job_id,path.to_string_lossy(),extension,content.summary.saved_chapters,content.summary.total_chapters,partial])?;
         Ok(ExportReceipt {
             path: path.to_string_lossy().into_owned(),
             saved_chapters: content.summary.saved_chapters,

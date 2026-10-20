@@ -22,6 +22,8 @@ enum Command {
         from: usize,
         #[arg(long)]
         to: Option<usize>,
+        #[arg(long,conflicts_with_all=["from","to"])]
+        chapters: Option<String>,
     },
     /// 导入用户提供的 JSON 书籍
     Import { file: PathBuf },
@@ -39,6 +41,20 @@ enum Command {
     },
     /// 重读官网目录，补齐缺失正文并获取末尾新增章节
     Update { book_id: String },
+    /// 暂停尚未执行的持久任务
+    Pause { job_id: String },
+    /// 显示本地目录及导出记录
+    Book { book_id: String },
+    /// 离线读取已保存章节
+    Read { book_id: String, chapter_id: String },
+    /// 仅导出指定任务选中的章节
+    ExportJob {
+        job_id: String,
+        #[arg(long, default_value = "epub")]
+        format: String,
+        #[arg(long, default_value = ".artifacts/exports")]
+        output: PathBuf,
+    },
     /// 从本地保存内容导出；现有文件不会被覆盖
     Export {
         book_id: String,
@@ -64,11 +80,22 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let library = Library::open(args.database)?;
     let result = match args.command {
         Command::Inspect { url } => serde_json::to_value(Fanqie::new()?.inspect(&url)?)?,
-        Command::Download { url, from, to } => {
+        Command::Download {
+            url,
+            from,
+            to,
+            chapters,
+        } => {
             let source = Fanqie::new()?;
             let catalog = source.inspect(&url)?;
-            let job =
-                library.create_download(&catalog, from, to.unwrap_or(catalog.chapters.len()))?;
+            let job = if let Some(chapters) = chapters {
+                library.create_download_selected(
+                    &catalog,
+                    &opennovel_core::parse_selection(&chapters, catalog.chapters.len())?,
+                )?
+            } else {
+                library.create_download(&catalog, from, to.unwrap_or(catalog.chapters.len()))?
+            };
             serde_json::to_value(library.run_job(&job, &source, &AtomicBool::new(false))?)?
         }
         Command::Import { file } => {
@@ -80,6 +107,24 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
             serde_json::to_value(library.run_import(&job, &AtomicBool::new(false))?)?
         }
         Command::List => serde_json::to_value(library.snapshot()?)?,
+        Command::Pause { job_id } => {
+            library.pause_job(&job_id)?;
+            serde_json::to_value(library.job(&job_id)?)?
+        }
+        Command::Book { book_id } => serde_json::to_value(library.book_details(&book_id)?)?,
+        Command::Read {
+            book_id,
+            chapter_id,
+        } => serde_json::to_value(library.read_chapter(&book_id, &chapter_id)?)?,
+        Command::ExportJob {
+            job_id,
+            format,
+            output,
+        } => serde_json::to_value(library.export_job(
+            &job_id,
+            output,
+            ExportFormat::parse(&format)?,
+        )?)?,
         Command::Details { job_id } => serde_json::to_value(library.job_details(&job_id)?)?,
         Command::Retry { job_id, chapters } => serde_json::to_value(library.retry_chapters(
             &job_id,

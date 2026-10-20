@@ -1,22 +1,26 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use opennovel_core::sources::{Catalog, Fanqie};
-use opennovel_core::{ExportFormat, ExportReceipt, JobDetails, Library, LibrarySnapshot};
+use opennovel_core::{
+    BookDetails, ExportFormat, ExportReceipt, ImportChapter, JobDetails, Library, LibrarySnapshot,
+};
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{
-        Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex, OnceLock, atomic::AtomicBool},
 };
 use tauri::{Manager, State};
 
 struct AppState {
     library: Arc<Library>,
     source: Arc<OnceLock<Fanqie>>,
-    cancellations: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    cancellations: Arc<Mutex<HashMap<String, ActiveTask>>>,
     exports: PathBuf,
+}
+
+struct ActiveTask {
+    book_id: String,
+    token: Arc<AtomicBool>,
 }
 
 fn source(handle: &OnceLock<Fanqie>) -> opennovel_core::Result<&Fanqie> {
@@ -39,13 +43,21 @@ async fn download_book(
     input: String,
     first: usize,
     last: usize,
+    selection: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let handle = Arc::clone(&state.source);
     let library = Arc::clone(&state.library);
     let job = blocking(move || {
         let catalog = source(&handle)?.inspect(&input)?;
-        library.create_download(&catalog, first, last)
+        if let Some(selection) = selection.filter(|s| !s.trim().is_empty()) {
+            library.create_download_selected(
+                &catalog,
+                &opennovel_core::parse_selection(&selection, catalog.chapters.len())?,
+            )
+        } else {
+            library.create_download(&catalog, first, last)
+        }
     })
     .await?;
     launch(&job, &state, None).await?;
@@ -65,6 +77,58 @@ async fn blocking<T: Send + 'static>(
 async fn library_snapshot(state: State<'_, AppState>) -> Result<LibrarySnapshot, String> {
     let library = Arc::clone(&state.library);
     blocking(move || library.snapshot()).await
+}
+
+#[tauri::command]
+async fn book_details(book_id: String, state: State<'_, AppState>) -> Result<BookDetails, String> {
+    let library = Arc::clone(&state.library);
+    blocking(move || library.book_details(&book_id)).await
+}
+
+#[tauri::command]
+async fn read_chapter(
+    book_id: String,
+    chapter_id: String,
+    state: State<'_, AppState>,
+) -> Result<ImportChapter, String> {
+    let library = Arc::clone(&state.library);
+    blocking(move || library.read_chapter(&book_id, &chapter_id)).await
+}
+
+#[tauri::command]
+async fn export_job(
+    job_id: String,
+    format: String,
+    state: State<'_, AppState>,
+) -> Result<ExportReceipt, String> {
+    let format = ExportFormat::parse(&format).map_err(|e| e.to_string())?;
+    let library = Arc::clone(&state.library);
+    let directory = state.exports.clone();
+    blocking(move || library.export_job(&job_id, directory, format)).await
+}
+
+#[tauri::command]
+async fn reveal_export(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let library = Arc::clone(&state.library);
+    blocking(move || {
+        let path = PathBuf::from(library.export_location(&id)?);
+        if !path.exists() {
+            return Err(opennovel_core::Error::Invalid(
+                "导出文件已移动或删除".into(),
+            ));
+        }
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("explorer.exe")
+                .arg(
+                    path.parent()
+                        .ok_or_else(|| opennovel_core::Error::Invalid("导出位置无效".into()))?,
+                )
+                .spawn()?;
+        }
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -148,18 +212,28 @@ async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> 
         return Err("任务不能继续".into());
     }
     let mut registrations = state.cancellations.lock().map_err(|_| "任务管理器不可用")?;
-    if registrations.contains_key(job) {
-        return Err("任务正在执行".into());
+    if registrations.contains_key(job)
+        || registrations
+            .values()
+            .any(|run| run.book_id == snapshot.book_id)
+    {
+        return Err("该作品的任务仍在执行或停止中，请稍候".into());
     }
     let token = Arc::new(AtomicBool::new(false));
-    registrations.insert(job.to_owned(), Arc::clone(&token));
+    registrations.insert(
+        job.to_owned(),
+        ActiveTask {
+            book_id: snapshot.book_id.clone(),
+            token: Arc::clone(&token),
+        },
+    );
     let library = Arc::clone(&state.library);
     let cancellations = Arc::clone(&state.cancellations);
     let job_id = job.to_owned();
     let handle = Arc::clone(&state.source);
     tauri::async_runtime::spawn_blocking(move || {
         // Errors are recorded by the core in the persisted task; never log the input text.
-        let _result = if snapshot.source == "local-json" {
+        let result = if snapshot.source == "local-json" {
             library.run_import(&job_id, &token)
         } else {
             source(&handle).and_then(|client| {
@@ -170,6 +244,9 @@ async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> 
                 }
             })
         };
+        if let Err(error) = result {
+            let _ = library.record_worker_failure(&job_id, &error.to_string());
+        }
         if let Ok(mut entries) = cancellations.lock() {
             entries.remove(&job_id);
         }
@@ -180,10 +257,28 @@ async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> 
 #[tauri::command]
 fn cancel_job(job_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let registrations = state.cancellations.lock().map_err(|_| "任务管理器不可用")?;
-    let token = registrations
-        .get(&job_id)
-        .ok_or("任务没有在运行，请刷新状态")?;
-    token.store(true, Ordering::Release);
+    state
+        .library
+        .request_stop(
+            &job_id,
+            false,
+            registrations.get(&job_id).map(|t| t.token.as_ref()),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn pause_job(job_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let registrations = state.cancellations.lock().map_err(|_| "任务管理器不可用")?;
+    state
+        .library
+        .request_stop(
+            &job_id,
+            true,
+            registrations.get(&job_id).map(|t| t.token.as_ref()),
+        )
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -213,6 +308,11 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             library_snapshot,
+            book_details,
+            read_chapter,
+            export_job,
+            reveal_export,
+            pause_job,
             job_details,
             retry_chapters,
             update_book,

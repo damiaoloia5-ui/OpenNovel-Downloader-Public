@@ -14,6 +14,7 @@ fn catalog() -> Catalog {
         remote_id: "10000000001".into(),
         title: "原创网络测试".into(),
         author: "测试".into(),
+        description: String::new(),
         chapters: (0..5)
             .map(|i| ChapterRef {
                 id: format!("1000000001{i}"),
@@ -170,7 +171,7 @@ fn migration_backs_up_v1_book_content_before_upgrading() {
     drop(library);
     let db = rusqlite::Connection::open(&path).unwrap();
     db.execute_batch(
-        "DROP TABLE source_catalogs; DROP INDEX job_items_pending; ALTER TABLE job_items DROP COLUMN error; ALTER TABLE job_items DROP COLUMN error_kind; PRAGMA user_version=1;",
+        "DROP TABLE exports; DROP TABLE source_catalogs; DROP INDEX job_items_pending; ALTER TABLE job_items DROP COLUMN error; ALTER TABLE job_items DROP COLUMN error_kind; PRAGMA user_version=1;",
     )
     .unwrap();
     drop(db);
@@ -494,7 +495,7 @@ fn migration_from_v2_preserves_jobs_and_creates_a_readable_original_backup() {
         .unwrap();
     drop(library);
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.execute_batch("ALTER TABLE job_items DROP COLUMN error; ALTER TABLE job_items DROP COLUMN error_kind; PRAGMA user_version=2;").unwrap();
+    db.execute_batch("DROP TABLE exports; ALTER TABLE job_items DROP COLUMN error; ALTER TABLE job_items DROP COLUMN error_kind; PRAGMA user_version=2;").unwrap();
     drop(db);
     let library = Library::open(&path).unwrap();
     let detail = library.job_details(&id).unwrap();

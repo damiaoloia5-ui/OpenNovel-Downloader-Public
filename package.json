@@ -1,6 +1,7 @@
 {
   "name": "opennovel-downloader",
-  "version": "0.0.1",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "workspaces": ["apps/desktop"],
@@ -12,7 +13,9 @@
     "test": "cargo test --workspace",
     "build": "npm run build --workspace @opennovel/desktop",
     "desktop:dev": "npm run tauri --workspace @opennovel/desktop -- dev",
-    "desktop:build": "npm run tauri --workspace @opennovel/desktop -- build --no-bundle"
+    "desktop:build": "npm run tauri --workspace @opennovel/desktop -- build --no-bundle",
+    "release:notices": "node scripts/release-notices.mjs",
+    "desktop:package": "npm run release:notices && npm run tauri --workspace @opennovel/desktop -- build --config src-tauri/tauri.installer.conf.json --bundles nsis"
   },
   "devDependencies": {
     "eslint": "^10.12.0",

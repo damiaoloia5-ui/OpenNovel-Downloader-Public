@@ -1,13 +1,12 @@
 use super::{Catalog, ChapterRef, SourceAdapter};
 use crate::{Error, ImportChapter, ImportDocument, Result};
-use reqwest::{Url, blocking::Client};
+use reqwest::{Client, Url};
 use scraper::{Html, Selector};
 use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    io::Read,
     sync::{
         Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -32,7 +31,11 @@ pub struct Fanqie {
 impl Fanqie {
     pub fn new() -> Result<Self> {
         let client = Client::builder()
-            .user_agent("OpenNovelDownloader/0.0.1 (public web reader)")
+            .user_agent(concat!(
+                "OpenNovelDownloader/",
+                env!("CARGO_PKG_VERSION"),
+                " (public web reader)"
+            ))
             .connect_timeout(Duration::from_secs(8))
             .timeout(Duration::from_secs(20))
             .redirect(reqwest::redirect::Policy::custom(|attempt| {
@@ -110,10 +113,28 @@ impl Fanqie {
             }
             *next = Instant::now() + Duration::from_secs(1);
         }
-        let response = self
+        self.request(parsed, cancelled, maximum)
+    }
+
+    fn request(&self, url: Url, cancelled: &AtomicBool, maximum: usize) -> Result<Vec<u8>> {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(Error::Cancelled);
+        }
+        static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+        let runtime = RUNTIME.get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("HTTP runtime")
+        });
+        runtime.block_on(async {
+        let work=async {
+        let mut response = self
             .client
-            .get(parsed)
+            .get(url)
             .send()
+            .await
             .map_err(|_| Error::Network("连接、TLS 或读取超时，请稍后重试".into()))?;
         let status = response.status();
         if status.as_u16() == 429 {
@@ -121,7 +142,7 @@ impl Fanqie {
                 .headers()
                 .get("retry-after")
                 .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok())
+                .and_then(|s| s.parse::<u64>().ok().or_else(||httpdate::parse_http_date(s).ok().map(|date|date.duration_since(std::time::SystemTime::now()).unwrap_or_default().as_secs())))
                 .unwrap_or(60);
             if let Ok(mut next) = self.next_request.lock() {
                 *next = Instant::now() + Duration::from_secs(seconds.min(86400));
@@ -140,16 +161,21 @@ impl Fanqie {
             return Err(Error::Network(format!("官网返回 HTTP {}", status.as_u16())));
         }
         let mut bytes = Vec::new();
-        response
-            .take((maximum + 1) as u64)
-            .read_to_end(&mut bytes)?;
-        if bytes.len() > maximum {
-            return Err(Error::SourceChanged("响应超过大小限制".into()));
+        while let Some(chunk)=response.chunk().await.map_err(|_|Error::Network("正文传输中断或超时".into()))? {
+            if bytes.len()+chunk.len()>maximum {return Err(Error::SourceChanged("响应超过大小限制".into()));}
+            bytes.extend_from_slice(&chunk);
         }
         if cancelled.load(Ordering::Acquire) {
             return Err(Error::Cancelled);
         }
         Ok(bytes)
+        };
+        tokio::pin!(work);
+        loop {tokio::select! {
+            result=&mut work=>return result,
+            _=tokio::time::sleep(Duration::from_millis(25))=>if cancelled.load(Ordering::Acquire) {return Err(Error::Cancelled);}
+        }}
+        })
     }
 
     pub fn parse_catalog(html: &str, expected_id: &str) -> Result<Catalog> {
@@ -194,6 +220,7 @@ impl Fanqie {
             remote_id: expected_id.into(),
             title: text(page, "bookName")?,
             author: page["author"].as_str().unwrap_or_default().to_owned(),
+            description: page["abstract"].as_str().unwrap_or_default().to_owned(),
             chapters,
         };
         catalog.validate()?;
@@ -416,6 +443,121 @@ mod tests {
 
     const BOOK: &str = "10000000001";
     const CHAPTER: &str = "10000000002";
+
+    fn serve(response: Vec<u8>, delay: Duration) -> (Url, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut input = [0u8; 4096];
+            let _ = stream.read(&mut input);
+            if !delay.is_zero() {
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 99999\r\n\r\n");
+                std::thread::sleep(delay);
+            }
+            let _ = stream.write_all(&response);
+        });
+        (Url::parse(&format!("http://{address}/")).unwrap(), thread)
+    }
+
+    #[test]
+    fn controlled_http_cancels_inflight_body_without_waiting_for_timeout() {
+        let source = Fanqie::new().unwrap();
+        let (url, server) = serve(vec![b'a'; 99999], Duration::from_millis(1500));
+        let stop = AtomicBool::new(false);
+        let began = Instant::now();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(150));
+                stop.store(true, Ordering::Release);
+            });
+            assert!(matches!(
+                source.request(url, &stop, 200000),
+                Err(Error::Cancelled)
+            ));
+        });
+        assert!(began.elapsed() < Duration::from_millis(900));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn controlled_http_enforces_body_budget_limits_and_error_pages() {
+        let source = Fanqie::new().unwrap();
+        let (url, server) = serve(
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: 512\r\n\r\n{}",
+                "x".repeat(512)
+            )
+            .into_bytes(),
+            Duration::ZERO,
+        );
+        assert!(matches!(
+            source.request(url, &AtomicBool::new(false), 128),
+            Err(Error::SourceChanged(_))
+        ));
+        server.join().unwrap();
+        let (url, server) = serve(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\ntruncated".to_vec(),
+            Duration::ZERO,
+        );
+        assert!(source.request(url, &AtomicBool::new(false), 1024).is_err());
+        server.join().unwrap();
+        let html = "<html><title>登录或验证</title><p>请重试</p></html>";
+        let (url, server) = serve(
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{html}",
+                html.len()
+            )
+            .into_bytes(),
+            Duration::ZERO,
+        );
+        let bytes = source.request(url, &AtomicBool::new(false), 1024).unwrap();
+        assert!(Fanqie::parse_catalog(std::str::from_utf8(&bytes).unwrap(), BOOK).is_err());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn controlled_429_preserves_backoff_and_redirect_does_not_leave_whitelist() {
+        let source = Fanqie::new().unwrap();
+        let (url, server) = serve(
+            b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 30\r\nContent-Length: 0\r\n\r\n"
+                .to_vec(),
+            Duration::ZERO,
+        );
+        assert!(matches!(
+            source.request(url, &AtomicBool::new(false), 1024),
+            Err(Error::Network(_))
+        ));
+        server.join().unwrap();
+        assert!(
+            source
+                .next_request
+                .lock()
+                .unwrap()
+                .saturating_duration_since(Instant::now())
+                > Duration::from_secs(20)
+        );
+        let began = Instant::now();
+        assert!(matches!(
+            source.get(
+                "https://fanqienovel.com/page/10000000001",
+                &AtomicBool::new(true),
+                1024
+            ),
+            Err(Error::Cancelled)
+        ));
+        assert!(began.elapsed() < Duration::from_millis(200));
+        let (url,server)=serve(b"HTTP/1.1 302 Found\r\nLocation: https://not-allowed.example/secret\r\nContent-Length: 0\r\n\r\n".to_vec(),Duration::ZERO);
+        assert!(matches!(
+            source.request(url, &AtomicBool::new(false), 1024),
+            Err(Error::Network(_))
+        ));
+        server.join().unwrap();
+    }
 
     fn page(value: Value) -> String {
         format!("<link href='{FONT_URL}'><script>window.__INITIAL_STATE__ = {value};</script>")

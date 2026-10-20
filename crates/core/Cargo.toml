@@ -1,6 +1,7 @@
 [package]
 name = "opennovel-core"
 version.workspace = true
+license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
@@ -15,6 +16,8 @@ tempfile = "3"
 zip = { version = "4", default-features = false, features = ["deflate"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "macros"] }
+httpdate = "1"
 scraper = "0.24"
 sha2 = "0.10"
 

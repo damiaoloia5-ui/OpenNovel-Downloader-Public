@@ -26,14 +26,22 @@ export interface Job {
 export interface Snapshot { books: Book[]; jobs: Job[] }
 export interface JobItem {chapter_id:string;position:number;title:string;state:string;error:string|null;error_kind:string|null;retryable:boolean}
 export interface JobDetails {job:Job;items:JobItem[]}
-export interface Catalog { source: string; remote_id: string; title: string; author: string; chapters: { id: string; title: string; restricted: boolean }[] }
+export interface Catalog { source: string; remote_id: string; title: string; author: string; description:string; chapters: { id: string; title: string; restricted: boolean }[] }
+export interface ChapterContent {id:string;title:string;paragraphs:string[]}
+export interface ExportRecord {id:string;book_id:string;job_id:string|null;path:string;format:string;saved:number;total:number;partial:boolean;created_at:string}
+export interface BookDetails {book:Book;description:string;acquired_at:string;chapters:{id:string;title:string;position:number;saved:boolean}[];exports:ExportRecord[]}
 export interface Receipt { path: string; saved_chapters: number; total_chapters: number; partial: boolean }
 
 export const desktopAvailable = isTauri();
 
 export function snapshot(): Promise<Snapshot> { return invoke('library_snapshot'); }
 export function inspectBook(input: string): Promise<Catalog> { return invoke('inspect_book', { input }); }
-export function downloadBook(input: string, first: number, last: number): Promise<string> { return invoke('download_book', { input, first, last }); }
+export function downloadBook(input: string, first: number, last: number,selection?:string): Promise<string> { return invoke('download_book', { input, first, last,selection:selection || null }); }
+export function bookDetails(bookId:string):Promise<BookDetails> {return invoke('book_details',{bookId});}
+export function readChapter(bookId:string,chapterId:string):Promise<ChapterContent> {return invoke('read_chapter',{bookId,chapterId});}
+export function exportJob(jobId:string,format:'txt'|'epub'):Promise<Receipt> {return invoke('export_job',{jobId,format});}
+export function revealExport(id:string):Promise<void> {return invoke('reveal_export',{id});}
+export function pauseJob(jobId:string):Promise<void> {return invoke('pause_job',{jobId});}
 export function importBook(json: string): Promise<string> { return invoke('import_book', { json }); }
 export function resumeJob(jobId: string): Promise<void> { return invoke('resume_job', { jobId }); }
 export function jobDetails(jobId:string):Promise<JobDetails> {return invoke('job_details',{jobId});}
