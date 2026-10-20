@@ -1,6 +1,6 @@
 # OpenNovel Downloader
 
-独立实现的多平台小说本地下载与管理项目。当前为 **v0.1.0 本地候选版**：番茄官网开放正文、本地书库、离线预览及 Windows 安装包。第一版先完成免费平台，再逐步研究起点、晋江等付费平台。
+独立实现的多平台小说本地下载与管理项目。当前为 **v0.2.0 多来源本地候选版**：番茄、七猫官网开放正文，书旗详情与目录，本地书库、离线预览及 Windows 安装包。先完成免费网页内容，再逐步研究起点、晋江等平台。
 
 ## 当前可用范围
 
@@ -10,17 +10,20 @@
 - 从本地内容生成 UTF-8 TXT 或 EPUB 3；部分内容明确标注，已有导出文件不覆盖。
 - 同一书库只有一个写入进程；正文保留原有章节顺序和字符串 ID。
 - 番茄官网详情页链接/ID、目录、范围下载、字体还原、受限计数及缺失章节恢复；只保存网页实际开放的正文。
+- 七猫官网详情、完整目录、明确免订阅的网页正文；检查章节身份、标题与声明字数，排除推荐作品正文。
+- 书旗官网详情与完整目录；正文实测限流，当前禁用下载，不能把目录接入理解为正文可用。
+- 核心统一提供来源能力；链接自动识别，任务恢复按已保存的来源选择适配器，跨平台同名 ID 相互隔离。
 - 逐章状态和最近一次错误原因、失败章节定向重试、检查更新并补齐；支持目录末尾增章，删章/插章/重排时停止更新。
 - 连续范围或 `1,3,5-8` 离散选章；任务导出仅包含所选集合，书库导出包含该作品的全部已保存章节。
 - 本地详情、目录检索与分页、正文预览、导出记录及打开文件夹。
 
-2026-10-20 已确认首版范围为“官网实际开放内容，缺章明确标注；App 正文后续扩展”。长篇样本 47 章中保存网页开放的 10 章，其他 37 章明确记录为受限；另一短篇样本当前目录 5/5 章完成。不能据此声称全站下载可用。七猫、书旗、起点、晋江尚未接入；账户及 VIP 能力未实现。
+首版范围经用户确认是“官网实际开放内容，缺章明确标注；App 正文后续扩展”。番茄前轮短篇 5/5、长篇保存 10/47；2026-10-21 七猫样本目录 4100 章，仅 14 章明确免订阅，本轮实际保存所选第 1/3/5 章并拒绝第 15 章。书旗样本完整目录 11 章，正文返回 429。上述均不是全站可用证明；起点、晋江、账户与 VIP 正文未实现。
 
-核心功能、真实原生运行及本机安装/卸载已验证；**独立干净 Windows 环境的 AC-20 仍未通过完整验收**，因此此处标为候选版，不标记正式发布门禁全部通过。完整证据见 [v0.1 验收记录](docs/verification/2026-10-20-v01.md)。
+核心功能、真实原生运行及本机安装/卸载已验证；**独立干净 Windows 环境的 AC-20 仍未通过完整验收**，因此此处标为候选版。最新证据见 [v0.2 多来源验证](docs/verification/2026-10-21-multi-source.md)，历史见 [v0.1 验收记录](docs/verification/2026-10-20-v01.md)。
 
 ## 安装候选版
 
-本轮安装包位于 `target/release/bundle/nsis/OpenNovel Downloader_0.1.0_x64-setup.exe`，另在 `.artifacts/release` 保存本地交付副本及 SHA-256 清单。安装包与正文不提交 Git。
+本轮安装包位于 `target/release/bundle/nsis/OpenNovel Downloader_0.2.0_x64-setup.exe`，交付副本为 `.artifacts/v02-release/OpenNovel-Downloader-0.2.0-windows-x64-setup.exe`，同目录包含 SHA-256、依赖通知和 manifest。原 `.artifacts/release` 的 v0.1 安装包保留。安装包与正文不提交 Git。
 
 双击安装器，按向导安装到当前用户。运行应用不需要 Node、Rust 或 Java；需要 WebView2。安装器配置了缺失时下载 WebView2 引导程序，因此首次补装运行时需要网络。包未进行代码签名；只在本机 Windows 11 x64 实测，其他系统尚未验收。
 
@@ -36,7 +39,7 @@
 
 ## 运行桌面应用
 
-在仓库根目录执行 `npm run desktop:dev`。在“添加小说”粘贴番茄作品详情页链接或 ID，读取目录、选择序号范围并开始下载。本地验证可点击“导入本地书籍”，选择 `examples/local-book.json`。
+在仓库根目录执行 `npm run desktop:dev`。在“添加小说”粘贴番茄、七猫或书旗官网作品详情链接，读取目录。番茄与七猫可选章下载；书旗当前仅浏览目录。纯数字 ID 保持番茄兼容；其他来源使用 `qimao:作品ID` 或 `shuqi:作品ID`。本地验证可导入 `examples/local-book.json`。
 
 书库位于系统应用数据目录的 `org.opennovel.downloader/library.db`，导出文件位于同目录的 `exports`。旧 schema 1/2/3 书库在升级前自动生成 SQLite 备份；当前 schema 4 保存逐章最近一次错误和导出记录。程序返回完整路径。打开文件夹仅接受数据库中的导出记录 ID，不开放任意路径或 shell 命令。
 
@@ -47,6 +50,10 @@
 以下命令在仓库根目录执行：
 
 ```powershell
+cargo run -p opennovel-cli -- sources
+cargo run -p opennovel-cli -- inspect qimao:作品ID
+cargo run -p opennovel-cli -- download qimao:作品ID --chapters "1,3,5"
+cargo run -p opennovel-cli -- inspect shuqi:作品ID
 cargo run -p opennovel-cli -- inspect https://fanqienovel.com/page/作品ID
 cargo run -p opennovel-cli -- download https://fanqienovel.com/page/作品ID --from 1 --to 3
 cargo run -p opennovel-cli -- download https://fanqienovel.com/page/作品ID --chapters "1,3,5-8"
@@ -107,9 +114,9 @@ npm run desktop:package
 
 2026-10-20 的验证范围和原生运行记录见 [工程基础验证记录](docs/verification/2026-10-20-foundation.md)。
 
-平台范围见 [来源状态](docs/sources.md)，实际路径、字体映射复现和限制见 [番茄研究](docs/research/fanqie-web.md)。下一步先完成干净 Windows 环境验收，再接入第二免费来源；付费平台按目录、试读、账户和已购内容分层研究。
+平台范围见 [来源状态](docs/sources.md)，实际获取路径与限制见 [番茄研究](docs/research/fanqie-web.md)、[七猫与书旗研究](docs/research/qimao-shuqi-web.md)。本轮实施路线见 [多来源方案](docs/MULTI_SOURCE_PLAN.md)。下一步复验书旗正文、扩大七猫样本并补干净 Windows 验收；起点、晋江按目录、免费试读、账户和已购内容分层研究。
 
-历史章节明细与更新证据见 [前轮验证记录](docs/verification/2026-10-20-chapter-details.md)，最新结论见 [v0.1 验收记录](docs/verification/2026-10-20-v01.md)。
+历史章节明细与更新证据见 [前轮验证记录](docs/verification/2026-10-20-chapter-details.md) 和 [v0.1 验收记录](docs/verification/2026-10-20-v01.md)。
 
 ## 开源与贡献
 

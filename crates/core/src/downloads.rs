@@ -21,8 +21,10 @@ impl Library {
         positions: &[usize],
     ) -> Result<String> {
         catalog.validate()?;
-        if catalog.source != "fanqie-web" {
-            return Err(Error::Invalid("尚未接入该网络来源".into()));
+        if !crate::sources::download_supported(&catalog.source) {
+            return Err(Error::Invalid(
+                "该来源尚未通过正文下载验收，不能创建下载任务".into(),
+            ));
         }
         let selected: std::collections::BTreeSet<_> = positions.iter().copied().collect();
         if selected.is_empty()

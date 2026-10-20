@@ -110,13 +110,22 @@ impl BookSummary {
     pub fn source_label(&self) -> &str {
         match self.source.as_str() {
             "fanqie-web" => "番茄公开网页",
+            "qimao-web" => "七猫公开网页",
+            "shuqi-web" => "书旗官网目录",
             "local-json" => "本地 JSON 导入",
             _ => &self.source,
         }
     }
     pub fn source_url(&self) -> Option<String> {
-        (self.source == "fanqie-web")
-            .then(|| format!("https://fanqienovel.com/page/{}", self.remote_id))
+        match self.source.as_str() {
+            "fanqie-web" => Some(format!("https://fanqienovel.com/page/{}", self.remote_id)),
+            "qimao-web" => Some(format!("https://www.qimao.com/shuku/{}/", self.remote_id)),
+            "shuqi-web" => Some(format!(
+                "https://www.shuqi.com/book/{}.html",
+                self.remote_id
+            )),
+            _ => None,
+        }
     }
 }
 

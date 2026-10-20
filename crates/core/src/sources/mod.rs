@@ -1,5 +1,13 @@
 mod fanqie;
+mod page;
+mod qimao;
+mod registry;
+mod shuqi;
+mod web;
 pub use fanqie::Fanqie;
+pub use qimao::Qimao;
+pub use registry::{SourceHub, SourceInfo, download_supported, identify, source_infos};
+pub use shuqi::Shuqi;
 
 use crate::{Error, ImportChapter, Result};
 use serde::{Deserialize, Serialize};

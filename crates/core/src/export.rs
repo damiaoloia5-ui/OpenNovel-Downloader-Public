@@ -79,7 +79,7 @@ impl Library {
                 "-partial-{}-of-{}",
                 content.summary.saved_chapters, content.summary.total_chapters
             )
-        } else if content.summary.source == "fanqie-web" {
+        } else if crate::sources::download_supported(&content.summary.source) {
             format!("-complete-{}", content.summary.total_chapters)
         } else {
             String::new()

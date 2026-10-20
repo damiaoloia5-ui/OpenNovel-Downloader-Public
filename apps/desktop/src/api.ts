@@ -27,6 +27,8 @@ export interface Snapshot { books: Book[]; jobs: Job[] }
 export interface JobItem {chapter_id:string;position:number;title:string;state:string;error:string|null;error_kind:string|null;retryable:boolean}
 export interface JobDetails {job:Job;items:JobItem[]}
 export interface Catalog { source: string; remote_id: string; title: string; author: string; description:string; chapters: { id: string; title: string; restricted: boolean }[] }
+export interface SourceInfo {id:string;name:string;can_download:boolean;note:string;example:string}
+export function sourceCapabilities():Promise<SourceInfo[]> {return invoke('source_capabilities');}
 export interface ChapterContent {id:string;title:string;paragraphs:string[]}
 export interface ExportRecord {id:string;book_id:string;job_id:string|null;path:string;format:string;saved:number;total:number;partial:boolean;created_at:string}
 export interface BookDetails {book:Book;description:string;acquired_at:string;chapters:{id:string;title:string;position:number;saved:boolean}[];exports:ExportRecord[]}

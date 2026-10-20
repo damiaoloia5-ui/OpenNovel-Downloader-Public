@@ -1,19 +1,19 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use opennovel_core::sources::{Catalog, Fanqie};
+use opennovel_core::sources::{Catalog, SourceHub, SourceInfo, identify, source_infos};
 use opennovel_core::{
     BookDetails, ExportFormat, ExportReceipt, ImportChapter, JobDetails, Library, LibrarySnapshot,
 };
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Arc, Mutex, OnceLock, atomic::AtomicBool},
+    sync::{Arc, Mutex, atomic::AtomicBool},
 };
 use tauri::{Manager, State};
 
 struct AppState {
     library: Arc<Library>,
-    source: Arc<OnceLock<Fanqie>>,
+    source: Arc<SourceHub>,
     cancellations: Arc<Mutex<HashMap<String, ActiveTask>>>,
     exports: PathBuf,
 }
@@ -23,19 +23,15 @@ struct ActiveTask {
     token: Arc<AtomicBool>,
 }
 
-fn source(handle: &OnceLock<Fanqie>) -> opennovel_core::Result<&Fanqie> {
-    if let Some(client) = handle.get() {
-        return Ok(client);
-    }
-    let client = Fanqie::new()?;
-    let _ = handle.set(client);
-    Ok(handle.get().expect("initialized source"))
+#[tauri::command]
+fn source_capabilities() -> &'static [SourceInfo] {
+    source_infos()
 }
 
 #[tauri::command]
 async fn inspect_book(input: String, state: State<'_, AppState>) -> Result<Catalog, String> {
     let handle = Arc::clone(&state.source);
-    blocking(move || source(&handle)?.inspect(&input)).await
+    blocking(move || handle.inspect(&input)).await
 }
 
 #[tauri::command]
@@ -49,7 +45,8 @@ async fn download_book(
     let handle = Arc::clone(&state.source);
     let library = Arc::clone(&state.library);
     let job = blocking(move || {
-        let catalog = source(&handle)?.inspect(&input)?;
+        handle.adapter(identify(&input)?.0)?;
+        let catalog = handle.inspect(&input)?;
         if let Some(selection) = selection.filter(|s| !s.trim().is_empty()) {
             library.create_download_selected(
                 &catalog,
@@ -160,7 +157,7 @@ async fn update_book(book_id: String, state: State<'_, AppState>) -> Result<Stri
         let url = book
             .source_url()
             .ok_or_else(|| opennovel_core::Error::Invalid("该来源不支持在线更新".into()))?;
-        let catalog = source(&handle)?.inspect(&url)?;
+        let catalog = handle.inspect(&url)?;
         library.create_download(&catalog, 1, catalog.chapters.len())
     })
     .await?;
@@ -236,7 +233,7 @@ async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> 
         let result = if snapshot.source == "local-json" {
             library.run_import(&job_id, &token)
         } else {
-            source(&handle).and_then(|client| {
+            handle.adapter(&snapshot.source).and_then(|client| {
                 if let Some(chapters) = selection {
                     library.retry_chapters(&job_id, client, &token, &chapters)
                 } else {
@@ -307,6 +304,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            source_capabilities,
             library_snapshot,
             book_details,
             read_chapter,

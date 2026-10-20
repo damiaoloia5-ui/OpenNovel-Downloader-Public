@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
-import { bookDetails, cancelJob, desktopAvailable, downloadBook, exportBook, exportJob, importBook, inspectBook, jobDetails, pauseJob, readChapter, resumeJob, retryChapters, revealExport, snapshot, updateBook, type BookDetails, type Catalog, type ChapterContent, type JobDetails, type Snapshot } from './api';
+import { sourceCapabilities, type SourceInfo, bookDetails, cancelJob, desktopAvailable, downloadBook, exportBook, exportJob, importBook, inspectBook, jobDetails, pauseJob, readChapter, resumeJob, retryChapters, revealExport, snapshot, updateBook, type BookDetails, type Catalog, type ChapterContent, type JobDetails, type Snapshot } from './api';
 
 const page = ref<'download' | 'library' | 'tasks' | 'sources'>('download');
 const bookInput = ref('');
 const inspectedInput = ref('');
 const catalog = ref<Catalog | null>(null);
+const sourceInfos=ref<SourceInfo[]>([]);
+const catalogSource=computed(()=>sourceInfos.value.find(s=>s.id===catalog.value?.source));
+const catalogCanDownload=computed(()=>catalogSource.value?.can_download ?? false);
 const firstChapter = ref(1);
 const lastChapter = ref(1);
 const selection = ref('');
@@ -135,6 +138,7 @@ async function inspect() {
 
 async function startDownload() {
   await action(async () => {
+    if (!catalogCanDownload.value) throw new Error(catalogSource.value?.note || '该来源暂不支持正文下载');
     if (bookInput.value.trim() !== inspectedInput.value) throw new Error('链接已改变，请重新读取目录。');
     await downloadBook(inspectedInput.value, firstChapter.value, lastChapter.value,selection.value);
     page.value = 'tasks';
@@ -142,7 +146,7 @@ async function startDownload() {
   });
 }
 
-function sourceLabel(source: string) { return source === 'fanqie-web' ? '番茄官网网页 · 实验性' : '本地 JSON'; }
+function sourceLabel(source: string) { const info=sourceInfos.value.find(s=>s.id===source); return source==='local-json' ? '本地 JSON' : info ? `${info.name} · 实验性` : source; }
 
 async function saveBook(id: string, format: 'txt' | 'epub') {
   await action(async () => {
@@ -152,7 +156,7 @@ async function saveBook(id: string, format: 'txt' | 'epub') {
   });
 }
 
-onMounted(() => { void refresh(); timer = setInterval(() => void refresh(), 800); });
+onMounted(() => { if(desktopAvailable) void sourceCapabilities().then(result=>sourceInfos.value=result).catch(reason=>error.value=String(reason)); void refresh(); timer = setInterval(() => void refresh(), 800); });
 onUnmounted(() => { if (timer) clearInterval(timer); });
 </script>
 
@@ -170,33 +174,34 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
         <button :class="{ selected: page === 'tasks' }" @click="page = 'tasks'"><span aria-hidden="true">↓</span>下载与导入<b v-if="active">{{ active }}</b></button>
         <button :class="{ selected: page === 'sources' }" @click="page = 'sources'"><span aria-hidden="true">◎</span>小说来源</button>
       </nav>
-      <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>官网网页版 · 0.1.0</p></div>
+      <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>多来源候选版 · 0.2.0</p></div>
     </aside>
 
     <main>
-      <header class="topbar"><span>个人工作空间 / {{ page === 'download' ? '添加小说' : page === 'library' ? '书库' : page === 'tasks' ? '任务' : '来源' }}</span><span class="version">v0.1.0 · 官网开放内容</span></header>
+      <header class="topbar"><span>个人工作空间 / {{ page === 'download' ? '添加小说' : page === 'library' ? '书库' : page === 'tasks' ? '任务' : '来源' }}</span><span class="version">v0.2.0 · 多来源官网内容</span></header>
       <div class="main-content">
         <div v-if="!desktopAvailable" class="message warning" role="status">当前是浏览器界面预览。请运行桌面应用以使用本地书库和导出功能。</div>
         <div v-if="error" class="message failure" role="alert">{{ error }}<button aria-label="关闭错误提示" @click="error = ''">×</button></div>
         <div v-if="notice" class="message success" role="status">{{ notice }}<button aria-label="关闭提示" @click="notice = ''">×</button></div>
         <div class="page-heading">
-          <div><p class="eyebrow">YOUR STORIES, KEPT CLOSE</p><h1>{{ page === 'download' ? '从一条作品链接开始。' : page === 'library' ? '让故事留在身边。' : page === 'tasks' ? '每一章，都有着落。' : '一个书库，更多来源。' }}</h1><p class="intro">{{ page === 'download' ? '读取官网目录，保存网页实际开放的完整章节。' : page === 'library' ? '整理已经拥有的文字，随时导出、再次阅读。' : page === 'tasks' ? '查看真实保存进度，继续中断的任务。' : '平台能力逐项验证，支持范围持续公开。' }}</p></div>
+          <div><p class="eyebrow">YOUR STORIES, KEPT CLOSE</p><h1>{{ page === 'download' ? '从一条作品链接开始。' : page === 'library' ? '让故事留在身边。' : page === 'tasks' ? '每一章，都有着落。' : '一个书库，更多来源。' }}</h1><p class="intro">{{ page === 'download' ? '识别作品来源，查看目录并保存已支持的官网正文。' : page === 'library' ? '整理已经拥有的文字，随时导出、再次阅读。' : page === 'tasks' ? '查看真实保存进度，继续中断的任务。' : '平台能力逐项验证，支持范围持续公开。' }}</p></div>
           <button v-if="page !== 'sources'" class="primary" :disabled="!desktopAvailable || working" @click="fileInput?.click()">＋ 导入本地书籍</button>
           <input ref="fileInput" type="file" accept=".json,application/json" class="file-input" aria-label="选择 JSON 书籍文件" @change="chooseFile" />
         </div>
 
         <template v-if="page === 'download'">
           <form class="download-panel" @submit.prevent="inspect">
-            <label for="novel-link">番茄作品详情页链接或作品 ID</label>
-            <div class="link-row"><input id="novel-link" v-model="bookInput" type="text" placeholder="https://fanqienovel.com/page/作品ID" :disabled="working" required /><button class="primary" :disabled="!desktopAvailable || working">{{ working ? '处理中…' : '读取目录' }}</button></div>
-            <p class="footnote">实验性网页来源。免费作品也可能有仅限 App 阅读的章节；目前未接入账户、付费或 App 正文。</p>
+            <label for="novel-link">官网作品详情页链接或来源 ID</label>
+            <div class="link-row"><input id="novel-link" v-model="bookInput" type="text" placeholder="番茄 / 七猫 / 书旗作品链接，或 qimao:作品ID" :disabled="working" required /><button class="primary" :disabled="!desktopAvailable || working">{{ working ? '处理中…' : '读取目录' }}</button></div>
+            <p class="footnote">下载仅限已支持的官网正文。免费 App 不代表网页全部开放；书旗目前仅支持详情与目录。</p>
           </form>
           <section v-if="catalog" class="download-panel" aria-label="作品目录">
-            <h2>{{ catalog.title }}</h2><p class="footnote">{{ catalog.author || '未标注作者' }} · 全目录 {{ catalog.chapters.length }} 章 · 网页标记开放 {{ accessible }} 章</p>
+            <h2>{{ catalog.title }}</h2><p class="footnote">{{ catalogSource?.name || catalog.source }} · {{ catalog.author || '未标注作者' }} · 全目录 {{ catalog.chapters.length }} 章<span v-if="catalogCanDownload"> · 网页标记开放 {{ accessible }} 章</span></p>
+            <p v-if="!catalogCanDownload" class="message warning" role="status">{{ catalogSource?.note || '该来源暂不支持正文下载' }}</p>
             <p v-if="catalog.description" class="book-description">{{ catalog.description }}</p>
-            <div class="range-row"><label>起始序号<input v-model.number="firstChapter" type="number" min="1" :max="catalog.chapters.length" :disabled="!!selection.trim()" /></label><label>结束序号<input v-model.number="lastChapter" type="number" :min="firstChapter" :max="catalog.chapters.length" :disabled="!!selection.trim()" /></label><button class="primary" :disabled="working || (!selection.trim() && (firstChapter < 1 || lastChapter < firstChapter || lastChapter > catalog.chapters.length))" @click="startDownload">开始下载</button></div>
+            <div class="range-row"><label>起始序号<input v-model.number="firstChapter" type="number" min="1" :max="catalog.chapters.length" :disabled="!!selection.trim()" /></label><label>结束序号<input v-model.number="lastChapter" type="number" :min="firstChapter" :max="catalog.chapters.length" :disabled="!!selection.trim()" /></label><button class="primary" :disabled="working || !catalogCanDownload || (!selection.trim() && (firstChapter < 1 || lastChapter < firstChapter || lastChapter > catalog.chapters.length))" @click="startDownload">开始下载</button></div>
             <label class="selection-label">离散选章（可选，填写后代替连续范围）<input v-model="selection" type="text" placeholder="例如 1,3,5-8" /></label>
-            <ol class="catalog-list"><li v-for="chapter in catalog.chapters.slice(0, 100)" :key="chapter.id"><span>{{ chapter.title }}</span><small>{{ chapter.restricted ? '网页受限' : '网页标记开放' }}</small></li></ol>
+            <ol class="catalog-list"><li v-for="chapter in catalog.chapters.slice(0, 100)" :key="chapter.id"><span>{{ chapter.title }}</span><small>{{ !catalogCanDownload ? '正文访问未验证' : chapter.restricted ? '网页受限' : '网页标记开放' }}</small></li></ol>
             <p v-if="catalog.chapters.length > 100" class="footnote">预览前 100 章；下载范围可选择完整目录。</p>
           </section>
         </template>
@@ -225,7 +230,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
 <span class="source-tag">{{ sourceLabel(book.source) }}</span><h3>{{ book.title }}</h3><p>{{ book.saved_chapters }} / {{ book.total_chapters }} 章<span>{{ book.saved_chapters === book.total_chapters ? '完整保存' : '部分保存' }}</span></p>
                 <div class="book-actions"><button :disabled="working || !book.saved_chapters" @click="saveBook(book.id, 'txt')">导出 TXT</button><button :disabled="working || !book.saved_chapters" @click="saveBook(book.id, 'epub')">导出 EPUB</button></div>
                 <button class="update-book" :disabled="working" @click="showBook(book.id)">详情与离线预览</button>
-                <button v-if="book.source === 'fanqie-web'" class="update-book" :disabled="working || data.jobs.some(job => job.book_id === book.id && ['queued','running','paused'].includes(job.state))" @click="checkUpdates(book.id)">检查更新并补齐</button>
+                <button v-if="sourceInfos.some(s=>s.id===book.source && s.can_download)" class="update-book" :disabled="working || data.jobs.some(job => job.book_id === book.id && ['queued','running','paused'].includes(job.state))" @click="checkUpdates(book.id)">检查更新并补齐</button>
               </div>
             </article>
           </section>
@@ -256,11 +261,11 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
         </template>
 
         <template v-if="page === 'sources'">
-          <div class="source-intro"><h2>当前支持范围</h2><p>v0.1 面向番茄官网实际开放的完整正文。App 专属或受限章节明确计入缺章，所选范围完成不代表整本完整。</p></div>
+          <div class="source-intro"><h2>当前支持范围</h2><p>来源能力逐项公开：番茄、七猫支持已验证的官网正文；书旗先提供详情与目录。所选范围完成不代表整本完整。</p></div>
           <div class="source-list">
             <article><span class="source-monogram">本</span><div><h3>本地 JSON 内容</h3><p>用户提供的作品与章节 · 任务恢复 · TXT / EPUB</p></div><span class="available">已接入</span></article>
-            <article><span class="source-monogram">番</span><div><h3>番茄小说官网网页</h3><p>目录 · 网页开放正文 · 字体还原 · 范围下载 · 恢复与导出</p></div><span class="available">实验性</span></article>
-            <article v-for="source in [{ name: '七猫小说 / 书旗小说', stage: '免费平台后续候选' }, { name: '起点中文网 / 晋江文学城', stage: '后续版本：目录、免费试读、账户与已购内容可行性研究' }]" :key="source.name"><span class="source-monogram pending">{{ source.name.slice(0, 1) }}</span><div><h3>{{ source.name }}</h3><p>{{ source.stage }}</p></div><span class="pending-label">未接入</span></article>
+            <article v-for="source in sourceInfos" :key="source.id"><span class="source-monogram">{{ source.name.slice(0,1) }}</span><div><h3>{{ source.name }}</h3><p>{{ source.note }}</p><small>{{ source.example }}</small></div><span :class="source.can_download ? 'available' : 'pending-label'">{{ source.can_download ? '实验性下载' : '仅详情/目录' }}</span></article>
+            <article v-for="source in [{ name: '起点中文网 / 晋江文学城', stage: '后续版本：目录、免费试读、账户与已购内容可行性研究' }]" :key="source.name"><span class="source-monogram pending">{{ source.name.slice(0, 1) }}</span><div><h3>{{ source.name }}</h3><p>{{ source.stage }}</p></div><span class="pending-label">未接入</span></article>
           </div>
           <p class="footnote">来源能力按目录、正文、账户与访问限制分别记录。付费平台留在后续路线，目前不承诺未购 VIP 正文获取能力。</p>
         </template>

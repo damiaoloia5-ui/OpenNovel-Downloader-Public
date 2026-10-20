@@ -1,9 +1,12 @@
 use clap::{Parser, Subcommand};
-use opennovel_core::{ExportFormat, Library, MAX_IMPORT_BYTES, sources::Fanqie};
+use opennovel_core::{
+    ExportFormat, Library, MAX_IMPORT_BYTES,
+    sources::{SourceHub, identify, source_infos},
+};
 use std::{io::Read, path::PathBuf, sync::atomic::AtomicBool};
 
 #[derive(Parser)]
-#[command(version, about = "OpenNovel 下载与本地书库（番茄公开网页实验适配）")]
+#[command(version, about = "OpenNovel 多来源下载与本地书库")]
 struct Arguments {
     #[arg(long, default_value = ".artifacts/library.db")]
     database: PathBuf,
@@ -13,7 +16,9 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Command {
-    /// 读取番茄作品的真实目录和网页访问状态
+    /// 列出来源能力与支持边界
+    Sources,
+    /// 读取已接入官网的真实详情与目录
     Inspect { url: String },
     /// 下载官网公开网页提供的完整章节；受限内容明确记录
     Download {
@@ -78,16 +83,18 @@ fn main() {
 fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let args = Arguments::parse();
     let library = Library::open(args.database)?;
+    let hub = SourceHub::new();
     let result = match args.command {
-        Command::Inspect { url } => serde_json::to_value(Fanqie::new()?.inspect(&url)?)?,
+        Command::Sources => serde_json::to_value(source_infos())?,
+        Command::Inspect { url } => serde_json::to_value(hub.inspect(&url)?)?,
         Command::Download {
             url,
             from,
             to,
             chapters,
         } => {
-            let source = Fanqie::new()?;
-            let catalog = source.inspect(&url)?;
+            let source = hub.adapter(identify(&url)?.0)?;
+            let catalog = hub.inspect(&url)?;
             let job = if let Some(chapters) = chapters {
                 library.create_download_selected(
                     &catalog,
@@ -96,7 +103,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
             } else {
                 library.create_download(&catalog, from, to.unwrap_or(catalog.chapters.len()))?
             };
-            serde_json::to_value(library.run_job(&job, &source, &AtomicBool::new(false))?)?
+            serde_json::to_value(library.run_job(&job, source, &AtomicBool::new(false))?)?
         }
         Command::Import { file } => {
             let mut json = String::new();
@@ -126,12 +133,15 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
             ExportFormat::parse(&format)?,
         )?)?,
         Command::Details { job_id } => serde_json::to_value(library.job_details(&job_id)?)?,
-        Command::Retry { job_id, chapters } => serde_json::to_value(library.retry_chapters(
-            &job_id,
-            &Fanqie::new()?,
-            &AtomicBool::new(false),
-            &chapters,
-        )?)?,
+        Command::Retry { job_id, chapters } => {
+            let job = library.job(&job_id)?;
+            serde_json::to_value(library.retry_chapters(
+                &job_id,
+                hub.adapter(&job.source)?,
+                &AtomicBool::new(false),
+                &chapters,
+            )?)?
+        }
         Command::Update { book_id } => {
             let book = library
                 .snapshot()?
@@ -140,17 +150,17 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
                 .find(|b| b.id == book_id)
                 .ok_or("作品不存在")?;
             let url = book.source_url().ok_or("该来源不支持在线更新")?;
-            let source = Fanqie::new()?;
-            let catalog = source.inspect(&url)?;
+            let source = hub.adapter(identify(&url)?.0)?;
+            let catalog = hub.inspect(&url)?;
             let job = library.create_download(&catalog, 1, catalog.chapters.len())?;
-            serde_json::to_value(library.run_job(&job, &source, &AtomicBool::new(false))?)?
+            serde_json::to_value(library.run_job(&job, source, &AtomicBool::new(false))?)?
         }
         Command::Resume { job_id } => {
             let job = library.job(&job_id)?;
             serde_json::to_value(if job.source == "local-json" {
                 library.run_import(&job_id, &AtomicBool::new(false))?
             } else {
-                library.run_job(&job_id, &Fanqie::new()?, &AtomicBool::new(false))?
+                library.run_job(&job_id, hub.adapter(&job.source)?, &AtomicBool::new(false))?
             })?
         }
         Command::Export {

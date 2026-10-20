@@ -1,17 +1,14 @@
+use super::web::WebClient;
 use super::{Catalog, ChapterRef, SourceAdapter};
 use crate::{Error, ImportChapter, ImportDocument, Result};
-use reqwest::{Client, Url};
+use reqwest::Url;
 use scraper::{Html, Selector};
 use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    sync::{
-        Mutex, OnceLock,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::{Duration, Instant},
+    sync::{OnceLock, atomic::AtomicBool},
 };
 
 const FONT_URL: &str = "https://lf6-awef.bytetos.com/obj/awesome-font/c/dc027189e0ba4cd.woff";
@@ -23,33 +20,14 @@ const HOSTS: &[&str] = &[
 ];
 
 pub struct Fanqie {
-    client: Client,
-    next_request: Mutex<Instant>,
+    http: WebClient,
     font_verified: OnceLock<bool>,
 }
 
 impl Fanqie {
     pub fn new() -> Result<Self> {
-        let client = Client::builder()
-            .user_agent(concat!(
-                "OpenNovelDownloader/",
-                env!("CARGO_PKG_VERSION"),
-                " (public web reader)"
-            ))
-            .connect_timeout(Duration::from_secs(8))
-            .timeout(Duration::from_secs(20))
-            .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                if attempt.previous().len() >= 4 || !allowed(attempt.url()) {
-                    attempt.stop()
-                } else {
-                    attempt.follow()
-                }
-            }))
-            .build()
-            .map_err(|_| Error::Network("无法初始化 HTTPS 客户端".into()))?;
         Ok(Self {
-            client,
-            next_request: Mutex::new(Instant::now()),
+            http: WebClient::new(HOSTS)?,
             font_verified: OnceLock::new(),
         })
     }
@@ -93,89 +71,7 @@ impl Fanqie {
     }
 
     fn get(&self, url: &str, cancelled: &AtomicBool, maximum: usize) -> Result<Vec<u8>> {
-        let parsed = Url::parse(url).map_err(|_| Error::Invalid("来源地址无效".into()))?;
-        if !allowed(&parsed) {
-            return Err(Error::Invalid("来源地址超出允许范围".into()));
-        }
-        {
-            let mut next = self
-                .next_request
-                .lock()
-                .map_err(|_| Error::Network("请求调度器不可用".into()))?;
-            while Instant::now() < *next {
-                if cancelled.load(Ordering::Acquire) {
-                    return Err(Error::Cancelled);
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            if cancelled.load(Ordering::Acquire) {
-                return Err(Error::Cancelled);
-            }
-            *next = Instant::now() + Duration::from_secs(1);
-        }
-        self.request(parsed, cancelled, maximum)
-    }
-
-    fn request(&self, url: Url, cancelled: &AtomicBool, maximum: usize) -> Result<Vec<u8>> {
-        if cancelled.load(Ordering::Acquire) {
-            return Err(Error::Cancelled);
-        }
-        static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-        let runtime = RUNTIME.get_or_init(|| {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .enable_all()
-                .build()
-                .expect("HTTP runtime")
-        });
-        runtime.block_on(async {
-        let work=async {
-        let mut response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|_| Error::Network("连接、TLS 或读取超时，请稍后重试".into()))?;
-        let status = response.status();
-        if status.as_u16() == 429 {
-            let seconds = response
-                .headers()
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok().or_else(||httpdate::parse_http_date(s).ok().map(|date|date.duration_since(std::time::SystemTime::now()).unwrap_or_default().as_secs())))
-                .unwrap_or(60);
-            if let Ok(mut next) = self.next_request.lock() {
-                *next = Instant::now() + Duration::from_secs(seconds.min(86400));
-            }
-            return Err(Error::Network(format!(
-                "来源限流，请至少等待 {} 秒再重试",
-                seconds.min(86400)
-            )));
-        }
-        if matches!(status.as_u16(), 401 | 403) {
-            return Err(Error::Restricted(
-                "官网拒绝访问或需要验证，不进行绕过".into(),
-            ));
-        }
-        if !status.is_success() {
-            return Err(Error::Network(format!("官网返回 HTTP {}", status.as_u16())));
-        }
-        let mut bytes = Vec::new();
-        while let Some(chunk)=response.chunk().await.map_err(|_|Error::Network("正文传输中断或超时".into()))? {
-            if bytes.len()+chunk.len()>maximum {return Err(Error::SourceChanged("响应超过大小限制".into()));}
-            bytes.extend_from_slice(&chunk);
-        }
-        if cancelled.load(Ordering::Acquire) {
-            return Err(Error::Cancelled);
-        }
-        Ok(bytes)
-        };
-        tokio::pin!(work);
-        loop {tokio::select! {
-            result=&mut work=>return result,
-            _=tokio::time::sleep(Duration::from_millis(25))=>if cancelled.load(Ordering::Acquire) {return Err(Error::Cancelled);}
-        }}
-        })
+        self.http.get(url, cancelled, maximum)
     }
 
     pub fn parse_catalog(html: &str, expected_id: &str) -> Result<Catalog> {
@@ -333,6 +229,7 @@ impl SourceAdapter for Fanqie {
 fn valid_id(value: &str) -> bool {
     (10..=30).contains(&value.len()) && value.bytes().all(|b| b.is_ascii_digit())
 }
+#[cfg(test)]
 fn allowed(url: &Url) -> bool {
     url.scheme() == "https"
         && url.port().is_none()
@@ -441,6 +338,9 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+
     const BOOK: &str = "10000000001";
     const CHAPTER: &str = "10000000002";
 
@@ -476,7 +376,7 @@ mod tests {
                 stop.store(true, Ordering::Release);
             });
             assert!(matches!(
-                source.request(url, &stop, 200000),
+                source.http.request(url, &stop, 200000),
                 Err(Error::Cancelled)
             ));
         });
@@ -496,7 +396,7 @@ mod tests {
             Duration::ZERO,
         );
         assert!(matches!(
-            source.request(url, &AtomicBool::new(false), 128),
+            source.http.request(url, &AtomicBool::new(false), 128),
             Err(Error::SourceChanged(_))
         ));
         server.join().unwrap();
@@ -504,7 +404,12 @@ mod tests {
             b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\ntruncated".to_vec(),
             Duration::ZERO,
         );
-        assert!(source.request(url, &AtomicBool::new(false), 1024).is_err());
+        assert!(
+            source
+                .http
+                .request(url, &AtomicBool::new(false), 1024)
+                .is_err()
+        );
         server.join().unwrap();
         let html = "<html><title>登录或验证</title><p>请重试</p></html>";
         let (url, server) = serve(
@@ -515,7 +420,10 @@ mod tests {
             .into_bytes(),
             Duration::ZERO,
         );
-        let bytes = source.request(url, &AtomicBool::new(false), 1024).unwrap();
+        let bytes = source
+            .http
+            .request(url, &AtomicBool::new(false), 1024)
+            .unwrap();
         assert!(Fanqie::parse_catalog(std::str::from_utf8(&bytes).unwrap(), BOOK).is_err());
         server.join().unwrap();
     }
@@ -529,12 +437,13 @@ mod tests {
             Duration::ZERO,
         );
         assert!(matches!(
-            source.request(url, &AtomicBool::new(false), 1024),
+            source.http.request(url, &AtomicBool::new(false), 1024),
             Err(Error::Network(_))
         ));
         server.join().unwrap();
         assert!(
             source
+                .http
                 .next_request
                 .lock()
                 .unwrap()
@@ -553,7 +462,7 @@ mod tests {
         assert!(began.elapsed() < Duration::from_millis(200));
         let (url,server)=serve(b"HTTP/1.1 302 Found\r\nLocation: https://not-allowed.example/secret\r\nContent-Length: 0\r\n\r\n".to_vec(),Duration::ZERO);
         assert!(matches!(
-            source.request(url, &AtomicBool::new(false), 1024),
+            source.http.request(url, &AtomicBool::new(false), 1024),
             Err(Error::Network(_))
         ));
         server.join().unwrap();
