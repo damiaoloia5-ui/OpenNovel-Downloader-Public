@@ -1,6 +1,6 @@
 # OpenNovel Downloader
 
-独立实现的多平台小说本地下载与管理项目。当前版本 **0.0.1 工程预览**，从本地导入建立技术基础。
+独立实现的多平台小说本地下载与管理项目。当前版本 **0.0.1 开发预览**：本地书库基础与实验性番茄官网网页来源。第一版先完成免费平台，再逐步研究起点、晋江等付费平台。
 
 ## 当前可用范围
 
@@ -9,8 +9,9 @@
 - 共用 Rust 核心的 CLI 与 Vue/Tauri 桌面端。
 - 从本地内容生成 UTF-8 TXT 或 EPUB 3；部分内容明确标注，已有导出文件不覆盖。
 - 同一书库只有一个写入进程；正文保留原有章节顺序和字符串 ID。
+- 番茄官网详情页链接/ID、目录、范围下载、字体还原、受限计数及缺失章节恢复；只保存网页实际开放的正文。
 
-**番茄、七猫、书旗、起点和晋江均尚未接入。** 本地导入不代表商业平台下载能力。账户与 VIP 场景按计划分阶段研究，未购买内容的获取能力尚未验证。
+**第一版尚未完成。** 番茄网页来源仍为实验性，长篇样本 47 章中只能保存网页开放的 10 章，其他 37 章明确记录为受限；另一短篇样本当前目录 5/5 章完成。不能据此声称全站下载可用。七猫、书旗、起点、晋江尚未接入；账户及 VIP 能力未实现。
 
 ## 环境
 
@@ -22,9 +23,9 @@
 
 ## 运行桌面应用
 
-在仓库根目录执行 `npm run desktop:dev`。点击“导入本地书籍”，选择 `examples/local-book.json`。
+在仓库根目录执行 `npm run desktop:dev`。在“添加小说”粘贴番茄作品详情页链接或 ID，读取目录、选择序号范围并开始下载。本地验证可点击“导入本地书籍”，选择 `examples/local-book.json`。
 
-书库位于系统应用数据目录的 `org.opennovel.downloader/library.db`，导出文件位于同目录的 `exports`。程序返回完整路径。桌面端不向界面开放任意文件写入或 shell 执行权限。
+书库位于系统应用数据目录的 `org.opennovel.downloader/library.db`，导出文件位于同目录的 `exports`。旧 schema 1 书库在升级前自动生成 SQLite 备份。程序返回完整路径。桌面端不向界面开放任意文件写入或 shell 执行权限。
 
 `npm run dev` 仅打开浏览器预览，无法访问本地核心，不会模拟书库成功结果。
 
@@ -33,6 +34,8 @@
 以下命令在仓库根目录执行：
 
 ```powershell
+cargo run -p opennovel-cli -- inspect https://fanqienovel.com/page/作品ID
+cargo run -p opennovel-cli -- download https://fanqienovel.com/page/作品ID --from 1 --to 3
 cargo run -p opennovel-cli -- import examples/local-book.json
 cargo run -p opennovel-cli -- list
 cargo run -p opennovel-cli -- resume <job_id>
@@ -40,13 +43,15 @@ cargo run -p opennovel-cli -- export <book_id> --format txt
 cargo run -p opennovel-cli -- export <book_id> --format epub
 ```
 
-`<job_id>` 和 `<book_id>` 使用命令返回的实际 ID。CLI 默认书库是 `.artifacts/library.db`，可在子命令前通过 `--database <path>` 指定。不要将它指向一个已经被桌面应用打开的书库。
+作品 ID 替换为官网实际 ID，`<job_id>` 和 `<book_id>` 使用命令返回的实际 ID。CLI 默认书库是 `.artifacts/library.db`，可在子命令前通过 `--database <path>` 指定。不要将它指向一个已经被桌面应用打开的书库。任务完整完成退出码为 0，部分/受限/取消为 2，命令错误为 1；`download` 不传范围时选择全目录。
+
+“所选范围完成”不表示整本完整。书库另外展示已保存章节与全目录的比例；部分导出在文件名及内容中标明缺失。网页受限章节不会保存截断预览。请求进行中的取消最多等待单次 20 秒超时；429 或页面变化停止本轮，需手动重试。
 
 ## 导入格式
 
 根字段是 `id`、`title`、`author` 和 `chapters`；每章包含字符串 `id`、`title` 与字符串数组 `paragraphs`。具体示例见 [local-book.json](examples/local-book.json)。例文为本项目原创的测试内容。
 
-文件最大 16 MiB，最多 10000 章。空正文、重复章节 ID、无效字段和不适合 XML 的控制字符会在创建任务前拒绝。作品 ID 在本地来源内唯一；相同作品重复导入不会覆盖已有内容。当前尚无修订、选章和删除功能。
+文件最大 16 MiB，最多 10000 章。空正文、重复章节 ID、无效字段和不适合 XML 的控制字符会在创建任务前拒绝。作品 ID 在本地来源内唯一；相同作品重复导入不会覆盖已有内容。网络来源支持连续范围选章，尚无离散选章、修订和删除功能。
 
 ## 开发检查
 
@@ -66,8 +71,8 @@ npm run desktop:build
 
 | 目录 | 职责 |
 | --- | --- |
-| `crates/core` | 输入模型、SQLite、持久导入任务、导出 |
-| `crates/cli` | 无界面的本地核心入口 |
+| `crates/core` | 来源适配、网络预算、字体还原、SQLite、持久任务、导出 |
+| `crates/cli` | 共用核心的命令行下载与书库入口 |
 | `apps/desktop/src` | Vue 交互与类型化 IPC 调用 |
 | `apps/desktop/src-tauri` | 系统数据目录、后台执行和窄命令接口 |
 | `examples` | 本项目原创导入样例 |
@@ -77,4 +82,4 @@ npm run desktop:build
 
 2026-10-20 的验证范围和原生运行记录见 [工程基础验证记录](docs/verification/2026-10-20-foundation.md)。
 
-本轮只建立工程基础，不代表 v0.1 的真实来源验收完成。下一步以番茄为首候选完成目录、正文、错误与限流验证，再接入通用网络适配边界。
+平台范围见 [来源状态](docs/sources.md)，实际路径、字体映射复现和限制见 [番茄研究](docs/research/fanqie-web.md)。工程基础、实验性接入与 v0.1 验收分别记录，后续重点是免费平台覆盖、错误明细、恢复和安装验收。

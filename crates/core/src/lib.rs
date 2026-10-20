@@ -1,5 +1,7 @@
 mod domain;
+mod downloads;
 mod export;
+pub mod sources;
 mod storage;
 
 pub use domain::*;
@@ -8,6 +10,14 @@ pub use storage::Library;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("访问受限：{0}")]
+    Restricted(String),
+    #[error("来源返回内容不符合预期：{0}")]
+    SourceChanged(String),
+    #[error("网络请求失败：{0}")]
+    Network(String),
+    #[error("任务已取消")]
+    Cancelled,
     #[error("输入无效：{0}")]
     Invalid(String),
     #[error("状态冲突：{0}")]

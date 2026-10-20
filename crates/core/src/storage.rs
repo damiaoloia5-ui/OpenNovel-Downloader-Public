@@ -38,7 +38,7 @@ impl Library {
         let mut connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 1 {
+        if version > 2 {
             return Err(Error::Conflict("书库来自较新版本，请使用匹配的程序".into()));
         }
         connection.execute_batch(
@@ -70,6 +70,25 @@ impl Library {
             )?;
             transaction.commit()?;
         }
+        if version < 2 {
+            if version == 1 {
+                let backup =
+                    path.with_file_name(format!("library-v1-backup-{}.db", Uuid::new_v4()));
+                let reserved = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&backup)?;
+                drop(reserved);
+                connection.backup(rusqlite::MAIN_DB, &backup, None)?;
+            }
+            let transaction = connection.transaction()?;
+            transaction.execute_batch(
+                "CREATE TABLE source_catalogs (book_id TEXT PRIMARY KEY REFERENCES books(id), catalog TEXT NOT NULL);
+                 CREATE INDEX job_items_pending ON job_items(job_id,state,position);
+                 PRAGMA user_version=2;"
+            )?;
+            transaction.commit()?;
+        }
         connection.execute(
             "UPDATE jobs SET state='paused', error='程序中断，等待继续' WHERE state='running'",
             [],
@@ -80,7 +99,7 @@ impl Library {
         })
     }
 
-    fn connection(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
+    pub(crate) fn connection(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
         self.connection
             .lock()
             .map_err(|_| Error::Conflict("数据库锁失效，请重启程序".into()))
@@ -198,10 +217,11 @@ impl Library {
         }
     }
 
-    fn start_job(&self, job_id: &str) -> Result<()> {
+    pub(crate) fn start_job(&self, job_id: &str) -> Result<()> {
         let connection = self.connection()?;
         let changed = connection.execute(
-            "UPDATE jobs SET state='running',error=NULL WHERE id=?1 AND state IN ('queued','paused','cancelled','failed')",
+            "UPDATE jobs SET state='running',error=NULL WHERE id=?1 AND state IN ('queued','paused','cancelled','failed','partial','blocked')
+             AND NOT EXISTS (SELECT 1 FROM jobs other WHERE other.book_id=jobs.book_id AND other.id!=jobs.id AND other.state='running')",
             [job_id],
         )?;
         if changed != 1 {
@@ -221,7 +241,7 @@ impl Library {
     pub fn snapshot(&self) -> Result<LibrarySnapshot> {
         let connection = self.connection()?;
         let mut books_query = connection.prepare(
-            "SELECT b.id,b.title,b.author,b.source,COUNT(c.chapter_id),b.total FROM books b
+            "SELECT b.id,b.title,b.author,b.source,COUNT(c.chapter_id),b.total,b.remote_id FROM books b
              LEFT JOIN chapters c ON c.book_id=b.id GROUP BY b.id ORDER BY b.rowid DESC",
         )?;
         let books = books_query
@@ -233,12 +253,14 @@ impl Library {
                     source: row.get(3)?,
                     saved_chapters: row.get(4)?,
                     total_chapters: row.get(5)?,
+                    remote_id: row.get(6)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         let mut jobs_query = connection.prepare(
             "SELECT j.id,j.book_id,b.title,j.state,
-             SUM(CASE WHEN i.state='completed' THEN 1 ELSE 0 END),COUNT(i.chapter_id),j.error
+             SUM(CASE WHEN i.state='completed' THEN 1 ELSE 0 END),COUNT(i.chapter_id),j.error,b.source,
+             SUM(CASE WHEN i.state='blocked' THEN 1 ELSE 0 END),SUM(CASE WHEN i.state='failed' THEN 1 ELSE 0 END)
              FROM jobs j JOIN books b ON b.id=j.book_id JOIN job_items i ON i.job_id=j.id
              GROUP BY j.id ORDER BY j.rowid DESC",
         )?;
@@ -252,6 +274,9 @@ impl Library {
                     saved: row.get(4)?,
                     total: row.get(5)?,
                     error: row.get(6)?,
+                    source: row.get(7)?,
+                    blocked: row.get(8)?,
+                    failed: row.get(9)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -263,7 +288,7 @@ impl Library {
         let transaction = connection.unchecked_transaction()?;
         let summary = transaction
             .query_row(
-                "SELECT b.id,b.title,b.author,b.source,COUNT(c.chapter_id),b.total FROM books b
+                "SELECT b.id,b.title,b.author,b.source,COUNT(c.chapter_id),b.total,b.remote_id FROM books b
              LEFT JOIN chapters c ON c.book_id=b.id WHERE b.id=?1 GROUP BY b.id",
                 [book_id],
                 |row| {
@@ -274,6 +299,7 @@ impl Library {
                         source: row.get(3)?,
                         saved_chapters: row.get(4)?,
                         total_chapters: row.get(5)?,
+                        remote_id: row.get(6)?,
                     })
                 },
             )

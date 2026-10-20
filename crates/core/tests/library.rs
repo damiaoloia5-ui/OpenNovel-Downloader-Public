@@ -63,7 +63,7 @@ fn cancel_preserves_partial_content_and_resumes_without_duplicates() {
         .export(&result.book_id, directory.path(), ExportFormat::Txt)
         .unwrap();
     assert!(receipt.partial);
-    assert!(receipt.path.ends_with("-partial.txt"));
+    assert!(receipt.path.ends_with("-partial-1-of-2.txt"));
     assert!(
         std::fs::read_to_string(receipt.path)
             .unwrap()

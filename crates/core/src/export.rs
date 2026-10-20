@@ -34,7 +34,14 @@ impl Library {
             ExportFormat::Txt => "txt",
             ExportFormat::Epub => "epub",
         };
-        let suffix = if partial { "-partial" } else { "" };
+        let suffix = if partial {
+            format!(
+                "-partial-{}-of-{}",
+                content.summary.saved_chapters, content.summary.total_chapters
+            )
+        } else {
+            String::new()
+        };
         let path = directory.join(format!("{}{suffix}.{extension}", content.summary.id));
         let mut temporary = NamedTempFile::new_in(directory)?;
         match format {
@@ -71,9 +78,11 @@ fn coverage(content: &BookContent) -> String {
 fn write_txt(output: &mut impl Write, content: &BookContent) -> Result<()> {
     writeln!(
         output,
-        "{}\n作者：{}\n来源：本地 JSON 导入\n{}\n",
+        "{}\n作者：{}\n来源：{}\n{}\n{}\n",
         content.summary.title,
         content.summary.author,
+        content.summary.source_label(),
+        content.summary.source_url().unwrap_or_default(),
         coverage(content)
     )?;
     for chapter in &content.chapters {
@@ -144,9 +153,14 @@ fn write_epub(output: &mut std::fs::File, content: &BookContent) -> Result<()> {
     } else {
         format!("<dc:creator>{}</dc:creator>", xml(&content.summary.author))
     };
+    let source = content
+        .summary
+        .source_url()
+        .map(|url| format!("<dc:source>{}</dc:source>", xml(&url)))
+        .unwrap_or_default();
     write!(
         archive,
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"book-id\"><metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:identifier id=\"book-id\">urn:uuid:{}</dc:identifier><dc:title>{title}</dc:title>{creator}<dc:language>zh-CN</dc:language><dc:description>{}</dc:description><meta property=\"dcterms:modified\">{modified}</meta></metadata><manifest>{manifest}</manifest><spine>{spine}</spine></package>",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"book-id\"><metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:identifier id=\"book-id\">urn:uuid:{}</dc:identifier><dc:title>{title}</dc:title>{creator}{source}<dc:language>zh-CN</dc:language><dc:description>{}</dc:description><meta property=\"dcterms:modified\">{modified}</meta></metadata><manifest>{manifest}</manifest><spine>{spine}</spine></package>",
         content.summary.id,
         xml(&coverage(content))
     )?;

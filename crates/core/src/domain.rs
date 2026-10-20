@@ -87,6 +87,7 @@ pub struct BookSummary {
     pub title: String,
     pub author: String,
     pub source: String,
+    pub remote_id: String,
     pub saved_chapters: u32,
     pub total_chapters: u32,
 }
@@ -100,6 +101,23 @@ pub struct JobSnapshot {
     pub saved: u32,
     pub total: u32,
     pub error: Option<String>,
+    pub source: String,
+    pub blocked: u32,
+    pub failed: u32,
+}
+
+impl BookSummary {
+    pub fn source_label(&self) -> &str {
+        match self.source.as_str() {
+            "fanqie-web" => "番茄公开网页",
+            "local-json" => "本地 JSON 导入",
+            _ => &self.source,
+        }
+    }
+    pub fn source_url(&self) -> Option<String> {
+        (self.source == "fanqie-web")
+            .then(|| format!("https://fanqienovel.com/page/{}", self.remote_id))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
