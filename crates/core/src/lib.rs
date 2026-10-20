@@ -1,0 +1,27 @@
+mod domain;
+mod export;
+mod storage;
+
+pub use domain::*;
+pub use export::ExportFormat;
+pub use storage::Library;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("输入无效：{0}")]
+    Invalid(String),
+    #[error("状态冲突：{0}")]
+    Conflict(String),
+    #[error("书库正在被另一个程序使用")]
+    Locked,
+    #[error("数据库错误：{0}")]
+    Database(#[from] rusqlite::Error),
+    #[error("文件错误：{0}")]
+    Io(#[from] std::io::Error),
+    #[error("JSON 格式错误：{0}")]
+    Json(#[from] serde_json::Error),
+    #[error("EPUB 文件错误：{0}")]
+    Zip(#[from] zip::result::ZipError),
+}
+
+pub type Result<T> = std::result::Result<T, Error>;

@@ -1,0 +1,21 @@
+[workspace]
+members = ["crates/core", "crates/cli", "apps/desktop/src-tauri"]
+default-members = ["crates/core", "crates/cli"]
+resolver = "2"
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.96"
+
+[workspace.dependencies]
+opennovel-core = { path = "crates/core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

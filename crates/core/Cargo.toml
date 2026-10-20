@@ -1,0 +1,19 @@
+[package]
+name = "opennovel-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+rusqlite = { version = "0.37", features = ["bundled"] }
+fs2 = "0.4"
+tempfile = "3"
+zip = { version = "4", default-features = false, features = ["deflate"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[dev-dependencies]
+roxmltree = "0.20"

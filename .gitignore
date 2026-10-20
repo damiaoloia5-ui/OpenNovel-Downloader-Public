@@ -12,7 +12,12 @@ coverage/
 *.db
 *.db-shm
 *.db-wal
+*.db.lock
 *.log
+output/playwright/
+apps/desktop/src-tauri/gen/
+.playwright-cli/
+.playwright/
 
 # Secrets and machine configuration
 .env
