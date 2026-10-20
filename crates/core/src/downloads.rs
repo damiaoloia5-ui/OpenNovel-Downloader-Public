@@ -1,5 +1,5 @@
 use crate::{
-    Error, ImportChapter, ImportDocument, JobSnapshot, Library, Result,
+    Error, ImportChapter, ImportDocument, JobDetails, JobItemDetail, JobSnapshot, Library, Result,
     sources::{Catalog, ChapterRef, SourceAdapter},
 };
 use rusqlite::{OptionalExtension, params};
@@ -32,14 +32,16 @@ impl Library {
                 |row| row.get(0),
             )?;
             let previous: Catalog = serde_json::from_str(&previous)?;
-            if !previous
-                .chapters
-                .iter()
-                .map(|c| &c.id)
-                .eq(catalog.chapters.iter().map(|c| &c.id))
+            if catalog.chapters.len() < previous.chapters.len()
+                || !previous.chapters.iter().map(|c| &c.id).eq(catalog
+                    .chapters
+                    .iter()
+                    .take(previous.chapters.len())
+                    .map(|c| &c.id))
             {
                 return Err(Error::Conflict(
-                    "官网目录发生变化，当前预览版暂停该作品的新下载以保护已保存内容".into(),
+                    "官网目录包含删章、插章或重排，暂停更新以保护已保存内容；目前仅支持末尾增章"
+                        .into(),
                 ));
             }
             let active:u32=transaction.query_row("SELECT COUNT(*) FROM jobs WHERE book_id=?1 AND state IN ('queued','running','paused')",[&book_id],|row|row.get(0))?;
@@ -48,6 +50,19 @@ impl Library {
                     "该作品还有待执行或中断任务，请先继续或取消原任务".into(),
                 ));
             }
+            transaction.execute(
+                "UPDATE books SET title=?2,author=?3,total=?4 WHERE id=?1",
+                params![
+                    book_id,
+                    catalog.title,
+                    catalog.author,
+                    catalog.chapters.len()
+                ],
+            )?;
+            transaction.execute(
+                "UPDATE source_catalogs SET catalog=?2 WHERE book_id=?1",
+                params![book_id, serde_json::to_string(catalog)?],
+            )?;
             book_id
         } else {
             let book_id = Uuid::new_v4().to_string();
@@ -88,19 +103,95 @@ impl Library {
         source: &dyn SourceAdapter,
         cancelled: &AtomicBool,
     ) -> Result<JobSnapshot> {
+        self.run_selected(job_id, source, cancelled, None)
+    }
+
+    /// Retry only named failed items; pending chapters outside this selection remain untouched.
+    pub fn retry_chapters(
+        &self,
+        job_id: &str,
+        source: &dyn SourceAdapter,
+        cancelled: &AtomicBool,
+        chapters: &[String],
+    ) -> Result<JobSnapshot> {
+        if chapters.is_empty()
+            || chapters.len() > crate::MAX_CHAPTERS
+            || chapters
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                != chapters.len()
+        {
+            return Err(Error::Invalid("请选择不重复的失败章节".into()));
+        }
+        self.run_selected(job_id, source, cancelled, Some(chapters))
+    }
+
+    pub fn job_details(&self, job_id: &str) -> Result<JobDetails> {
+        let job = self.job(job_id)?;
+        let connection = self.connection()?;
+        let mut query = connection.prepare("SELECT i.chapter_id,i.position,COALESCE(c.title,CASE WHEN json_valid(i.payload) THEN json_extract(i.payload,'$.title') END,'未标注章节'),i.state,i.error,i.error_kind
+            FROM job_items i JOIN jobs j ON j.id=i.job_id LEFT JOIN chapters c ON c.book_id=j.book_id AND c.chapter_id=i.chapter_id
+            WHERE i.job_id=?1 ORDER BY i.position")?;
+        let items = query
+            .query_map([job_id], |row| {
+                let state: String = row.get(3)?;
+                Ok(JobItemDetail {
+                    chapter_id: row.get(0)?,
+                    position: row.get::<_, u32>(1)? + 1,
+                    title: row.get(2)?,
+                    retryable: job.source != "local-json"
+                        && state == "failed"
+                        && job.state != "running",
+                    state,
+                    error: row.get(4)?,
+                    error_kind: row.get(5)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(JobDetails { job, items })
+    }
+
+    fn run_selected(
+        &self,
+        job_id: &str,
+        source: &dyn SourceAdapter,
+        cancelled: &AtomicBool,
+        selection: Option<&[String]>,
+    ) -> Result<JobSnapshot> {
         let job = self.job(job_id)?;
         if job.source == "local-json" {
+            if selection.is_some() {
+                return Err(Error::Invalid("本地导入请使用继续任务".into()));
+            }
             return self.run_import(job_id, cancelled);
         }
         if job.source != source.source_id() {
             return Err(Error::Invalid("该任务需要其他来源适配器".into()));
         }
-        self.start_job(job_id)?;
-        self.connection()?.execute(
-            "UPDATE job_items SET state='queued' WHERE job_id=?1 AND state='failed'",
-            [job_id],
-        )?;
-        let result = self.download_items(job_id, source, cancelled);
+        let selected = selection.map(serde_json::to_string).transpose()?;
+        // Validate selection, claim the task, and reset retry items in one transaction.
+        {
+            let mut connection = self.connection()?;
+            let transaction = connection.transaction()?;
+            if let Some(chapters) = selection {
+                let count:usize=transaction.query_row("SELECT COUNT(*) FROM job_items WHERE job_id=?1 AND state='failed' AND chapter_id IN (SELECT value FROM json_each(?2))",params![job_id,selected],|row|row.get(0))?;
+                if count != chapters.len() {
+                    return Err(Error::Conflict(
+                        "只能重试该任务中的失败章节；受限章节请先检查官网目录更新".into(),
+                    ));
+                }
+            }
+            let changed=transaction.execute("UPDATE jobs SET state='running',error=NULL WHERE id=?1 AND state IN ('queued','paused','cancelled','failed','partial','blocked') AND NOT EXISTS (SELECT 1 FROM jobs other WHERE other.book_id=jobs.book_id AND other.id!=jobs.id AND other.state IN ('queued','running','paused'))",[job_id])?;
+            if changed != 1 {
+                return Err(Error::Conflict(
+                    "任务不可执行，或该作品有其他待执行任务".into(),
+                ));
+            }
+            transaction.execute("UPDATE job_items SET state='queued',error=NULL,error_kind=NULL WHERE job_id=?1 AND state='failed' AND (?2 IS NULL OR chapter_id IN (SELECT value FROM json_each(?2)))",params![job_id,selected])?;
+            transaction.commit()?;
+        }
+        let result = self.download_items(job_id, source, cancelled, selected.as_deref());
         if let Err(error) = &result {
             self.connection()?.execute(
                 "UPDATE jobs SET state='failed',error=?2 WHERE id=?1 AND state='running'",
@@ -116,6 +207,7 @@ impl Library {
         job_id: &str,
         source: &dyn SourceAdapter,
         cancelled: &AtomicBool,
+        selected: Option<&str>,
     ) -> Result<()> {
         let mut last_error = None::<String>;
         loop {
@@ -124,7 +216,7 @@ impl Library {
             }
             let next = {
                 let connection = self.connection()?;
-                connection.query_row("SELECT i.payload,i.position,j.book_id,b.remote_id FROM job_items i JOIN jobs j ON i.job_id=j.id JOIN books b ON j.book_id=b.id WHERE i.job_id=?1 AND i.state='queued' ORDER BY i.position LIMIT 1",[job_id],|row|Ok((row.get::<_,String>(0)?,row.get::<_,u32>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?))).optional()?
+                connection.query_row("SELECT i.payload,i.position,j.book_id,b.remote_id FROM job_items i JOIN jobs j ON i.job_id=j.id JOIN books b ON j.book_id=b.id WHERE i.job_id=?1 AND i.state='queued' AND (?2 IS NULL OR i.chapter_id IN (SELECT value FROM json_each(?2))) ORDER BY i.position LIMIT 1",params![job_id,selected],|row|Ok((row.get::<_,String>(0)?,row.get::<_,u32>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?))).optional()?
             };
             let Some((metadata, position, book_id, remote_id)) = next else {
                 break;
@@ -137,7 +229,7 @@ impl Library {
             )?;
             if cached {
                 self.connection()?.execute(
-                    "UPDATE job_items SET state='completed' WHERE job_id=?1 AND chapter_id=?2",
+                    "UPDATE job_items SET state='completed',error=NULL,error_kind=NULL WHERE job_id=?1 AND chapter_id=?2",
                     params![job_id, chapter.id],
                 )?;
                 continue;
@@ -148,16 +240,18 @@ impl Library {
                 ))
             } else {
                 source.fetch_chapter(&remote_id, &chapter, cancelled)
-            };
+            }
+            .and_then(|content| {
+                if content.id != chapter.id {
+                    return Err(Error::SourceChanged("正文身份与任务不一致".into()));
+                }
+                validate_content(&remote_id, content)
+            });
             if cancelled.load(Ordering::Acquire) || matches!(fetched, Err(Error::Cancelled)) {
                 return self.finish_cancel(job_id);
             }
             match fetched {
                 Ok(content) => {
-                    if content.id != chapter.id {
-                        return Err(Error::SourceChanged("正文身份与任务不一致".into()));
-                    }
-                    let content = validate_content(&remote_id, content)?;
                     let mut connection = self.connection()?;
                     let transaction = connection.transaction()?;
                     if cancelled.load(Ordering::Acquire) {
@@ -167,7 +261,7 @@ impl Library {
                     }
                     transaction.execute("INSERT INTO chapters (book_id,chapter_id,position,title,paragraphs) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(book_id,chapter_id) DO NOTHING",params![book_id,chapter.id,position,content.title,serde_json::to_string(&content.paragraphs)?])?;
                     transaction.execute(
-                        "UPDATE job_items SET state='completed' WHERE job_id=?1 AND chapter_id=?2",
+                        "UPDATE job_items SET state='completed',error=NULL,error_kind=NULL WHERE job_id=?1 AND chapter_id=?2",
                         params![job_id, chapter.id],
                     )?;
                     transaction.commit()?;
@@ -180,8 +274,8 @@ impl Library {
                     };
                     let message = error.to_string();
                     self.connection()?.execute(
-                        "UPDATE job_items SET state=?3 WHERE job_id=?1 AND chapter_id=?2",
-                        params![job_id, chapter.id, state],
+                        "UPDATE job_items SET state=?3,error=?4,error_kind=?5 WHERE job_id=?1 AND chapter_id=?2",
+                        params![job_id, chapter.id, state,message,error_kind(&error)],
                     )?;
                     last_error = Some(format!("{}：{message}", chapter.title));
                     // A rate limit or changed page can affect every chapter; stop the run instead of hammering the source.
@@ -224,6 +318,17 @@ impl Library {
             [job_id],
         )?;
         Ok(())
+    }
+}
+
+fn error_kind(error: &Error) -> &'static str {
+    match error {
+        Error::Network(_) => "network",
+        Error::Restricted(_) => "restricted",
+        Error::SourceChanged(_) => "source_changed",
+        Error::Invalid(_) | Error::Json(_) => "invalid_content",
+        Error::Io(_) => "io",
+        _ => "other",
     }
 }
 

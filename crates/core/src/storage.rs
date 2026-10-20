@@ -38,12 +38,22 @@ impl Library {
         let mut connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 2 {
+        if version > 3 {
             return Err(Error::Conflict("书库来自较新版本，请使用匹配的程序".into()));
         }
         connection.execute_batch(
             "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;",
         )?;
+        if (1..3).contains(&version) {
+            let backup =
+                path.with_file_name(format!("library-v{version}-backup-{}.db", Uuid::new_v4()));
+            let reserved = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&backup)?;
+            drop(reserved);
+            connection.backup(rusqlite::MAIN_DB, &backup, None)?;
+        }
         if version == 0 {
             let transaction = connection.transaction()?;
             transaction.execute_batch(
@@ -71,21 +81,20 @@ impl Library {
             transaction.commit()?;
         }
         if version < 2 {
-            if version == 1 {
-                let backup =
-                    path.with_file_name(format!("library-v1-backup-{}.db", Uuid::new_v4()));
-                let reserved = OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&backup)?;
-                drop(reserved);
-                connection.backup(rusqlite::MAIN_DB, &backup, None)?;
-            }
             let transaction = connection.transaction()?;
             transaction.execute_batch(
                 "CREATE TABLE source_catalogs (book_id TEXT PRIMARY KEY REFERENCES books(id), catalog TEXT NOT NULL);
                  CREATE INDEX job_items_pending ON job_items(job_id,state,position);
                  PRAGMA user_version=2;"
+            )?;
+            transaction.commit()?;
+        }
+        if version < 3 {
+            let transaction = connection.transaction()?;
+            transaction.execute_batch(
+                "ALTER TABLE job_items ADD COLUMN error TEXT;
+                ALTER TABLE job_items ADD COLUMN error_kind TEXT;
+                PRAGMA user_version=3;",
             )?;
             transaction.commit()?;
         }

@@ -39,6 +39,8 @@ impl Library {
                 "-partial-{}-of-{}",
                 content.summary.saved_chapters, content.summary.total_chapters
             )
+        } else if content.summary.source == "fanqie-web" {
+            format!("-complete-{}", content.summary.total_chapters)
         } else {
             String::new()
         };

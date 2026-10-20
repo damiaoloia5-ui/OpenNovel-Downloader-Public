@@ -121,6 +121,23 @@ impl BookSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobItemDetail {
+    pub chapter_id: String,
+    pub position: u32,
+    pub title: String,
+    pub state: String,
+    pub error: Option<String>,
+    pub error_kind: Option<String>,
+    pub retryable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobDetails {
+    pub job: JobSnapshot,
+    pub items: Vec<JobItemDetail>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LibrarySnapshot {
     pub books: Vec<BookSummary>,
     pub jobs: Vec<JobSnapshot>,

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { cancelJob, desktopAvailable, downloadBook, exportBook, importBook, inspectBook, resumeJob, snapshot, type Catalog, type Snapshot } from './api';
+import { cancelJob, desktopAvailable, downloadBook, exportBook, importBook, inspectBook, jobDetails, resumeJob, retryChapters, snapshot, updateBook, type Catalog, type JobDetails, type Snapshot } from './api';
 
 const page = ref<'download' | 'library' | 'tasks' | 'sources'>('download');
 const bookInput = ref('');
@@ -15,6 +15,15 @@ const notice = ref('');
 const working = ref(false);
 const filter = ref('');
 const fileInput = ref<HTMLInputElement | null>(null);
+const openedJob = ref('');
+const details = ref<JobDetails | null>(null);
+const chapterFilter = ref('missing');
+const detailPage = ref(1);
+const filteredItems = computed(() => details.value?.items.filter(item => chapterFilter.value === 'all' || (chapterFilter.value === 'missing' ? item.state !== 'completed' : item.state === chapterFilter.value)) ?? []);
+const detailPages = computed(() => Math.max(1, Math.ceil(filteredItems.value.length / 100)));
+const visibleItems = computed(() => filteredItems.value.slice((Math.min(detailPage.value, detailPages.value)-1)*100, Math.min(detailPage.value, detailPages.value)*100));
+const chapterLabels: Record<string,string> = {queued:'待下载',completed:'已保存',failed:'失败',blocked:'网页受限'};
+const errorLabels: Record<string,string> = {network:'网络请求',restricted:'访问限制',source_changed:'来源结构变化',invalid_content:'正文校验',io:'读写错误',other:'其他错误'};
 const books = computed(() => data.value.books.filter(book => `${book.title} ${book.author}`.toLocaleLowerCase().includes(filter.value.toLocaleLowerCase())));
 const saved = computed(() => data.value.books.reduce((total, book) => total + book.saved_chapters, 0));
 const active = computed(() => data.value.jobs.filter(job => job.state === 'queued' || job.state === 'running').length);
@@ -25,9 +34,30 @@ let refreshing = false;
 async function refresh() {
   if (!desktopAvailable || refreshing) return;
   refreshing = true;
-  try { data.value = await snapshot(); }
+  try { data.value = await snapshot(); await refreshDetails(); }
   catch (reason) { error.value = String(reason); }
   finally { refreshing = false; }
+}
+
+async function refreshDetails() {
+  const id = openedJob.value;
+  if (!id) return;
+  const result = await jobDetails(id);
+  if (openedJob.value === id) details.value = result;
+}
+
+async function showDetails(id:string) {
+  if (openedJob.value === id) { openedJob.value = ''; details.value = null; return; }
+  openedJob.value = id; details.value = null; detailPage.value = 1; chapterFilter.value = 'missing';
+  await action(refreshDetails);
+}
+
+async function retryChapter(jobId:string, chapterId:string) {
+  await action(async () => { await retryChapters(jobId,[chapterId]); notice.value = '只重试所选失败章节；其他待下载章节保持原状态。'; });
+}
+
+async function checkUpdates(bookId:string) {
+  await action(async () => { await updateBook(bookId); page.value = 'tasks'; notice.value = '已重新读取官网目录并创建补齐任务；已有章节复用，受限章节仍会明确显示。'; });
 }
 
 async function action(work: () => Promise<void>) {
@@ -143,6 +173,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
               <div class="book-info">
 <span class="source-tag">{{ sourceLabel(book.source) }}</span><h3>{{ book.title }}</h3><p>{{ book.saved_chapters }} / {{ book.total_chapters }} 章<span>{{ book.saved_chapters === book.total_chapters ? '完整保存' : '部分保存' }}</span></p>
                 <div class="book-actions"><button :disabled="working || !book.saved_chapters" @click="saveBook(book.id, 'txt')">导出 TXT</button><button :disabled="working || !book.saved_chapters" @click="saveBook(book.id, 'epub')">导出 EPUB</button></div>
+                <button v-if="book.source === 'fanqie-web'" class="update-book" :disabled="working || data.jobs.some(job => job.book_id === book.id && ['queued','running','paused'].includes(job.state))" @click="checkUpdates(book.id)">检查更新并补齐</button>
               </div>
             </article>
           </section>
@@ -157,6 +188,17 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
             <progress :value="job.saved" :max="job.total" :aria-label="`${job.title}保存进度`"></progress>
             <div class="task-bottom"><span>本次范围已保存 {{ job.saved }} / {{ job.total }} 章 · 受限 {{ job.blocked }} · 失败 {{ job.failed }}</span><button v-if="job.state === 'running' || job.state === 'queued'" :disabled="working" @click="action(() => cancelJob(job.id))">取消任务</button><button v-else-if="job.state !== 'completed' && job.state !== 'blocked' && (job.state !== 'partial' || job.failed || job.saved + job.blocked < job.total)" :disabled="working" @click="action(() => resumeJob(job.id))">继续 / 重试</button></div>
             <p v-if="job.error" class="task-error">{{ job.error }}</p>
+            <button class="detail-toggle" :aria-expanded="openedJob === job.id" :disabled="working" @click="showDetails(job.id)">{{ openedJob === job.id ? '收起章节明细' : '查看章节明细' }}</button>
+            <section v-if="openedJob === job.id" class="chapter-details" :aria-label="`${job.title}章节明细`">
+              <p class="footnote">本任务的执行记录；“网页受限”不能直接重试。可在书库检查更新，重新确认官网开放状态。</p>
+              <div class="detail-toolbar"><label>章节筛选<select v-model="chapterFilter" @change="detailPage = 1"><option value="missing">未保存</option><option value="all">全部</option><option value="failed">失败</option><option value="blocked">受限</option><option value="queued">待下载</option></select></label><span>{{ filteredItems.length }} 章</span></div>
+              <p v-if="!details" role="status">正在读取章节明细…</p>
+              <template v-else>
+                <p v-if="!filteredItems.length" class="footnote">当前筛选下没有章节。</p>
+                <div v-else class="chapter-table"><table><thead><tr><th>序号 / 章节</th><th>状态</th><th>原因与操作</th></tr></thead><tbody><tr v-for="item in visibleItems" :key="item.chapter_id"><td>{{ item.position }} · {{ item.title }}<small>{{ item.chapter_id }}</small></td><td>{{ chapterLabels[item.state] || item.state }}</td><td><span v-if="item.error_kind" class="error-kind">{{ errorLabels[item.error_kind] || item.error_kind }}</span><span>{{ item.error || (item.state === 'blocked' ? '旧任务未记录详情，请检查目录更新。' : item.state === 'failed' ? '旧任务未记录详情，可重试确认原因。' : '—') }}</span><button v-if="item.retryable" :disabled="working || job.state === 'running' || job.state === 'queued'" @click="retryChapter(job.id,item.chapter_id)">重试此章</button></td></tr></tbody></table></div>
+                <div v-if="detailPages > 1" class="detail-pagination"><button :disabled="detailPage <= 1" @click="detailPage = Math.min(detailPage,detailPages)-1">上一页</button><span>{{ Math.min(detailPage,detailPages) }} / {{ detailPages }}</span><button :disabled="detailPage >= detailPages" @click="detailPage++">下一页</button></div>
+              </template>
+            </section>
           </article>
         </template>
 

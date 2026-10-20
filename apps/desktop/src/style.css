@@ -68,6 +68,21 @@ progress { width: 100%; height: 6px; accent-color: #617c49; margin: 20px 0 13px;
 .task-bottom { font-size: 12px; color: #7f8974; }
 .task-bottom button { font-size: 12px; padding: 7px 11px; }
 .task-error { color: #a0633f; font-size: 12px; }
+.update-book { margin-top: 10px; width: 100%; font-size: 11px; }
+.detail-toggle { margin-top: 16px; font-size: 12px; }
+.chapter-details { margin-top: 18px; border-top: 1px solid #e4e8db; }
+.detail-toolbar, .detail-pagination { display: flex; align-items: center; gap: 12px; font-size: 12px; margin: 16px 0; }
+.detail-toolbar label { display: flex; align-items: center; gap: 10px; }
+.detail-toolbar select { padding: 7px; border: 1px solid #d4ddca; color: #334431; background: #fffefa; }
+.chapter-table { max-height: 440px; overflow: auto; }
+.chapter-table table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
+.chapter-table th, .chapter-table td { padding: 12px 8px; border-bottom: 1px solid #e5e9de; vertical-align: top; overflow-wrap: anywhere; }
+.chapter-table th { color: #6d7b61; }
+.chapter-table td:first-child { width: 35%; }
+.chapter-table td:nth-child(2) { min-width: 60px; }
+.chapter-table small { display: block; margin-top: 7px; color: #859079; }
+.chapter-table button { display: block; font-size: 11px; margin-top: 9px; }
+.error-kind { display: block; color: #a0633f; margin-bottom: 5px; }
 .source-intro { padding: 22px; background: #edf1e4; border-left: 3px solid #859a68; margin-bottom: 24px; }
 .source-intro p { color: #6d7b61; font-size: 12px; line-height: 1.8; margin-bottom: 0; }
 .source-list { border: 1px solid #dfe4d7; border-radius: 8px; background: #fffefa; }

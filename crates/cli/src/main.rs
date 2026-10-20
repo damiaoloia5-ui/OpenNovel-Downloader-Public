@@ -29,6 +29,16 @@ enum Command {
     List,
     /// 恢复中断、取消或失败的导入
     Resume { job_id: String },
+    /// 显示章节状态、错误分类及可重试项
+    Details { job_id: String },
+    /// 只重试指定失败章节，不继续其他待下载章节
+    Retry {
+        job_id: String,
+        #[arg(long = "chapter", required = true)]
+        chapters: Vec<String>,
+    },
+    /// 重读官网目录，补齐缺失正文并获取末尾新增章节
+    Update { book_id: String },
     /// 从本地保存内容导出；现有文件不会被覆盖
     Export {
         book_id: String,
@@ -70,6 +80,26 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
             serde_json::to_value(library.run_import(&job, &AtomicBool::new(false))?)?
         }
         Command::List => serde_json::to_value(library.snapshot()?)?,
+        Command::Details { job_id } => serde_json::to_value(library.job_details(&job_id)?)?,
+        Command::Retry { job_id, chapters } => serde_json::to_value(library.retry_chapters(
+            &job_id,
+            &Fanqie::new()?,
+            &AtomicBool::new(false),
+            &chapters,
+        )?)?,
+        Command::Update { book_id } => {
+            let book = library
+                .snapshot()?
+                .books
+                .into_iter()
+                .find(|b| b.id == book_id)
+                .ok_or("作品不存在")?;
+            let url = book.source_url().ok_or("该来源不支持在线更新")?;
+            let source = Fanqie::new()?;
+            let catalog = source.inspect(&url)?;
+            let job = library.create_download(&catalog, 1, catalog.chapters.len())?;
+            serde_json::to_value(library.run_job(&job, &source, &AtomicBool::new(false))?)?
+        }
         Command::Resume { job_id } => {
             let job = library.job(&job_id)?;
             serde_json::to_value(if job.source == "local-json" {

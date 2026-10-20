@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use opennovel_core::sources::{Catalog, Fanqie};
-use opennovel_core::{ExportFormat, ExportReceipt, Library, LibrarySnapshot};
+use opennovel_core::{ExportFormat, ExportReceipt, JobDetails, Library, LibrarySnapshot};
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -48,7 +48,7 @@ async fn download_book(
         library.create_download(&catalog, first, last)
     })
     .await?;
-    launch(&job, &state).await?;
+    launch(&job, &state, None).await?;
     Ok(job)
 }
 
@@ -68,22 +68,79 @@ async fn library_snapshot(state: State<'_, AppState>) -> Result<LibrarySnapshot,
 }
 
 #[tauri::command]
+async fn job_details(job_id: String, state: State<'_, AppState>) -> Result<JobDetails, String> {
+    let library = Arc::clone(&state.library);
+    blocking(move || library.job_details(&job_id)).await
+}
+
+#[tauri::command]
+async fn retry_chapters(
+    job_id: String,
+    chapters: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    launch(&job_id, &state, Some(chapters)).await
+}
+
+#[tauri::command]
+async fn update_book(book_id: String, state: State<'_, AppState>) -> Result<String, String> {
+    let library = Arc::clone(&state.library);
+    let handle = Arc::clone(&state.source);
+    let job = blocking(move || {
+        let book = library
+            .snapshot()?
+            .books
+            .into_iter()
+            .find(|book| book.id == book_id)
+            .ok_or_else(|| opennovel_core::Error::Invalid("作品不存在".into()))?;
+        let url = book
+            .source_url()
+            .ok_or_else(|| opennovel_core::Error::Invalid("该来源不支持在线更新".into()))?;
+        let catalog = source(&handle)?.inspect(&url)?;
+        library.create_download(&catalog, 1, catalog.chapters.len())
+    })
+    .await?;
+    launch(&job, &state, None).await?;
+    Ok(job)
+}
+
+#[tauri::command]
 async fn import_book(json: String, state: State<'_, AppState>) -> Result<String, String> {
     let library = Arc::clone(&state.library);
     let job = blocking(move || library.create_import(&json)).await?;
-    launch(&job, &state).await?;
+    launch(&job, &state, None).await?;
     Ok(job)
 }
 
 #[tauri::command]
 async fn resume_job(job_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    launch(&job_id, &state).await
+    launch(&job_id, &state, None).await
 }
 
-async fn launch(job: &str, state: &AppState) -> Result<(), String> {
+async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> Result<(), String> {
     let library = Arc::clone(&state.library);
     let requested = job.to_owned();
     let snapshot = blocking(move || library.job(&requested)).await?;
+    if let Some(chapters) = &selection {
+        let library = Arc::clone(&state.library);
+        let requested = job.to_owned();
+        let details = blocking(move || library.job_details(&requested)).await?;
+        if chapters.is_empty()
+            || chapters
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                != chapters.len()
+            || chapters.iter().any(|id| {
+                !details
+                    .items
+                    .iter()
+                    .any(|item| item.chapter_id == *id && item.retryable)
+            })
+        {
+            return Err("请选择当前任务的失败章节；受限章节请先检查目录更新".into());
+        }
+    }
     if !matches!(
         snapshot.state.as_str(),
         "queued" | "paused" | "cancelled" | "failed" | "partial" | "blocked"
@@ -105,7 +162,13 @@ async fn launch(job: &str, state: &AppState) -> Result<(), String> {
         let _result = if snapshot.source == "local-json" {
             library.run_import(&job_id, &token)
         } else {
-            source(&handle).and_then(|client| library.run_job(&job_id, client, &token))
+            source(&handle).and_then(|client| {
+                if let Some(chapters) = selection {
+                    library.retry_chapters(&job_id, client, &token, &chapters)
+                } else {
+                    library.run_job(&job_id, client, &token)
+                }
+            })
         };
         if let Ok(mut entries) = cancellations.lock() {
             entries.remove(&job_id);
@@ -150,6 +213,9 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             library_snapshot,
+            job_details,
+            retry_chapters,
+            update_book,
             import_book,
             inspect_book,
             download_book,
