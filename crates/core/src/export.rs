@@ -37,7 +37,11 @@ impl Library {
         format: ExportFormat,
     ) -> Result<ExportReceipt> {
         let job = self.job(job_id)?;
-        let mut content = self.content(&job.book_id)?;
+        let mut content = if let Some(id) = self.job_history_id(job_id)? {
+            self.historical_content(&id)?
+        } else {
+            self.content(&job.book_id)?
+        };
         let selected = self
             .connection()?
             .prepare("SELECT chapter_id FROM job_items WHERE job_id=?1")?
@@ -51,6 +55,11 @@ impl Library {
         content.summary.title.push_str("（任务选章）");
         content.summary.total_chapters = selected.len() as u32;
         content.summary.saved_chapters = content.chapters.len() as u32;
+        content.modified = self.connection()?.query_row(
+            "SELECT created_at FROM jobs WHERE id=?1",
+            [job_id],
+            |r| r.get(0),
+        )?;
         self.persist_export(
             &job.book_id,
             Some(job_id),
@@ -60,7 +69,7 @@ impl Library {
         )
     }
 
-    fn persist_export(
+    pub(crate) fn persist_export(
         &self,
         book_id: &str,
         job_id: Option<&str>,
@@ -85,8 +94,25 @@ impl Library {
             String::new()
         };
         let prefix = if job_id.is_some() { "job-" } else { "" };
+        let has_history: bool = self.connection()?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM catalog_history WHERE book_id=?1)",
+            [book_id],
+            |r| r.get(0),
+        )?;
+        let revision = if has_history && content.summary.id == book_id {
+            use sha2::{Digest, Sha256};
+            let identity = serde_json::to_vec(&(
+                &content.summary.title,
+                &content.summary.author,
+                content.summary.total_chapters,
+                &content.chapters,
+            ))?;
+            format!("-v{}", &format!("{:x}", Sha256::digest(identity))[..16])
+        } else {
+            String::new()
+        };
         let path = std::path::absolute(directory.join(format!(
-            "{prefix}{}{suffix}.{extension}",
+            "{prefix}{}{revision}{suffix}.{extension}",
             content.summary.id
         )))?;
         let mut temporary = NamedTempFile::new_in(directory)?;
@@ -194,7 +220,18 @@ fn write_epub(output: &mut std::fs::File, content: &BookContent) -> Result<()> {
         xml(&coverage(content))
     )?;
     archive.start_file("EPUB/package.opf", compressed)?;
-    let modified = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let modified = chrono::NaiveDateTime::parse_from_str(&content.modified, "%Y-%m-%d %H:%M:%S")
+        .map_err(|_| Error::Invalid("本地内容时间字段无效".into()))?
+        .and_utc()
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let identifier = uuid::Uuid::parse_str(
+        content
+            .summary
+            .id
+            .strip_prefix("history-")
+            .unwrap_or(&content.summary.id),
+    )
+    .map_err(|_| Error::Invalid("本地电子书标识无效".into()))?;
     let creator = if content.summary.author.is_empty() {
         String::new()
     } else {
@@ -208,7 +245,7 @@ fn write_epub(output: &mut std::fs::File, content: &BookContent) -> Result<()> {
     write!(
         archive,
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?><package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"book-id\"><metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:identifier id=\"book-id\">urn:uuid:{}</dc:identifier><dc:title>{title}</dc:title>{creator}{source}<dc:language>zh-CN</dc:language><dc:description>{}</dc:description><meta property=\"dcterms:modified\">{modified}</meta></metadata><manifest>{manifest}</manifest><spine>{spine}</spine></package>",
-        content.summary.id,
+        identifier,
         xml(&coverage(content))
     )?;
     archive.finish()?;

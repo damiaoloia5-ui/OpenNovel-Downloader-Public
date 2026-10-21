@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import LibraryTools from './LibraryTools.vue';
 import SourceSearch from './SourceSearch.vue';
 import BatchPanel from './BatchPanel.vue';
+import RevisionPanel from './RevisionPanel.vue';
 import {preferences,organizeBook,type BookPreferences} from './api';
 import { sourceCapabilities, type SourceInfo, bookDetails, cancelJob, desktopAvailable, downloadBook, exportBook, exportJob, importBook, inspectBook, jobDetails, pauseJob, readChapter, resumeJob, retryChapters, revealExport, snapshot, updateBook, type BookDetails, type Catalog, type ChapterContent, type JobDetails, type Snapshot } from './api';
 
@@ -99,6 +100,7 @@ async function saveOrganization(archived:boolean) {
   const id=bookView.value?.book.id;if(!id)return;
   await action(async()=>{await organizeBook(id,editingTags.value.split(/[,，]/).map(t=>t.trim()).filter(Boolean),archived);notice.value=archived?'已归档，离线正文和导出保留。':'书库标签已保存，作品在书架显示。';});
 }
+function changedBook(){void action(async()=>{const id=bookView.value?.book.id;if(!id)return;const previous=reading.value?.id;bookView.value=await bookDetails(id);reading.value=previous&&bookView.value.chapters.some(c=>c.id===previous&&c.saved)?await readChapter(id,previous):null;});}
 
 async function openChapter(id:string) {
   const book=bookView.value;
@@ -228,6 +230,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
             <p class="footnote">{{ bookView.book.author || '未标注作者' }} · {{ sourceLabel(bookView.book.source) }} · 已保存 {{ bookView.book.saved_chapters }}/{{ bookView.book.total_chapters }} 章<br />最近目录任务时间：{{ bookView.acquired_at }} UTC</p>
             <p class="book-description">{{ bookView.description || '未提供简介。' }}</p>
             <div class="range-row"><label>标签（逗号分隔）<input v-model="editingTags" placeholder="例如 连载，收藏" :disabled="working" /></label><button :disabled="working" @click="saveOrganization(!!selectedPreferences?.archived)">保存标签</button><button :disabled="working" @click="saveOrganization(!selectedPreferences?.archived)">{{ selectedPreferences?.archived ? '移回书架' : '归档作品' }}</button></div>
+            <RevisionPanel :key="bookView.book.id" :book-id="bookView.book.id" :chapter-id="reading?.id||null" :online="sourceInfos.some(s=>s.id===bookView?.book.source&&s.can_download)" @changed="changedBook" />
             <div class="reader-layout">
               <div class="reader-directory"><label>目录检索<input v-model="readerFilter" type="search" placeholder="序号或章节标题" @input="readerPage = 1" /></label><ol><li v-for="chapter in visibleChapters" :key="chapter.id"><button :disabled="working || !chapter.saved" :aria-current="reading?.id === chapter.id ? 'true' : undefined" @click="openChapter(chapter.id)">{{ chapter.position }} · {{ chapter.title }}{{ chapter.saved ? '' : '（未保存）' }}</button></li></ol><div class="detail-pagination"><button :disabled="readerPage <= 1" @click="readerPage--">前页</button><span>{{ Math.min(readerPage,readerPages) }}/{{ readerPages }}</span><button :disabled="readerPage >= readerPages" @click="readerPage++">后页</button></div></div>
               <article class="reader-text" aria-label="已保存正文"><template v-if="reading"><h3>{{ reading.title }}</h3><p v-for="(paragraph,index) in reading.paragraphs" :key="index">{{ paragraph }}</p><div class="detail-pagination"><button :disabled="working || readingIndex <= 0" @click="openChapter(savedChapters[readingIndex-1]!.id)">上一章</button><button :disabled="working || readingIndex < 0 || readingIndex >= savedChapters.length-1" @click="openChapter(savedChapters[readingIndex+1]!.id)">下一章</button></div></template><p v-else class="footnote">选择已保存章节即可离线预览。未保存或受限正文不会在此补造。</p></article>

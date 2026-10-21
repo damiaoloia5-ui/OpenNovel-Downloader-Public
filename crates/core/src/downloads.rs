@@ -86,6 +86,10 @@ impl Library {
                     "该作品还有待执行或中断任务，请先继续或取消原任务".into(),
                 ));
             }
+            let old_raw = serde_json::to_string(&previous)?;
+            if old_raw != serde_json::to_string(catalog)? {
+                crate::revisions::snapshot(&transaction, &book_id, &old_raw, "catalog_update")?;
+            }
             transaction.execute(
                 "UPDATE books SET title=?2,author=?3,total=?4 WHERE id=?1",
                 params![
@@ -182,8 +186,8 @@ impl Library {
     pub fn job_details(&self, job_id: &str) -> Result<JobDetails> {
         let job = self.job(job_id)?;
         let connection = self.connection()?;
-        let mut query = connection.prepare("SELECT i.chapter_id,i.position,COALESCE(c.title,CASE WHEN json_valid(i.payload) THEN json_extract(i.payload,'$.title') END,'未标注章节'),i.state,i.error,i.error_kind
-            FROM job_items i JOIN jobs j ON j.id=i.job_id LEFT JOIN chapters c ON c.book_id=j.book_id AND c.chapter_id=i.chapter_id
+        let mut query = connection.prepare("SELECT i.chapter_id,i.position,COALESCE(hc.title,c.title,CASE WHEN json_valid(i.payload) THEN json_extract(i.payload,'$.title') END,'未标注章节'),i.state,i.error,i.error_kind
+            FROM job_items i JOIN jobs j ON j.id=i.job_id LEFT JOIN chapters c ON c.book_id=j.book_id AND c.chapter_id=i.chapter_id LEFT JOIN job_history jh ON jh.job_id=j.id LEFT JOIN history_chapters hc ON hc.snapshot_id=jh.snapshot_id AND hc.chapter_id=i.chapter_id
             WHERE i.job_id=?1 ORDER BY i.position")?;
         let items = query
             .query_map([job_id], |row| {

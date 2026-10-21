@@ -36,6 +36,17 @@ export function batches():Promise<Batch[]> {return invoke('batch_snapshot');}
 export function createBatch(inputs:string[],selection:string):Promise<string> {return invoke('create_batch',{inputs,selection});}
 export function resumeBatch(id:string):Promise<void> {return invoke('resume_batch',{id});}
 export function stopBatch(id:string,paused:boolean):Promise<void> {return invoke('stop_batch',{id,paused});}
+export interface CatalogChange {chapter_id:string;kind:string;previous_position:number|null;position:number|null;previous_title:string|null;title:string|null}
+export interface CatalogUpdate {previous_hash:string;proposed_hash:string;changed:boolean;changes:CatalogChange[];metadata:{field:string;previous:string;proposed:string}[]}
+export interface UpdatePreview {token:string;diff:CatalogUpdate}
+export interface HistoryEntry {id:string;book_id:string;title:string;reason:string;created_at:string;saved:number;total:number}
+export function previewCatalogUpdate(bookId:string):Promise<UpdatePreview> {return invoke('preview_catalog_update',{bookId});}
+export function acceptCatalogUpdate(token:string):Promise<string> {return invoke('accept_catalog_update',{token});}
+export function refreshBookChapter(bookId:string,chapterId:string):Promise<{changed:boolean;snapshot_id:string|null}> {return invoke('refresh_book_chapter',{bookId,chapterId});}
+export function bookHistory(bookId:string):Promise<HistoryEntry[]> {return invoke('book_history',{bookId});}
+export function historyDetails(id:string):Promise<BookDetails> {return invoke('history_details',{id});}
+export function readHistory(id:string,chapterId:string):Promise<ChapterContent> {return invoke('read_history',{id,chapterId});}
+export function exportHistory(id:string,format:'txt'|'epub'):Promise<Receipt> {return invoke('export_history',{id,format});}
 export function sourceCapabilities():Promise<SourceInfo[]> {return invoke('source_capabilities');}
 export interface ChapterContent {id:string;title:string;paragraphs:string[]}
 export interface ExportRecord {id:string;book_id:string;job_id:string|null;path:string;format:string;saved:number;total:number;partial:boolean;created_at:string}

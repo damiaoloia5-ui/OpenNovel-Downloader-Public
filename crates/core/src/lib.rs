@@ -4,6 +4,7 @@ mod downloads;
 mod export;
 mod maintenance;
 mod reading;
+mod revisions;
 pub mod sources;
 mod storage;
 
@@ -11,6 +12,9 @@ pub use batch::{BatchItem, BatchSnapshot, MAX_BATCH_ITEMS};
 pub use domain::*;
 pub use export::ExportFormat;
 pub use maintenance::{BackupManifest, BookPreferences, DiagnosticReport};
+pub use revisions::{
+    CatalogChange, CatalogFieldChange, CatalogUpdate, HistoryEntry, RefreshReceipt,
+};
 pub use storage::Library;
 
 #[derive(Debug, thiserror::Error)]

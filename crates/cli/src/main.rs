@@ -16,6 +16,31 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Command {
+    /// 预览官网目录变动，返回确认用的前后摘要
+    UpdatePreview { book_id: String },
+    /// 只应用已预览的同一版本目录，并保留旧快照
+    UpdateAccept {
+        book_id: String,
+        #[arg(long)]
+        previous_hash: String,
+        #[arg(long)]
+        proposed_hash: String,
+    },
+    /// 检查已保存单章的正文修订；失败保留旧文
+    RefreshChapter { book_id: String, chapter_id: String },
+    /// 列出目录和正文修订的历史快照
+    History { book_id: String },
+    ReadHistory {
+        snapshot_id: String,
+        chapter_id: String,
+    },
+    ExportHistory {
+        snapshot_id: String,
+        #[arg(long, default_value = "epub")]
+        format: String,
+        #[arg(long, default_value = ".artifacts/exports")]
+        output: PathBuf,
+    },
     /// 从逐行作品链接文件创建有界批次，默认仅选择每本前 3 章
     Batch {
         file: PathBuf,
@@ -132,6 +157,50 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let library = Library::open(args.database)?;
     let hub = SourceHub::new();
     let result = match args.command {
+        Command::UpdatePreview { book_id } => {
+            let book = library.book_details(&book_id)?.book;
+            let catalog = hub.inspect(&book.source_url().ok_or("该来源没有在线目录")?)?;
+            serde_json::to_value(library.preview_catalog_update(&book_id, &catalog)?)?
+        }
+        Command::UpdateAccept {
+            book_id,
+            previous_hash,
+            proposed_hash,
+        } => {
+            let book = library.book_details(&book_id)?.book;
+            let catalog = hub.inspect(&book.source_url().ok_or("该来源没有在线目录")?)?;
+            let preview = library.preview_catalog_update(&book_id, &catalog)?;
+            if preview.proposed_hash != proposed_hash {
+                return Err("官网目录已变化，请重新预览".into());
+            }
+            serde_json::json!({"snapshot_id":library.accept_catalog_update(&book_id,&catalog,&previous_hash)?})
+        }
+        Command::RefreshChapter {
+            book_id,
+            chapter_id,
+        } => {
+            let book = library.book_details(&book_id)?.book;
+            serde_json::to_value(library.refresh_chapter(
+                &book_id,
+                &chapter_id,
+                hub.adapter(&book.source)?,
+                &AtomicBool::new(false),
+            )?)?
+        }
+        Command::History { book_id } => serde_json::to_value(library.history(&book_id)?)?,
+        Command::ReadHistory {
+            snapshot_id,
+            chapter_id,
+        } => serde_json::to_value(library.read_history(&snapshot_id, &chapter_id)?)?,
+        Command::ExportHistory {
+            snapshot_id,
+            format,
+            output,
+        } => serde_json::to_value(library.export_history(
+            &snapshot_id,
+            output,
+            ExportFormat::parse(&format)?,
+        )?)?,
         Command::Batch { file, chapters } => {
             let mut text = String::new();
             std::fs::File::open(file)?

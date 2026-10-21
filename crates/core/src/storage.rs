@@ -38,13 +38,13 @@ impl Library {
         let mut connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 6 {
+        if version > 7 {
             return Err(Error::Conflict("书库来自较新版本，请使用匹配的程序".into()));
         }
         connection.execute_batch(
             "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;",
         )?;
-        if (1..6).contains(&version) {
+        if (1..7).contains(&version) {
             let backup =
                 path.with_file_name(format!("library-v{version}-backup-{}.db", Uuid::new_v4()));
             let reserved = OpenOptions::new()
@@ -122,6 +122,15 @@ impl Library {
                 batch_id TEXT NOT NULL REFERENCES batches(id),position INTEGER NOT NULL,input TEXT NOT NULL,
                 state TEXT NOT NULL,job_id TEXT REFERENCES jobs(id),error TEXT,PRIMARY KEY(batch_id,position),UNIQUE(batch_id,input)
             ); PRAGMA user_version=6;")?;
+            transaction.commit()?;
+        }
+        if version < 7 {
+            let transaction = connection.transaction()?;
+            transaction.execute_batch("CREATE TABLE content_blobs(hash TEXT PRIMARY KEY,paragraphs TEXT NOT NULL);
+                CREATE TABLE catalog_history(id TEXT PRIMARY KEY,book_id TEXT NOT NULL REFERENCES books(id),catalog TEXT NOT NULL,reason TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+                CREATE TABLE history_chapters(snapshot_id TEXT NOT NULL REFERENCES catalog_history(id),chapter_id TEXT NOT NULL,position INTEGER NOT NULL,title TEXT NOT NULL,body_hash TEXT NOT NULL REFERENCES content_blobs(hash),PRIMARY KEY(snapshot_id,chapter_id));
+                CREATE TABLE job_history(job_id TEXT PRIMARY KEY REFERENCES jobs(id),snapshot_id TEXT NOT NULL REFERENCES catalog_history(id));
+                PRAGMA user_version=7;")?;
             transaction.commit()?;
         }
         connection.execute(
@@ -425,10 +434,15 @@ impl Library {
                 })
                 .collect::<Result<Vec<_>>>()?
         };
+        let modified=transaction.query_row("SELECT MAX(moment) FROM (SELECT created_at AS moment FROM jobs WHERE book_id=?1 UNION ALL SELECT created_at AS moment FROM catalog_history WHERE book_id=?1)",[book_id],|r|r.get::<_,String>(0))?;
         transaction.commit()?;
         if chapters.is_empty() {
             return Err(Error::Conflict("尚无已保存章节，无法导出".into()));
         }
-        Ok(BookContent { summary, chapters })
+        Ok(BookContent {
+            summary,
+            chapters,
+            modified,
+        })
     }
 }

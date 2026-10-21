@@ -20,6 +20,144 @@ struct AppState {
     diagnostic_preview: Mutex<Option<DiagnosticReport>>,
     restored: Mutex<HashMap<String, PathBuf>>,
     batches: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    proposals: Mutex<HashMap<String, PendingUpdate>>,
+}
+struct PendingUpdate {
+    book_id: String,
+    catalog: Catalog,
+    previous_hash: String,
+    created: std::time::Instant,
+}
+#[derive(serde::Serialize)]
+struct UpdatePreview {
+    token: String,
+    diff: opennovel_core::CatalogUpdate,
+}
+#[tauri::command]
+async fn preview_catalog_update(
+    book_id: String,
+    state: State<'_, AppState>,
+) -> Result<UpdatePreview, String> {
+    let library = Arc::clone(&state.library);
+    let hub = Arc::clone(&state.source);
+    let (catalog, diff) = blocking(move || {
+        let book = library.book_details(&book_id)?.book;
+        let catalog = hub.inspect(
+            &book
+                .source_url()
+                .ok_or_else(|| opennovel_core::Error::Invalid("该来源没有在线目录".into()))?,
+        )?;
+        let diff = library.preview_catalog_update(&book_id, &catalog)?;
+        Ok((catalog, diff))
+    })
+    .await?;
+    let mut proposals = state.proposals.lock().map_err(|_| "目录预览不可用")?;
+    proposals.retain(|_, p| p.created.elapsed() < std::time::Duration::from_secs(600));
+    if proposals.len() >= 8 {
+        return Err("待确认目录过多，请稍后重新预览".into());
+    }
+    let token = if diff.changed {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        String::new()
+    };
+    if diff.changed {
+        let book_id = state
+            .library
+            .snapshot()
+            .map_err(|e| e.to_string())?
+            .books
+            .into_iter()
+            .find(|b| b.source == catalog.source && b.remote_id == catalog.remote_id)
+            .ok_or("作品不存在")?
+            .id;
+        proposals.insert(
+            token.clone(),
+            PendingUpdate {
+                book_id,
+                catalog,
+                previous_hash: diff.previous_hash.clone(),
+                created: std::time::Instant::now(),
+            },
+        );
+    }
+    Ok(UpdatePreview { token, diff })
+}
+#[tauri::command]
+async fn accept_catalog_update(
+    token: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let proposal = state
+        .proposals
+        .lock()
+        .map_err(|_| "目录预览不可用")?
+        .remove(&token)
+        .ok_or("目录预览已失效，请重新读取")?;
+    if proposal.created.elapsed() >= std::time::Duration::from_secs(600) {
+        return Err("目录预览已过期，请重新读取".into());
+    }
+    let library = Arc::clone(&state.library);
+    blocking(move || {
+        library.accept_catalog_update(
+            &proposal.book_id,
+            &proposal.catalog,
+            &proposal.previous_hash,
+        )
+    })
+    .await
+}
+#[tauri::command]
+async fn refresh_book_chapter(
+    book_id: String,
+    chapter_id: String,
+    state: State<'_, AppState>,
+) -> Result<opennovel_core::RefreshReceipt, String> {
+    let library = Arc::clone(&state.library);
+    let hub = Arc::clone(&state.source);
+    blocking(move || {
+        let book = library.book_details(&book_id)?.book;
+        library.refresh_chapter(
+            &book_id,
+            &chapter_id,
+            hub.adapter(&book.source)?,
+            &AtomicBool::new(false),
+        )
+    })
+    .await
+}
+#[tauri::command]
+async fn book_history(
+    book_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<opennovel_core::HistoryEntry>, String> {
+    let library = Arc::clone(&state.library);
+    blocking(move || library.history(&book_id)).await
+}
+#[tauri::command]
+async fn history_details(id: String, state: State<'_, AppState>) -> Result<BookDetails, String> {
+    let library = Arc::clone(&state.library);
+    blocking(move || library.history_details(&id)).await
+}
+#[tauri::command]
+async fn read_history(
+    id: String,
+    chapter_id: String,
+    state: State<'_, AppState>,
+) -> Result<ImportChapter, String> {
+    let library = Arc::clone(&state.library);
+    blocking(move || library.read_history(&id, &chapter_id)).await
+}
+#[tauri::command]
+async fn export_history(
+    id: String,
+    format: String,
+    state: State<'_, AppState>,
+) -> Result<ExportReceipt, String> {
+    let format = ExportFormat::parse(&format).map_err(|e| e.to_string())?;
+    let library = Arc::clone(&state.library);
+    let directory = state.exports.clone();
+    blocking(move || library.export_history(&id, directory, format)).await
 }
 
 #[tauri::command]
@@ -509,10 +647,18 @@ fn main() {
                 diagnostic_preview: Mutex::new(None),
                 restored: Mutex::default(),
                 batches: Arc::default(),
+                proposals: Mutex::default(),
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            preview_catalog_update,
+            accept_catalog_update,
+            refresh_book_chapter,
+            book_history,
+            history_details,
+            read_history,
+            export_history,
             search_books,
             batch_snapshot,
             create_batch,

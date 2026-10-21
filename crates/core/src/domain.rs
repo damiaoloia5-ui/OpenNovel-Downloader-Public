@@ -198,6 +198,7 @@ pub struct BookDetails {
 pub(crate) struct BookContent {
     pub summary: BookSummary,
     pub chapters: Vec<ImportChapter>,
+    pub modified: String,
 }
 
 pub fn parse_selection(input: &str, total: usize) -> Result<Vec<usize>> {
