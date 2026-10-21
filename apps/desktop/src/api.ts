@@ -27,7 +27,15 @@ export interface Snapshot { books: Book[]; jobs: Job[] }
 export interface JobItem {chapter_id:string;position:number;title:string;state:string;error:string|null;error_kind:string|null;retryable:boolean}
 export interface JobDetails {job:Job;items:JobItem[]}
 export interface Catalog { source: string; remote_id: string; title: string; author: string; description:string; chapters: { id: string; title: string; restricted: boolean }[] }
-export interface SourceInfo {id:string;name:string;can_download:boolean;note:string;example:string}
+export interface SourceInfo {id:string;name:string;can_download:boolean;can_search:boolean;note:string;example:string}
+export interface SearchResult {source:string;remote_id:string;title:string;author:string;input:string}
+export interface BatchItem {position:number;input:string;state:string;job_id:string|null;error:string|null}
+export interface Batch {id:string;state:string;selection:string;duplicates:number;items:BatchItem[];error:string|null}
+export function searchBooks(source:string,query:string):Promise<SearchResult[]> {return invoke('search_books',{source,query});}
+export function batches():Promise<Batch[]> {return invoke('batch_snapshot');}
+export function createBatch(inputs:string[],selection:string):Promise<string> {return invoke('create_batch',{inputs,selection});}
+export function resumeBatch(id:string):Promise<void> {return invoke('resume_batch',{id});}
+export function stopBatch(id:string,paused:boolean):Promise<void> {return invoke('stop_batch',{id,paused});}
 export function sourceCapabilities():Promise<SourceInfo[]> {return invoke('source_capabilities');}
 export interface ChapterContent {id:string;title:string;paragraphs:string[]}
 export interface ExportRecord {id:string;book_id:string;job_id:string|null;path:string;format:string;saved:number;total:number;partial:boolean;created_at:string}

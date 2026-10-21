@@ -9,6 +9,7 @@ pub struct SourceInfo {
     pub id: &'static str,
     pub name: &'static str,
     pub can_download: bool,
+    pub can_search: bool,
     pub note: &'static str,
     pub example: &'static str,
 }
@@ -17,6 +18,7 @@ static SOURCES: [SourceInfo; 4] = [
         id: "fanqie-web",
         name: "番茄官网网页",
         can_download: true,
+        can_search: false,
         note: "官网开放正文；App 专属或受限章节单独标注。",
         example: "https://fanqienovel.com/page/作品ID",
     },
@@ -24,6 +26,7 @@ static SOURCES: [SourceInfo; 4] = [
         id: "qimao-web",
         name: "七猫官网网页",
         can_download: true,
+        can_search: false,
         note: "仅目录明确免订阅的完整网页正文；VIP 标记不按 App 广告免费解释。",
         example: "https://www.qimao.com/shuku/作品ID/",
     },
@@ -31,6 +34,7 @@ static SOURCES: [SourceInfo; 4] = [
         id: "jinjiang-web",
         name: "晋江官网免费章节",
         can_download: true,
+        can_search: true,
         note: "官网完整目录与公开免费正文；VIP、锁定章节明确受限，未接入已购正文。",
         example: "https://www.jjwxc.net/onebook.php?novelid=作品ID",
     },
@@ -38,6 +42,7 @@ static SOURCES: [SourceInfo; 4] = [
         id: "shuqi-web",
         name: "书旗官网目录",
         can_download: false,
+        can_search: false,
         note: "详情与完整目录已接入；正文实测限流，尚未通过验收，暂不开放下载。",
         example: "https://www.shuqi.com/book/作品ID.html",
     },
@@ -126,6 +131,12 @@ fn initialize<T>(cell: &OnceLock<T>, create: impl FnOnce() -> Result<T>) -> Resu
 impl SourceHub {
     pub fn new() -> Self {
         Self::default()
+    }
+    pub fn search(&self, source: &str, query: &str) -> Result<Vec<super::SearchResult>> {
+        match source {
+            "jinjiang-web" => initialize(&self.jinjiang, Jinjiang::new)?.search(query),
+            _ => Err(Error::Invalid("该来源尚未通过站内搜索验收".into())),
+        }
     }
     pub fn inspect(&self, input: &str) -> Result<Catalog> {
         let (source, id) = identify(input)?;

@@ -19,6 +19,68 @@ impl Jinjiang {
             catalogs: Mutex::new(HashMap::new()),
         })
     }
+    pub fn search(&self, query: &str) -> Result<Vec<super::SearchResult>> {
+        let query = query.trim();
+        if query.is_empty() || query.chars().count() > 80 || query.chars().any(|c| c.is_control()) {
+            return Err(Error::Invalid("搜索词须为 1～80 个可见字符".into()));
+        }
+        let (bytes, _, errors) = encoding_rs::GBK.encode(query);
+        if errors {
+            return Err(Error::Invalid("晋江官网搜索暂不支持该字符编码".into()));
+        }
+        let encoded = bytes
+            .iter()
+            .map(|b| format!("%{b:02X}"))
+            .collect::<String>();
+        let html = self.text(
+            &format!("https://www.jjwxc.net/search.php?kw={encoded}&ord=&version=1&t=1"),
+            &AtomicBool::new(false),
+        )?;
+        Self::parse_search(&html, query)
+    }
+    pub fn parse_search(html: &str, query: &str) -> Result<Vec<super::SearchResult>> {
+        let doc = Html::parse_document(html);
+        if !page::text(&doc, "title")?.contains(query) {
+            return Err(page::changed("晋江搜索响应与关键词不符"));
+        }
+        let container = page::one(&doc, "#search_result")?;
+        let mut results = Vec::new();
+        let mut ids = std::collections::HashSet::new();
+        for entry in container.select(&page::selector("#search_result > div")) {
+            let Some(a) = entry.select(&page::selector("h3.title > a[href]")).next() else {
+                continue;
+            };
+            let raw = a.value().attr("href").expect("href selector");
+            let (source, id) = super::identify(raw)?;
+            if source != "jinjiang-web" {
+                return Err(page::changed("搜索结果超出晋江官网"));
+            }
+            let title = a.text().collect::<String>().trim().to_owned();
+            let author = entry
+                .select(&page::selector(
+                    ".info > a[href*='oneauthor.php?authorid=']",
+                ))
+                .next()
+                .map(|e| e.text().collect::<String>().trim().to_owned())
+                .unwrap_or_default();
+            if title.is_empty() || title.contains('\u{fffd}') || author.contains('\u{fffd}') {
+                return Err(page::changed("搜索结果标题或作者编码无效"));
+            }
+            if ids.insert(id.clone()) {
+                results.push(super::SearchResult {
+                    source: source.into(),
+                    input: format!("jinjiang:{id}"),
+                    remote_id: id,
+                    title,
+                    author,
+                });
+            }
+            if results.len() == 20 {
+                break;
+            }
+        }
+        Ok(results)
+    }
     fn text(&self, url: &str, stop: &AtomicBool) -> Result<String> {
         let bytes = self.http.get(url, stop, 8 * 1024 * 1024)?;
         // The official desktop pages declare GB2312. Decode errors outside the selected content

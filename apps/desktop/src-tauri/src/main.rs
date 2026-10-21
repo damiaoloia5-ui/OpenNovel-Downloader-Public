@@ -19,6 +19,72 @@ struct AppState {
     exports: PathBuf,
     diagnostic_preview: Mutex<Option<DiagnosticReport>>,
     restored: Mutex<HashMap<String, PathBuf>>,
+    batches: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+}
+
+#[tauri::command]
+async fn search_books(
+    source: String,
+    query: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<opennovel_core::sources::SearchResult>, String> {
+    let hub = Arc::clone(&state.source);
+    blocking(move || hub.search(&source, &query)).await
+}
+#[tauri::command]
+async fn batch_snapshot(
+    state: State<'_, AppState>,
+) -> Result<Vec<opennovel_core::BatchSnapshot>, String> {
+    let library = Arc::clone(&state.library);
+    blocking(move || library.batches()).await
+}
+#[tauri::command]
+async fn create_batch(
+    inputs: Vec<String>,
+    selection: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let library = Arc::clone(&state.library);
+    let id = blocking(move || library.create_batch(&inputs, &selection)).await?;
+    launch_batch(&id, &state)?;
+    Ok(id)
+}
+#[tauri::command]
+fn resume_batch(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    launch_batch(&id, &state)
+}
+fn launch_batch(id: &str, state: &AppState) -> Result<(), String> {
+    let mut active = state.batches.lock().map_err(|_| "批次管理器不可用")?;
+    if !active.is_empty() {
+        return Err("已有批次在执行或停止中，请稍后继续".into());
+    }
+    let batch = state.library.batch(id).map_err(|e| e.to_string())?;
+    if !matches!(batch.state.as_str(), "queued" | "paused") {
+        return Err("批次不在可继续状态".into());
+    }
+    let stop = Arc::new(AtomicBool::new(false));
+    active.insert(id.into(), Arc::clone(&stop));
+    let id = id.to_owned();
+    let library = Arc::clone(&state.library);
+    let hub = Arc::clone(&state.source);
+    let active = Arc::clone(&state.batches);
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = library.run_batch(&id, hub.as_ref(), &stop) {
+            let _ = library.record_batch_failure(&id, &e.to_string());
+        }
+        if let Ok(mut workers) = active.lock() {
+            workers.remove(&id);
+        }
+    });
+    Ok(())
+}
+#[tauri::command]
+fn stop_batch(id: String, paused: bool, state: State<'_, AppState>) -> Result<(), String> {
+    let active = state.batches.lock().map_err(|_| "批次管理器不可用")?;
+    state
+        .library
+        .stop_batch(&id, paused, active.get(&id).map(|t| t.as_ref()))
+        .map_err(|e| e.to_string())
 }
 
 #[derive(serde::Serialize)]
@@ -305,6 +371,14 @@ async fn resume_job(job_id: String, state: State<'_, AppState>) -> Result<(), St
 }
 
 async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> Result<(), String> {
+    if state
+        .library
+        .active_batch_for_job(job)
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        return Err("该任务由批次管理，请在批次面板继续或停止".into());
+    }
     let library = Arc::clone(&state.library);
     let requested = job.to_owned();
     let snapshot = blocking(move || library.job(&requested)).await?;
@@ -434,10 +508,16 @@ fn main() {
                 exports: directory.join("exports"),
                 diagnostic_preview: Mutex::new(None),
                 restored: Mutex::default(),
+                batches: Arc::default(),
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            search_books,
+            batch_snapshot,
+            create_batch,
+            resume_batch,
+            stop_batch,
             book_preferences,
             organize_book,
             backup_library,

@@ -20,6 +20,14 @@ impl Library {
         catalog: &Catalog,
         positions: &[usize],
     ) -> Result<String> {
+        self.create_download_linked(catalog, positions, None)
+    }
+    pub(crate) fn create_download_linked(
+        &self,
+        catalog: &Catalog,
+        positions: &[usize],
+        batch: Option<(&str, usize, u64)>,
+    ) -> Result<String> {
         catalog.validate()?;
         if !crate::sources::download_supported(&catalog.source) {
             return Err(Error::Invalid(
@@ -37,6 +45,15 @@ impl Library {
         }
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
+        if let Some((batch_id, position, generation)) = batch {
+            let input:Option<String>=transaction.query_row("SELECT i.input FROM batch_items i JOIN batches b ON b.id=i.batch_id WHERE b.id=?1 AND i.position=?2 AND b.state='running' AND b.generation=?3 AND i.state='queued' AND i.job_id IS NULL",params![batch_id,position,generation],|r|r.get(0)).optional()?;
+            let input =
+                input.ok_or_else(|| Error::Conflict("批次已停止或该项已创建任务".into()))?;
+            let (source, id) = crate::sources::identify(&input)?;
+            if source != catalog.source || id != catalog.remote_id {
+                return Err(Error::SourceChanged("批次目录与请求作品身份不一致".into()));
+            }
+        }
         let existing = transaction
             .query_row(
                 "SELECT id FROM books WHERE source=?1 AND remote_id=?2",
@@ -111,11 +128,25 @@ impl Library {
             let state = if saved { "completed" } else { "queued" };
             transaction.execute("INSERT INTO job_items (job_id,chapter_id,position,payload,state) VALUES (?1,?2,?3,?4,?5)",params![job_id,chapter.id,position,serde_json::to_string(chapter)?,state])?;
         }
+        if let Some((batch_id, position, _)) = batch {
+            transaction.execute("UPDATE batch_items SET job_id=?3,state='running',error=NULL WHERE batch_id=?1 AND position=?2",params![batch_id,position,job_id])?;
+        }
         transaction.commit()?;
         Ok(job_id)
     }
 
     pub fn run_job(
+        &self,
+        job_id: &str,
+        source: &dyn SourceAdapter,
+        cancelled: &AtomicBool,
+    ) -> Result<JobSnapshot> {
+        if self.active_batch_for_job(job_id)?.is_some() {
+            return Err(Error::Conflict("任务由批次管理，请继续原批次".into()));
+        }
+        self.run_batch_job(job_id, source, cancelled)
+    }
+    pub(crate) fn run_batch_job(
         &self,
         job_id: &str,
         source: &dyn SourceAdapter,
@@ -132,6 +163,9 @@ impl Library {
         cancelled: &AtomicBool,
         chapters: &[String],
     ) -> Result<JobSnapshot> {
+        if self.active_batch_for_job(job_id)?.is_some() {
+            return Err(Error::Conflict("任务由批次管理，请先完成或取消批次".into()));
+        }
         if chapters.is_empty()
             || chapters.len() > crate::MAX_CHAPTERS
             || chapters

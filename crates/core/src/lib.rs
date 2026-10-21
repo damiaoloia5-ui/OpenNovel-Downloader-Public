@@ -1,3 +1,4 @@
+mod batch;
 mod domain;
 mod downloads;
 mod export;
@@ -6,6 +7,7 @@ mod reading;
 pub mod sources;
 mod storage;
 
+pub use batch::{BatchItem, BatchSnapshot, MAX_BATCH_ITEMS};
 pub use domain::*;
 pub use export::ExportFormat;
 pub use maintenance::{BackupManifest, BookPreferences, DiagnosticReport};

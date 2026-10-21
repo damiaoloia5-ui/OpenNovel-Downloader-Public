@@ -65,3 +65,25 @@ pub trait SourceAdapter: Send + Sync {
         cancelled: &AtomicBool,
     ) -> Result<ImportChapter>;
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResult {
+    pub source: String,
+    pub remote_id: String,
+    pub title: String,
+    pub author: String,
+    pub input: String,
+}
+
+pub trait SourceProvider: Send + Sync {
+    fn inspect(&self, input: &str) -> Result<Catalog>;
+    fn adapter(&self, source: &str) -> Result<&dyn SourceAdapter>;
+}
+impl SourceProvider for SourceHub {
+    fn inspect(&self, input: &str) -> Result<Catalog> {
+        SourceHub::inspect(self, input)
+    }
+    fn adapter(&self, source: &str) -> Result<&dyn SourceAdapter> {
+        SourceHub::adapter(self, source)
+    }
+}

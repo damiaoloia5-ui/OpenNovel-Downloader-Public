@@ -38,13 +38,13 @@ impl Library {
         let mut connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 5 {
+        if version > 6 {
             return Err(Error::Conflict("书库来自较新版本，请使用匹配的程序".into()));
         }
         connection.execute_batch(
             "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;",
         )?;
-        if (1..5).contains(&version) {
+        if (1..6).contains(&version) {
             let backup =
                 path.with_file_name(format!("library-v{version}-backup-{}.db", Uuid::new_v4()));
             let reserved = OpenOptions::new()
@@ -114,6 +114,20 @@ impl Library {
             ); PRAGMA user_version=5;")?;
             transaction.commit()?;
         }
+        if version < 6 {
+            let transaction = connection.transaction()?;
+            transaction.execute_batch("CREATE TABLE batches (
+                id TEXT PRIMARY KEY,state TEXT NOT NULL,selection TEXT NOT NULL,duplicates INTEGER NOT NULL,generation INTEGER NOT NULL DEFAULT 0,error TEXT
+            ); CREATE TABLE batch_items (
+                batch_id TEXT NOT NULL REFERENCES batches(id),position INTEGER NOT NULL,input TEXT NOT NULL,
+                state TEXT NOT NULL,job_id TEXT REFERENCES jobs(id),error TEXT,PRIMARY KEY(batch_id,position),UNIQUE(batch_id,input)
+            ); PRAGMA user_version=6;")?;
+            transaction.commit()?;
+        }
+        connection.execute(
+            "UPDATE batches SET state='paused' WHERE state='running'",
+            [],
+        )?;
         connection.execute(
             "UPDATE jobs SET state='paused', error='程序中断，等待继续' WHERE state='running'",
             [],
@@ -285,6 +299,11 @@ impl Library {
         paused: bool,
         token: Option<&AtomicBool>,
     ) -> Result<()> {
+        if self.active_batch_for_job(job_id)?.is_some() {
+            return Err(Error::Conflict(
+                "任务由批次管理，请在批次面板停止整批".into(),
+            ));
+        }
         let connection = self.connection()?;
         let state = if paused { "paused" } else { "cancelled" };
         let changed=connection.execute("UPDATE jobs SET state=?2,error=NULL WHERE id=?1 AND (state IN ('queued','running') OR (?2='cancelled' AND state='paused'))",[job_id,state])?;

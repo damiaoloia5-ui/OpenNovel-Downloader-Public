@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import LibraryTools from './LibraryTools.vue';
+import SourceSearch from './SourceSearch.vue';
+import BatchPanel from './BatchPanel.vue';
 import {preferences,organizeBook,type BookPreferences} from './api';
 import { sourceCapabilities, type SourceInfo, bookDetails, cancelJob, desktopAvailable, downloadBook, exportBook, exportJob, importBook, inspectBook, jobDetails, pauseJob, readChapter, resumeJob, retryChapters, revealExport, snapshot, updateBook, type BookDetails, type Catalog, type ChapterContent, type JobDetails, type Snapshot } from './api';
 
@@ -146,6 +148,7 @@ async function inspect() {
     selection.value = '';
   });
 }
+async function selectSearchResult(input:string) {bookInput.value=input;await inspect();}
 
 async function startDownload() {
   await action(async () => {
@@ -202,6 +205,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
         </div>
 
         <template v-if="page === 'download'">
+          <SourceSearch :sources="sourceInfos" :busy="working" @select="selectSearchResult" />
           <form class="download-panel" @submit.prevent="inspect">
             <label for="novel-link">官网作品详情页链接或来源 ID</label>
             <div class="link-row"><input id="novel-link" v-model="bookInput" type="text" placeholder="番茄 / 七猫 / 书旗 / 晋江链接，或 qimao:作品ID" :disabled="working" required /><button class="primary" :disabled="!desktopAvailable || working">{{ working ? '处理中…' : '读取目录' }}</button></div>
@@ -252,6 +256,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
         </template>
 
         <template v-if="page === 'tasks'">
+          <BatchPanel />
           <div class="section-heading"><h2>持久任务 <span>{{ data.jobs.length }}</span></h2><button class="subtle" :disabled="!desktopAvailable" @click="refresh">刷新状态</button></div>
           <div v-if="!data.jobs.length" class="empty-state"><span class="empty-icon" aria-hidden="true">↓</span><h2>还没有任务</h2><p>添加小说链接或导入本地内容，任务进度会保存在书库中。</p></div>
           <article v-for="job in data.jobs" :key="job.id" class="task-card">

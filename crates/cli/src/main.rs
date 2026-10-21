@@ -16,6 +16,24 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Command {
+    /// 从逐行作品链接文件创建有界批次，默认仅选择每本前 3 章
+    Batch {
+        file: PathBuf,
+        #[arg(long, default_value = "1-3")]
+        chapters: String,
+    },
+    /// 查看持久批次与逐项结果
+    Batches,
+    /// 继续中断批次，复用原关联任务
+    BatchResume { batch_id: String },
+    /// 暂停尚未执行的批次（不控制其他运行进程）
+    BatchPause { batch_id: String },
+    /// 来源官网首屏搜索（当前晋江，最多 20 项）
+    Search {
+        query: String,
+        #[arg(long, default_value = "jinjiang-web")]
+        source: String,
+    },
     /// 标签和归档，不修改远端作品字段
     Organize {
         book_id: String,
@@ -114,6 +132,32 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let library = Library::open(args.database)?;
     let hub = SourceHub::new();
     let result = match args.command {
+        Command::Batch { file, chapters } => {
+            let mut text = String::new();
+            std::fs::File::open(file)?
+                .take(32769)
+                .read_to_string(&mut text)?;
+            if text.len() > 32768 {
+                return Err("批次文件超过 32 KiB".into());
+            }
+            let inputs = text
+                .lines()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let id = library.create_batch(&inputs, &chapters)?;
+            serde_json::to_value(library.run_batch(&id, &hub, &AtomicBool::new(false))?)?
+        }
+        Command::Batches => serde_json::to_value(library.batches()?)?,
+        Command::BatchResume { batch_id } => {
+            serde_json::to_value(library.run_batch(&batch_id, &hub, &AtomicBool::new(false))?)?
+        }
+        Command::BatchPause { batch_id } => {
+            library.stop_batch(&batch_id, true, None)?;
+            serde_json::to_value(library.batch(&batch_id)?)?
+        }
+        Command::Search { query, source } => serde_json::to_value(hub.search(&source, &query)?)?,
         Command::Organize {
             book_id,
             tags,
