@@ -9,6 +9,7 @@ build = "build.rs"
 [dependencies]
 opennovel-core.workspace = true
 serde.workspace = true
+uuid.workspace = true
 tauri = { version = "2", features = [] }
 
 [build-dependencies]

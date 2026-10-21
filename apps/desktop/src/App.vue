@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import LibraryTools from './LibraryTools.vue';
+import {preferences,organizeBook,type BookPreferences} from './api';
 import { sourceCapabilities, type SourceInfo, bookDetails, cancelJob, desktopAvailable, downloadBook, exportBook, exportJob, importBook, inspectBook, jobDetails, pauseJob, readChapter, resumeJob, retryChapters, revealExport, snapshot, updateBook, type BookDetails, type Catalog, type ChapterContent, type JobDetails, type Snapshot } from './api';
 
-const page = ref<'download' | 'library' | 'tasks' | 'sources'>('download');
+const page = ref<'download' | 'library' | 'tasks' | 'sources' | 'tools'>('download');
+const bookPreferences=ref<BookPreferences[]>([]);const archiveFilter=ref('active');const editingTags=ref('');
+const selectedPreferences=computed(()=>bookPreferences.value.find(p=>p.book_id===bookView.value?.book.id));
 const bookInput = ref('');
 const inspectedInput = ref('');
 const catalog = ref<Catalog | null>(null);
@@ -38,7 +42,10 @@ const detailPages = computed(() => Math.max(1, Math.ceil(filteredItems.value.len
 const visibleItems = computed(() => filteredItems.value.slice((Math.min(detailPage.value, detailPages.value)-1)*100, Math.min(detailPage.value, detailPages.value)*100));
 const chapterLabels: Record<string,string> = {queued:'待下载',completed:'已保存',failed:'失败',blocked:'网页受限'};
 const errorLabels: Record<string,string> = {network:'网络请求',restricted:'访问限制',source_changed:'来源结构变化',invalid_content:'正文校验',io:'读写错误',other:'其他错误'};
-const books = computed(() => data.value.books.filter(book => `${book.title} ${book.author}`.toLocaleLowerCase().includes(filter.value.toLocaleLowerCase())));
+const books = computed(() => data.value.books.filter(book => {
+  const p=bookPreferences.value.find(p=>p.book_id===book.id);
+  return (archiveFilter.value==='all'||(archiveFilter.value==='archived'?!!p?.archived:!p?.archived)) && `${book.title} ${book.author} ${p?.tags.join(' ')||''}`.toLocaleLowerCase().includes(filter.value.toLocaleLowerCase());
+}));
 const saved = computed(() => data.value.books.reduce((total, book) => total + book.saved_chapters, 0));
 const active = computed(() => data.value.jobs.filter(job => job.state === 'queued' || job.state === 'running').length);
 const labels: Record<string, string> = { queued: '等待执行', running: '正在保存', paused: '中断待继续', cancelled: '已取消', failed: '执行失败', partial: '部分保存', blocked: '网页访问受限', completed: '所选范围完成' };
@@ -49,7 +56,7 @@ async function refresh() {
   if (!desktopAvailable || refreshing) return;
   refreshing = true;
   try {
-    data.value = await snapshot(); await refreshDetails();
+    data.value = await snapshot(); bookPreferences.value=await preferences(); await refreshDetails();
     const shown=bookView.value;
     const current=data.value.books.find(book => book.id === shown?.book.id);
     if (shown && current && (shown.book.saved_chapters !== current.saved_chapters || shown.book.total_chapters !== current.total_chapters)) {
@@ -83,8 +90,12 @@ async function checkUpdates(bookId:string) {
 }
 
 async function showBook(id:string) {
-  await action(async () => { bookView.value=await bookDetails(id); reading.value=null; readerPage.value=1; readerFilter.value=''; page.value='library'; });
+  await action(async () => { bookView.value=await bookDetails(id); editingTags.value=bookPreferences.value.find(p=>p.book_id===id)?.tags.join('，')||''; reading.value=null; readerPage.value=1; readerFilter.value=''; page.value='library'; });
   await nextTick(); readerPanel.value?.focus();
+}
+async function saveOrganization(archived:boolean) {
+  const id=bookView.value?.book.id;if(!id)return;
+  await action(async()=>{await organizeBook(id,editingTags.value.split(/[,，]/).map(t=>t.trim()).filter(Boolean),archived);notice.value=archived?'已归档，离线正文和导出保留。':'书库标签已保存，作品在书架显示。';});
 }
 
 async function openChapter(id:string) {
@@ -173,12 +184,13 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
         <button :class="{ selected: page === 'library' }" @click="page = 'library'"><span aria-hidden="true">▤</span>我的书库<b>{{ data.books.length }}</b></button>
         <button :class="{ selected: page === 'tasks' }" @click="page = 'tasks'"><span aria-hidden="true">↓</span>下载与导入<b v-if="active">{{ active }}</b></button>
         <button :class="{ selected: page === 'sources' }" @click="page = 'sources'"><span aria-hidden="true">◎</span>小说来源</button>
+        <button :class="{ selected: page === 'tools' }" @click="page = 'tools'"><span aria-hidden="true">▣</span>备份与诊断</button>
       </nav>
       <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>多来源候选版 · 0.2.0</p></div>
     </aside>
 
     <main>
-      <header class="topbar"><span>个人工作空间 / {{ page === 'download' ? '添加小说' : page === 'library' ? '书库' : page === 'tasks' ? '任务' : '来源' }}</span><span class="version">v0.2.0 · 多来源官网内容</span></header>
+      <header class="topbar"><span>个人工作空间 / {{ page === 'download' ? '添加小说' : page === 'library' ? '书库' : page === 'tasks' ? '任务' : page==='tools' ? '备份与诊断' : '来源' }}</span><span class="version">v0.2.0 · 多来源官网内容</span></header>
       <div class="main-content">
         <div v-if="!desktopAvailable" class="message warning" role="status">当前是浏览器界面预览。请运行桌面应用以使用本地书库和导出功能。</div>
         <div v-if="error" class="message failure" role="alert">{{ error }}<button aria-label="关闭错误提示" @click="error = ''">×</button></div>
@@ -192,7 +204,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
         <template v-if="page === 'download'">
           <form class="download-panel" @submit.prevent="inspect">
             <label for="novel-link">官网作品详情页链接或来源 ID</label>
-            <div class="link-row"><input id="novel-link" v-model="bookInput" type="text" placeholder="番茄 / 七猫 / 书旗作品链接，或 qimao:作品ID" :disabled="working" required /><button class="primary" :disabled="!desktopAvailable || working">{{ working ? '处理中…' : '读取目录' }}</button></div>
+            <div class="link-row"><input id="novel-link" v-model="bookInput" type="text" placeholder="番茄 / 七猫 / 书旗 / 晋江链接，或 qimao:作品ID" :disabled="working" required /><button class="primary" :disabled="!desktopAvailable || working">{{ working ? '处理中…' : '读取目录' }}</button></div>
             <p class="footnote">下载仅限已支持的官网正文。免费 App 不代表网页全部开放；书旗目前仅支持详情与目录。</p>
           </form>
           <section v-if="catalog" class="download-panel" aria-label="作品目录">
@@ -211,6 +223,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
             <div class="section-heading"><h2>{{ bookView.book.title }}</h2><button @click="bookView = null; reading = null">关闭预览</button></div>
             <p class="footnote">{{ bookView.book.author || '未标注作者' }} · {{ sourceLabel(bookView.book.source) }} · 已保存 {{ bookView.book.saved_chapters }}/{{ bookView.book.total_chapters }} 章<br />最近目录任务时间：{{ bookView.acquired_at }} UTC</p>
             <p class="book-description">{{ bookView.description || '未提供简介。' }}</p>
+            <div class="range-row"><label>标签（逗号分隔）<input v-model="editingTags" placeholder="例如 连载，收藏" :disabled="working" /></label><button :disabled="working" @click="saveOrganization(!!selectedPreferences?.archived)">保存标签</button><button :disabled="working" @click="saveOrganization(!selectedPreferences?.archived)">{{ selectedPreferences?.archived ? '移回书架' : '归档作品' }}</button></div>
             <div class="reader-layout">
               <div class="reader-directory"><label>目录检索<input v-model="readerFilter" type="search" placeholder="序号或章节标题" @input="readerPage = 1" /></label><ol><li v-for="chapter in visibleChapters" :key="chapter.id"><button :disabled="working || !chapter.saved" :aria-current="reading?.id === chapter.id ? 'true' : undefined" @click="openChapter(chapter.id)">{{ chapter.position }} · {{ chapter.title }}{{ chapter.saved ? '' : '（未保存）' }}</button></li></ol><div class="detail-pagination"><button :disabled="readerPage <= 1" @click="readerPage--">前页</button><span>{{ Math.min(readerPage,readerPages) }}/{{ readerPages }}</span><button :disabled="readerPage >= readerPages" @click="readerPage++">后页</button></div></div>
               <article class="reader-text" aria-label="已保存正文"><template v-if="reading"><h3>{{ reading.title }}</h3><p v-for="(paragraph,index) in reading.paragraphs" :key="index">{{ paragraph }}</p><div class="detail-pagination"><button :disabled="working || readingIndex <= 0" @click="openChapter(savedChapters[readingIndex-1]!.id)">上一章</button><button :disabled="working || readingIndex < 0 || readingIndex >= savedChapters.length-1" @click="openChapter(savedChapters[readingIndex+1]!.id)">下一章</button></div></template><p v-else class="footnote">选择已保存章节即可离线预览。未保存或受限正文不会在此补造。</p></article>
@@ -222,12 +235,13 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
             <div><span>已保存章节</span><strong>{{ saved }}<small>章</small></strong></div>
             <div><span>运行中任务</span><strong>{{ active }}<small>项</small></strong></div>
           </section>
-          <div class="section-heading"><h2>我的书架</h2><input v-model="filter" type="search" placeholder="搜索书名或作者" aria-label="搜索书库" /></div>
+          <div class="section-heading"><h2>我的书架</h2><select v-model="archiveFilter" aria-label="书架范围"><option value="active">书架</option><option value="archived">已归档</option><option value="all">全部作品</option></select><input v-model="filter" type="search" placeholder="搜索书名、作者或标签" aria-label="搜索书库" /></div>
           <section v-if="books.length" class="book-grid" aria-label="书籍列表">
             <article v-for="book in books" :key="book.id" class="book-card">
               <div class="book-cover"><span>LOCAL COLLECTION</span><h3>{{ book.title }}</h3><p>{{ book.author || '未标注作者' }}</p><i aria-hidden="true"></i></div>
               <div class="book-info">
 <span class="source-tag">{{ sourceLabel(book.source) }}</span><h3>{{ book.title }}</h3><p>{{ book.saved_chapters }} / {{ book.total_chapters }} 章<span>{{ book.saved_chapters === book.total_chapters ? '完整保存' : '部分保存' }}</span></p>
+                <p v-if="bookPreferences.find(p=>p.book_id===book.id)?.tags.length" class="footnote">{{ bookPreferences.find(p=>p.book_id===book.id)?.tags.join(' · ') }}</p>
                 <div class="book-actions"><button :disabled="working || !book.saved_chapters" @click="saveBook(book.id, 'txt')">导出 TXT</button><button :disabled="working || !book.saved_chapters" @click="saveBook(book.id, 'epub')">导出 EPUB</button></div>
                 <button class="update-book" :disabled="working" @click="showBook(book.id)">详情与离线预览</button>
                 <button v-if="sourceInfos.some(s=>s.id===book.source && s.can_download)" class="update-book" :disabled="working || data.jobs.some(job => job.book_id === book.id && ['queued','running','paused'].includes(job.state))" @click="checkUpdates(book.id)">检查更新并补齐</button>
@@ -261,14 +275,15 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
         </template>
 
         <template v-if="page === 'sources'">
-          <div class="source-intro"><h2>当前支持范围</h2><p>来源能力逐项公开：番茄、七猫支持已验证的官网正文；书旗先提供详情与目录。所选范围完成不代表整本完整。</p></div>
+          <div class="source-intro"><h2>当前支持范围</h2><p>番茄、七猫与晋江支持已验证的官网免费正文；书旗先提供详情与目录。所选范围完成不代表整本完整。</p></div>
           <div class="source-list">
             <article><span class="source-monogram">本</span><div><h3>本地 JSON 内容</h3><p>用户提供的作品与章节 · 任务恢复 · TXT / EPUB</p></div><span class="available">已接入</span></article>
             <article v-for="source in sourceInfos" :key="source.id"><span class="source-monogram">{{ source.name.slice(0,1) }}</span><div><h3>{{ source.name }}</h3><p>{{ source.note }}</p><small>{{ source.example }}</small></div><span :class="source.can_download ? 'available' : 'pending-label'">{{ source.can_download ? '实验性下载' : '仅详情/目录' }}</span></article>
-            <article v-for="source in [{ name: '起点中文网 / 晋江文学城', stage: '后续版本：目录、免费试读、账户与已购内容可行性研究' }]" :key="source.name"><span class="source-monogram pending">{{ source.name.slice(0, 1) }}</span><div><h3>{{ source.name }}</h3><p>{{ source.stage }}</p></div><span class="pending-label">未接入</span></article>
+            <article><span class="source-monogram pending">起</span><div><h3>起点中文网</h3><p>正常网页当前返回访问验证页，账户与公开内容适配正在研究。</p></div><span class="pending-label">未接入</span></article>
           </div>
           <p class="footnote">来源能力按目录、正文、账户与访问限制分别记录。付费平台留在后续路线，目前不承诺未购 VIP 正文获取能力。</p>
         </template>
+        <LibraryTools v-if="page==='tools'" />
         <footer>OpenNovel Downloader<span>开放的工具，长久的书库。</span></footer>
       </div>
     </main>

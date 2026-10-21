@@ -1,4 +1,4 @@
-use super::{Catalog, Fanqie, Qimao, Shuqi, SourceAdapter, page};
+use super::{Catalog, Fanqie, Jinjiang, Qimao, Shuqi, SourceAdapter, page};
 use crate::{Error, Result};
 use reqwest::Url;
 use serde::Serialize;
@@ -12,7 +12,7 @@ pub struct SourceInfo {
     pub note: &'static str,
     pub example: &'static str,
 }
-static SOURCES: [SourceInfo; 3] = [
+static SOURCES: [SourceInfo; 4] = [
     SourceInfo {
         id: "fanqie-web",
         name: "番茄官网网页",
@@ -26,6 +26,13 @@ static SOURCES: [SourceInfo; 3] = [
         can_download: true,
         note: "仅目录明确免订阅的完整网页正文；VIP 标记不按 App 广告免费解释。",
         example: "https://www.qimao.com/shuku/作品ID/",
+    },
+    SourceInfo {
+        id: "jinjiang-web",
+        name: "晋江官网免费章节",
+        can_download: true,
+        note: "官网完整目录与公开免费正文；VIP、锁定章节明确受限，未接入已购正文。",
+        example: "https://www.jjwxc.net/onebook.php?novelid=作品ID",
     },
     SourceInfo {
         id: "shuqi-web",
@@ -48,6 +55,7 @@ pub fn identify(input: &str) -> Result<(&'static str, String)> {
         ("fanqie:", "fanqie-web"),
         ("qimao:", "qimao-web"),
         ("shuqi:", "shuqi-web"),
+        ("jinjiang:", "jinjiang-web"),
     ] {
         if let Some(id) = input.strip_prefix(prefix) {
             if page::numeric(id) && (source != "fanqie-web" || Fanqie::recognize(id).is_ok()) {
@@ -68,6 +76,13 @@ pub fn identify(input: &str) -> Result<(&'static str, String)> {
         return Err(invalid_link());
     }
     match url.host_str() {
+        Some("www.jjwxc.net") if url.path() == "/onebook.php" && url.fragment().is_none() => {
+            let pairs = url.query_pairs().collect::<Vec<_>>();
+            if pairs.len() != 1 || pairs[0].0 != "novelid" || !page::numeric(&pairs[0].1) {
+                return Err(invalid_link());
+            }
+            Ok(("jinjiang-web", pairs[0].1.to_string()))
+        }
         Some("fanqienovel.com" | "www.fanqienovel.com") => {
             Fanqie::recognize(input).map(|id| ("fanqie-web", id))
         }
@@ -90,7 +105,8 @@ pub fn identify(input: &str) -> Result<(&'static str, String)> {
 }
 fn invalid_link() -> Error {
     Error::Invalid(
-        "请输入番茄、七猫或书旗的官网作品详情页；七猫/书旗 ID 使用 qimao:ID 或 shuqi:ID".into(),
+        "请输入已接入平台的官网作品详情页；也可使用 fanqie:ID、qimao:ID、shuqi:ID 或 jinjiang:ID"
+            .into(),
     )
 }
 
@@ -99,6 +115,7 @@ pub struct SourceHub {
     fanqie: OnceLock<Fanqie>,
     qimao: OnceLock<Qimao>,
     shuqi: OnceLock<Shuqi>,
+    jinjiang: OnceLock<Jinjiang>,
 }
 fn initialize<T>(cell: &OnceLock<T>, create: impl FnOnce() -> Result<T>) -> Result<&T> {
     if cell.get().is_none() {
@@ -116,6 +133,7 @@ impl SourceHub {
             "fanqie-web" => initialize(&self.fanqie, Fanqie::new)?.inspect(&id),
             "qimao-web" => initialize(&self.qimao, Qimao::new)?.inspect(&id),
             "shuqi-web" => initialize(&self.shuqi, Shuqi::new)?.inspect(&id),
+            "jinjiang-web" => initialize(&self.jinjiang, Jinjiang::new)?.inspect(&id),
             _ => Err(invalid_link()),
         }
     }
@@ -123,6 +141,7 @@ impl SourceHub {
         match source {
             "fanqie-web" => Ok(initialize(&self.fanqie, Fanqie::new)?),
             "qimao-web" => Ok(initialize(&self.qimao, Qimao::new)?),
+            "jinjiang-web" => Ok(initialize(&self.jinjiang, Jinjiang::new)?),
             "shuqi-web" => Err(Error::Restricted(
                 "书旗当前仅支持详情与目录，正文尚未通过实测验收，暂不开放下载".into(),
             )),

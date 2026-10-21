@@ -2,7 +2,8 @@
 
 use opennovel_core::sources::{Catalog, SourceHub, SourceInfo, identify, source_infos};
 use opennovel_core::{
-    BookDetails, ExportFormat, ExportReceipt, ImportChapter, JobDetails, Library, LibrarySnapshot,
+    BookDetails, BookPreferences, DiagnosticReport, ExportFormat, ExportReceipt, ImportChapter,
+    JobDetails, Library, LibrarySnapshot,
 };
 use std::{
     collections::HashMap,
@@ -16,6 +17,131 @@ struct AppState {
     source: Arc<SourceHub>,
     cancellations: Arc<Mutex<HashMap<String, ActiveTask>>>,
     exports: PathBuf,
+    diagnostic_preview: Mutex<Option<DiagnosticReport>>,
+    restored: Mutex<HashMap<String, PathBuf>>,
+}
+
+#[derive(serde::Serialize)]
+struct MaintenanceReceipt {
+    id: String,
+    path: String,
+    books: u64,
+    chapters: u64,
+}
+
+#[tauri::command]
+async fn book_preferences(state: State<'_, AppState>) -> Result<Vec<BookPreferences>, String> {
+    let library = Arc::clone(&state.library);
+    blocking(move || library.preferences()).await
+}
+#[tauri::command]
+async fn organize_book(
+    book_id: String,
+    tags: Vec<String>,
+    archived: bool,
+    state: State<'_, AppState>,
+) -> Result<BookPreferences, String> {
+    let library = Arc::clone(&state.library);
+    blocking(move || library.organize(&book_id, &tags, archived)).await
+}
+#[tauri::command]
+async fn backup_library(state: State<'_, AppState>) -> Result<MaintenanceReceipt, String> {
+    let library = Arc::clone(&state.library);
+    let id = uuid::Uuid::new_v4().to_string();
+    let root = state
+        .exports
+        .parent()
+        .expect("data directory")
+        .join("backups");
+    blocking(move || {
+        std::fs::create_dir_all(&root)?;
+        let target = root.join(format!("backup-{id}"));
+        let manifest = library.backup(&target)?;
+        Ok(MaintenanceReceipt {
+            id,
+            path: target.to_string_lossy().into_owned(),
+            books: manifest.books,
+            chapters: manifest.chapters,
+        })
+    })
+    .await
+}
+#[tauri::command]
+async fn restore_library(
+    backup_path: String,
+    state: State<'_, AppState>,
+) -> Result<MaintenanceReceipt, String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let target = state
+        .exports
+        .parent()
+        .expect("data directory")
+        .join(format!("restored-{id}"));
+    let receipt = blocking(move || {
+        let library = Library::restore(backup_path, &target)?;
+        let report = library.diagnostics()?;
+        Ok(MaintenanceReceipt {
+            id,
+            path: target.join("library.db").to_string_lossy().into_owned(),
+            books: report.books,
+            chapters: report.saved_chapters,
+        })
+    })
+    .await?;
+    state
+        .restored
+        .lock()
+        .map_err(|_| "恢复记录不可用")?
+        .insert(receipt.id.clone(), PathBuf::from(&receipt.path));
+    Ok(receipt)
+}
+#[tauri::command]
+fn open_restored_library(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let path = state
+        .restored
+        .lock()
+        .map_err(|_| "恢复记录不可用")?
+        .get(&id)
+        .cloned()
+        .ok_or("恢复记录不存在")?;
+    // Only this executable and a successfully restored database are accepted; no shell command.
+    std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+        .arg("--database")
+        .arg(path)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+#[tauri::command]
+async fn preview_diagnostics(state: State<'_, AppState>) -> Result<DiagnosticReport, String> {
+    let library = Arc::clone(&state.library);
+    let report = blocking(move || library.diagnostics()).await?;
+    *state
+        .diagnostic_preview
+        .lock()
+        .map_err(|_| "诊断预览不可用")? = Some(report.clone());
+    Ok(report)
+}
+#[tauri::command]
+async fn save_diagnostics(state: State<'_, AppState>) -> Result<String, String> {
+    let report = state
+        .diagnostic_preview
+        .lock()
+        .map_err(|_| "诊断预览不可用")?
+        .clone()
+        .ok_or("请先预览诊断信息")?;
+    let root = state
+        .exports
+        .parent()
+        .expect("data directory")
+        .join("diagnostics");
+    blocking(move || {
+        std::fs::create_dir_all(&root)?;
+        let path = root.join(format!("diagnostic-{}.json", uuid::Uuid::new_v4()));
+        report.save(&path)?;
+        Ok(path.to_string_lossy().into_owned())
+    })
+    .await
 }
 
 struct ActiveTask {
@@ -294,16 +420,31 @@ async fn export_book(
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
-            let directory = app.path().app_data_dir()?;
+            let args = std::env::args().skip(1).collect::<Vec<_>>();
+            let database = match args.as_slice() {
+                [] => app.path().app_data_dir()?.join("library.db"),
+                [flag, path] if flag == "--database" => std::path::absolute(path)?,
+                _ => return Err("参数无效；可使用 --database <path> 打开独立书库".into()),
+            };
+            let directory = database.parent().ok_or("书库目录无效")?;
             app.manage(AppState {
-                library: Arc::new(Library::open(directory.join("library.db"))?),
+                library: Arc::new(Library::open(&database)?),
                 source: Arc::default(),
                 cancellations: Arc::default(),
                 exports: directory.join("exports"),
+                diagnostic_preview: Mutex::new(None),
+                restored: Mutex::default(),
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            book_preferences,
+            organize_book,
+            backup_library,
+            restore_library,
+            open_restored_library,
+            preview_diagnostics,
+            save_diagnostics,
             source_capabilities,
             library_snapshot,
             book_details,

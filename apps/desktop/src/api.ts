@@ -33,6 +33,16 @@ export interface ChapterContent {id:string;title:string;paragraphs:string[]}
 export interface ExportRecord {id:string;book_id:string;job_id:string|null;path:string;format:string;saved:number;total:number;partial:boolean;created_at:string}
 export interface BookDetails {book:Book;description:string;acquired_at:string;chapters:{id:string;title:string;position:number;saved:boolean}[];exports:ExportRecord[]}
 export interface Receipt { path: string; saved_chapters: number; total_chapters: number; partial: boolean }
+export interface BookPreferences {book_id:string;tags:string[];archived:boolean}
+export interface MaintenanceReceipt {id:string;path:string;books:number;chapters:number}
+export interface DiagnosticReport {version:string;operating_system:string;architecture:string;schema:number;books:number;saved_chapters:number;jobs:number;job_states:Record<string,number>;integrity_ok:boolean;foreign_keys_ok:boolean}
+export function preferences():Promise<BookPreferences[]> {return invoke('book_preferences');}
+export function organizeBook(bookId:string,tags:string[],archived:boolean):Promise<BookPreferences> {return invoke('organize_book',{bookId,tags,archived});}
+export function backupLibrary():Promise<MaintenanceReceipt> {return invoke('backup_library');}
+export function restoreLibrary(backupPath:string):Promise<MaintenanceReceipt> {return invoke('restore_library',{backupPath});}
+export function openRestoredLibrary(id:string):Promise<void> {return invoke('open_restored_library',{id});}
+export function previewDiagnostics():Promise<DiagnosticReport> {return invoke('preview_diagnostics');}
+export function saveDiagnostics():Promise<string> {return invoke('save_diagnostics');}
 
 export const desktopAvailable = isTauri();
 

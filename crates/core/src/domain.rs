@@ -112,6 +112,7 @@ impl BookSummary {
             "fanqie-web" => "番茄公开网页",
             "qimao-web" => "七猫公开网页",
             "shuqi-web" => "书旗官网目录",
+            "jinjiang-web" => "晋江官网免费章节",
             "local-json" => "本地 JSON 导入",
             _ => &self.source,
         }
@@ -120,6 +121,10 @@ impl BookSummary {
         match self.source.as_str() {
             "fanqie-web" => Some(format!("https://fanqienovel.com/page/{}", self.remote_id)),
             "qimao-web" => Some(format!("https://www.qimao.com/shuku/{}/", self.remote_id)),
+            "jinjiang-web" => Some(format!(
+                "https://www.jjwxc.net/onebook.php?novelid={}",
+                self.remote_id
+            )),
             "shuqi-web" => Some(format!(
                 "https://www.shuqi.com/book/{}.html",
                 self.remote_id

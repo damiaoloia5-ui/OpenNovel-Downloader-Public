@@ -16,6 +16,27 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Command {
+    /// 标签和归档，不修改远端作品字段
+    Organize {
+        book_id: String,
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+        #[arg(long)]
+        archived: bool,
+    },
+    /// 创建数据库一致性备份包，目录必须不存在
+    Backup { output: PathBuf },
+    /// 从备份恢复到全新目录，不覆盖现有书库
+    Restore {
+        backup: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// 预览或导出不含标题、正文、路径及凭据的诊断
+    Diagnose {
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// 列出来源能力与支持边界
     Sources,
     /// 读取已接入官网的真实详情与目录
@@ -82,9 +103,29 @@ fn main() {
 
 fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let args = Arguments::parse();
+    if let Command::Restore { backup, output } = &args.command {
+        let restored = Library::restore(backup, output)?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&restored.diagnostics()?)?
+        );
+        return Ok(0);
+    }
     let library = Library::open(args.database)?;
     let hub = SourceHub::new();
     let result = match args.command {
+        Command::Organize {
+            book_id,
+            tags,
+            archived,
+        } => serde_json::to_value(library.organize(&book_id, &tags, archived)?)?,
+        Command::Backup { output } => serde_json::to_value(library.backup(output)?)?,
+        Command::Restore { .. } => unreachable!("handled before opening the active library"),
+        Command::Diagnose { output } => serde_json::to_value(if let Some(path) = output {
+            library.export_diagnostics(path)?
+        } else {
+            library.diagnostics()?
+        })?,
         Command::Sources => serde_json::to_value(source_infos())?,
         Command::Inspect { url } => serde_json::to_value(hub.inspect(&url)?)?,
         Command::Download {

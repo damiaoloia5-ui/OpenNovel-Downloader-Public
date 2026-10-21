@@ -38,13 +38,13 @@ impl Library {
         let mut connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 4 {
+        if version > 5 {
             return Err(Error::Conflict("书库来自较新版本，请使用匹配的程序".into()));
         }
         connection.execute_batch(
             "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;",
         )?;
-        if (1..4).contains(&version) {
+        if (1..5).contains(&version) {
             let backup =
                 path.with_file_name(format!("library-v{version}-backup-{}.db", Uuid::new_v4()));
             let reserved = OpenOptions::new()
@@ -105,6 +105,13 @@ impl Library {
                 path TEXT NOT NULL,format TEXT NOT NULL,saved INTEGER NOT NULL,total INTEGER NOT NULL,partial INTEGER NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
                 PRAGMA user_version=4;")?;
+            transaction.commit()?;
+        }
+        if version < 5 {
+            let transaction = connection.transaction()?;
+            transaction.execute_batch("CREATE TABLE book_preferences (
+                book_id TEXT PRIMARY KEY REFERENCES books(id), tags TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0,1))
+            ); PRAGMA user_version=5;")?;
             transaction.commit()?;
         }
         connection.execute(

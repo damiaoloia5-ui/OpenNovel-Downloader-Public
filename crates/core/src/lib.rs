@@ -1,12 +1,14 @@
 mod domain;
 mod downloads;
 mod export;
+mod maintenance;
 mod reading;
 pub mod sources;
 mod storage;
 
 pub use domain::*;
 pub use export::ExportFormat;
+pub use maintenance::{BackupManifest, BookPreferences, DiagnosticReport};
 pub use storage::Library;
 
 #[derive(Debug, thiserror::Error)]
