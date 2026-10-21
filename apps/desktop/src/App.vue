@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import LibraryTools from './LibraryTools.vue';
 import SourceSearch from './SourceSearch.vue';
 import BatchPanel from './BatchPanel.vue';
@@ -10,7 +11,8 @@ import { sourceCapabilities, type SourceInfo, bookDetails, cancelJob, desktopAva
 
 const page = ref<'download' | 'library' | 'tasks' | 'sources' | 'tools' | 'accounts'>('download');
 const bookPreferences=ref<BookPreferences[]>([]);const archiveFilter=ref('active');const editingTags=ref('');
-const selectedPreferences=computed(()=>bookPreferences.value.find(p=>p.book_id===bookView.value?.book.id));
+const preferencesByBook = computed(() => new Map(bookPreferences.value.map(p => [p.book_id, p])));
+const selectedPreferences=computed(()=>preferencesByBook.value.get(bookView.value?.book.id ?? ''));
 const bookInput = ref('');
 const inspectedInput = ref('');
 const catalog = ref<Catalog | null>(null);
@@ -47,20 +49,38 @@ const visibleItems = computed(() => filteredItems.value.slice((Math.min(detailPa
 const chapterLabels: Record<string,string> = {queued:'待下载',completed:'已保存',failed:'失败',blocked:'网页受限'};
 const errorLabels: Record<string,string> = {network:'网络请求',restricted:'访问限制',source_changed:'来源结构变化',invalid_content:'正文校验',io:'读写错误',other:'其他错误'};
 const books = computed(() => data.value.books.filter(book => {
-  const p=bookPreferences.value.find(p=>p.book_id===book.id);
+  const p=preferencesByBook.value.get(book.id);
   return (archiveFilter.value==='all'||(archiveFilter.value==='archived'?!!p?.archived:!p?.archived)) && `${book.title} ${book.author} ${p?.tags.join(' ')||''}`.toLocaleLowerCase().includes(filter.value.toLocaleLowerCase());
 }));
+const bookPage = ref(1);
+const bookPages = computed(() => Math.max(1, Math.ceil(books.value.length / 48)));
+const visibleBooks = computed(() => books.value.slice((bookPage.value - 1) * 48, bookPage.value * 48));
+const taskPage = ref(1);
+const taskFilter = ref('all');
+const filteredJobs = computed(() => data.value.jobs.filter(job => taskFilter.value === 'all' ||
+  (taskFilter.value === 'active' ? ['queued','running','paused'].includes(job.state) :
+    taskFilter.value === 'attention' ? ['failed','partial','blocked','cancelled'].includes(job.state) : job.state === 'completed')));
+const taskPages = computed(() => Math.max(1, Math.ceil(filteredJobs.value.length / 20)));
+const visibleJobs = computed(() => filteredJobs.value.slice((taskPage.value - 1) * 20, taskPage.value * 20));
+watch([filter, archiveFilter], () => { bookPage.value = 1; });
+watch(bookPages, pages => { bookPage.value = Math.min(bookPage.value, pages); });
+watch(taskFilter, () => { taskPage.value = 1; });
+watch(taskPages, pages => { taskPage.value = Math.min(taskPage.value, pages); });
 const saved = computed(() => data.value.books.reduce((total, book) => total + book.saved_chapters, 0));
 const active = computed(() => data.value.jobs.filter(job => job.state === 'queued' || job.state === 'running').length);
 const labels: Record<string, string> = { queued: '等待执行', running: '正在保存', paused: '中断待继续', cancelled: '已取消', failed: '执行失败', partial: '部分保存', blocked: '网页访问受限', completed: '所选范围完成' };
-let timer: ReturnType<typeof setInterval> | undefined;
+let timer: ReturnType<typeof setTimeout> | undefined;
+let disposed = false;
 let refreshing = false;
+let minimized = false;
+let unlistenResize: (() => void) | undefined;
 
 async function refresh() {
   if (!desktopAvailable || refreshing) return;
   refreshing = true;
   try {
-    data.value = await snapshot(); bookPreferences.value=await preferences(); await refreshDetails();
+    const [currentSnapshot, currentPreferences] = await Promise.all([snapshot(), preferences()]);
+    data.value = currentSnapshot; bookPreferences.value=currentPreferences; await refreshDetails();
     const shown=bookView.value;
     const current=data.value.books.find(book => book.id === shown?.book.id);
     if (shown && current && (shown.book.saved_chapters !== current.saved_chapters || shown.book.total_chapters !== current.total_chapters)) {
@@ -69,7 +89,34 @@ async function refresh() {
     }
   }
   catch (reason) { error.value = String(reason); }
-  finally { refreshing = false; }
+  finally { refreshing = false; schedulePoll(); }
+}
+
+function schedulePoll() {
+  if (!disposed) {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => void poll(), active.value && !document.hidden && !minimized ? 800 : 5000);
+  }
+}
+
+async function poll() {
+  if (disposed) return;
+  if (document.hidden) schedulePoll();
+  else {
+    try {
+      minimized = await getCurrentWindow().isMinimized();
+      if (disposed) return;
+      if (minimized) schedulePoll();
+      else await refresh();
+    } catch (reason) { error.value = String(reason); schedulePoll(); }
+  }
+}
+
+function visibilityChanged() {
+  if (!document.hidden) {
+    if (timer) clearTimeout(timer);
+    void poll();
+  }
 }
 
 async function refreshDetails() {
@@ -173,8 +220,16 @@ async function saveBook(id: string, format: 'txt' | 'epub') {
   });
 }
 
-onMounted(() => { if(desktopAvailable) void sourceCapabilities().then(result=>sourceInfos.value=result).catch(reason=>error.value=String(reason)); void refresh(); timer = setInterval(() => void refresh(), 800); });
-onUnmounted(() => { if (timer) clearInterval(timer); });
+onMounted(() => {
+  if (!desktopAvailable) return;
+  void sourceCapabilities().then(result=>sourceInfos.value=result).catch(reason=>error.value=String(reason));
+  void getCurrentWindow().onResized(visibilityChanged).then(unlisten => {
+    if (disposed) unlisten(); else unlistenResize = unlisten;
+  }).catch(reason => { error.value = String(reason); });
+  void poll();
+  document.addEventListener('visibilitychange', visibilityChanged);
+});
+onUnmounted(() => { disposed = true; if (timer) clearTimeout(timer); unlistenResize?.(); document.removeEventListener('visibilitychange', visibilityChanged); });
 </script>
 
 <template>
@@ -203,7 +258,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
         <div v-if="error" class="message failure" role="alert">{{ error }}<button aria-label="关闭错误提示" @click="error = ''">×</button></div>
         <div v-if="notice" class="message success" role="status">{{ notice }}<button aria-label="关闭提示" @click="notice = ''">×</button></div>
         <div class="page-heading">
-          <div><p class="eyebrow">YOUR STORIES, KEPT CLOSE</p><h1>{{ page === 'download' ? '从一条作品链接开始。' : page === 'library' ? '让故事留在身边。' : page === 'tasks' ? '每一章，都有着落。' : page==='accounts'?'连接你的平台账户。':'一个书库，更多来源。' }}</h1><p class="intro">{{ page === 'download' ? '识别作品来源，查看目录并保存已支持的官网正文。' : page === 'library' ? '整理已经拥有的文字，随时导出、再次阅读。' : page === 'tasks' ? '查看真实保存进度，继续中断的任务。' : page==='accounts'?'在官网独立登录，逐步验证阅读权限。':'平台能力逐项验证，支持范围持续公开。' }}</p></div>
+          <div><p class="eyebrow">YOUR STORIES, KEPT CLOSE</p><h1>{{ page === 'download' ? '从一条作品链接开始。' : page === 'library' ? '让故事留在身边。' : page === 'tasks' ? '每一章，都有着落。' : page==='accounts'?'连接你的平台账户。':page==='tools'?'给书库留一份备份。':'一个书库，更多来源。' }}</h1><p class="intro">{{ page === 'download' ? '识别作品来源，查看目录并保存已支持的官网正文。' : page === 'library' ? '整理已经拥有的文字，随时导出、再次阅读。' : page === 'tasks' ? '查看真实保存进度，继续中断的任务。' : page==='accounts'?'在官网独立登录，逐步验证阅读权限。':page==='tools'?'创建一致性备份、恢复独立副本，查看诊断信息。':'平台能力逐项验证，支持范围持续公开。' }}</p></div>
           <button v-if="page !== 'sources'" class="primary" :disabled="!desktopAvailable || working" @click="fileInput?.click()">＋ 导入本地书籍</button>
           <input ref="fileInput" type="file" accept=".json,application/json" class="file-input" aria-label="选择 JSON 书籍文件" @change="chooseFile" />
         </div>
@@ -246,25 +301,27 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
           </section>
           <div class="section-heading"><h2>我的书架</h2><select v-model="archiveFilter" aria-label="书架范围"><option value="active">书架</option><option value="archived">已归档</option><option value="all">全部作品</option></select><input v-model="filter" type="search" placeholder="搜索书名、作者或标签" aria-label="搜索书库" /></div>
           <section v-if="books.length" class="book-grid" aria-label="书籍列表">
-            <article v-for="book in books" :key="book.id" class="book-card">
+            <article v-for="book in visibleBooks" :key="book.id" class="book-card">
               <div class="book-cover"><span>LOCAL COLLECTION</span><h3>{{ book.title }}</h3><p>{{ book.author || '未标注作者' }}</p><i aria-hidden="true"></i></div>
               <div class="book-info">
 <span class="source-tag">{{ sourceLabel(book.source) }}</span><h3>{{ book.title }}</h3><p>{{ book.saved_chapters }} / {{ book.total_chapters }} 章<span>{{ book.saved_chapters === book.total_chapters ? '完整保存' : '部分保存' }}</span></p>
-                <p v-if="bookPreferences.find(p=>p.book_id===book.id)?.tags.length" class="footnote">{{ bookPreferences.find(p=>p.book_id===book.id)?.tags.join(' · ') }}</p>
+                <p v-if="preferencesByBook.get(book.id)?.tags.length" class="footnote">{{ preferencesByBook.get(book.id)?.tags.join(' · ') }}</p>
                 <div class="book-actions"><button :disabled="working || !book.saved_chapters" @click="saveBook(book.id, 'txt')">导出 TXT</button><button :disabled="working || !book.saved_chapters" @click="saveBook(book.id, 'epub')">导出 EPUB</button></div>
                 <button class="update-book" :disabled="working" @click="showBook(book.id)">详情与离线预览</button>
                 <button v-if="sourceInfos.some(s=>s.id===book.source && s.can_download)" class="update-book" :disabled="working || data.jobs.some(job => job.book_id === book.id && ['queued','running','paused'].includes(job.state))" @click="checkUpdates(book.id)">检查更新并补齐</button>
               </div>
             </article>
           </section>
-          <div v-else class="empty-state"><span class="empty-icon" aria-hidden="true">▤</span><h2>{{ filter ? '没有找到这本书' : '从第一本书开始' }}</h2><p>{{ filter ? '试试其他书名或作者。' : '导入你持有的 JSON 内容，建立可以离线使用的书库。' }}</p><p v-if="!filter" class="muted">文件包含作品 ID、书名、作者及章节。格式见项目 examples/local-book.json。</p></div>
+          <div v-else class="empty-state"><span class="empty-icon" aria-hidden="true">▤</span><h2>{{ filter ? '没有找到这本书' : archiveFilter === 'archived' ? '还没有归档作品' : '从第一本书开始' }}</h2><p>{{ filter ? '试试其他书名、作者或标签。' : archiveFilter === 'archived' ? '在作品详情中归档后，会显示在这里。' : '导入你持有的 JSON 内容，建立可以离线使用的书库。' }}</p><p v-if="!filter && archiveFilter !== 'archived'" class="muted">文件包含作品 ID、书名、作者及章节。格式见项目 examples/local-book.json。</p></div>
+          <nav v-if="books.length" class="list-pagination" aria-label="书库分页"><span>共 {{ books.length }} 本 · 第 {{ bookPage }} / {{ bookPages }} 页</span><button :disabled="bookPage <= 1" @click="bookPage = 1">首页</button><button :disabled="bookPage <= 1" @click="bookPage--">上一页</button><button :disabled="bookPage >= bookPages" @click="bookPage++">下一页</button><button :disabled="bookPage >= bookPages" @click="bookPage = bookPages">末页</button></nav>
         </template>
 
         <template v-if="page === 'tasks'">
           <BatchPanel />
-          <div class="section-heading"><h2>持久任务 <span>{{ data.jobs.length }}</span></h2><button class="subtle" :disabled="!desktopAvailable" @click="refresh">刷新状态</button></div>
+          <div class="section-heading"><h2>持久任务 <span>{{ data.jobs.length }}</span></h2><select v-model="taskFilter" aria-label="任务筛选"><option value="all">全部任务</option><option value="active">进行中与暂停</option><option value="attention">失败、部分或受限</option><option value="completed">已完成</option></select><button class="subtle" :disabled="!desktopAvailable" @click="refresh">刷新状态</button></div>
           <div v-if="!data.jobs.length" class="empty-state"><span class="empty-icon" aria-hidden="true">↓</span><h2>还没有任务</h2><p>添加小说链接或导入本地内容，任务进度会保存在书库中。</p></div>
-          <article v-for="job in data.jobs" :key="job.id" class="task-card">
+          <p v-else-if="!filteredJobs.length" class="footnote">当前筛选下没有任务。</p>
+          <article v-for="job in visibleJobs" :key="job.id" class="task-card">
             <div class="task-heading"><h3>{{ job.title }}</h3><span class="state-tag">{{ labels[job.state] || job.state }}</span></div>
             <progress :value="job.saved" :max="job.total" :aria-label="`${job.title}保存进度`"></progress>
             <div class="task-bottom"><span>本次范围已保存 {{ job.saved }} / {{ job.total }} 章 · 受限 {{ job.blocked }} · 失败 {{ job.failed }}</span><div class="task-controls"><button v-if="job.state === 'running' || job.state === 'queued'" :disabled="working" @click="action(() => pauseJob(job.id))">暂停</button><button v-if="['running','queued','paused'].includes(job.state)" :disabled="working" @click="action(() => cancelJob(job.id))">取消任务</button><button v-if="!['running','queued','completed','blocked'].includes(job.state) && (job.state !== 'partial' || job.failed || job.saved + job.blocked < job.total)" :disabled="working" @click="action(() => resumeJob(job.id))">继续 / 重试</button></div></div>
@@ -282,6 +339,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
               </template>
             </section>
           </article>
+          <nav v-if="filteredJobs.length" class="list-pagination" aria-label="任务分页"><span>共 {{ filteredJobs.length }} 项 · 第 {{ taskPage }} / {{ taskPages }} 页</span><button :disabled="taskPage <= 1" @click="taskPage = 1">首页</button><button :disabled="taskPage <= 1" @click="taskPage--">上一页</button><button :disabled="taskPage >= taskPages" @click="taskPage++">下一页</button><button :disabled="taskPage >= taskPages" @click="taskPage = taskPages">末页</button></nav>
         </template>
 
         <template v-if="page === 'sources'">

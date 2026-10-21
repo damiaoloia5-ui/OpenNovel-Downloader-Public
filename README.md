@@ -127,6 +127,8 @@ npm run desktop:package
 
 历史章节明细与更新证据见 [前轮验证记录](docs/verification/2026-10-20-chapter-details.md) 和 [v0.1 验收记录](docs/verification/2026-10-20-v01.md)。
 
+最新候选增加书架/任务分页、状态筛选、主书库快照的空闲及原生最小化调度、重复导出明确提示；本轮完整回归、真实来源复验及安装数据保护证据见 [全量检验与优化](docs/verification/2026-10-21-full-check.md)。
+
 ## 可选的 Windows 代码签名
 
 开发和自用不需要购买签名证书。正式对外分发时可使用已接入的签名/验签入口；当前候选包仍未签名。办理条件和命令见 [Windows 代码签名](docs/WINDOWS_SIGNING.md)，本轮实际检查见 [签名验证记录](docs/verification/2026-10-21-signing.md)。

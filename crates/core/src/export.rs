@@ -115,6 +115,9 @@ impl Library {
             "{prefix}{}{revision}{suffix}.{extension}",
             content.summary.id
         )))?;
+        if path.try_exists()? {
+            return Err(export_exists(&path));
+        }
         let mut temporary = NamedTempFile::new_in(directory)?;
         match format {
             ExportFormat::Txt => write_txt(&mut temporary, &content)?,
@@ -122,9 +125,15 @@ impl Library {
         }
         temporary.as_file_mut().flush()?;
         temporary.as_file().sync_all()?;
-        temporary
-            .persist_noclobber(&path)
-            .map_err(|error| Error::Io(error.error))?;
+        temporary.persist_noclobber(&path).map_err(|error| {
+            if error.error.kind() == std::io::ErrorKind::AlreadyExists
+                || path.try_exists().unwrap_or(false)
+            {
+                export_exists(&path)
+            } else {
+                Error::Io(error.error)
+            }
+        })?;
         self.connection()?.execute("INSERT INTO exports (id,book_id,job_id,path,format,saved,total,partial) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",rusqlite::params![uuid::Uuid::new_v4().to_string(),book_id,job_id,path.to_string_lossy(),extension,content.summary.saved_chapters,content.summary.total_chapters,partial])?;
         Ok(ExportReceipt {
             path: path.to_string_lossy().into_owned(),
@@ -133,6 +142,13 @@ impl Library {
             partial,
         })
     }
+}
+
+fn export_exists(path: &Path) -> Error {
+    Error::Conflict(format!(
+        "导出文件已存在，已保留原文件；请打开已有导出或选择其他目录：{}",
+        path.display()
+    ))
 }
 
 fn coverage(content: &BookContent) -> String {

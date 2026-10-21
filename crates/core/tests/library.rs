@@ -1,4 +1,4 @@
-use opennovel_core::{ExportFormat, ImportDocument, Library};
+use opennovel_core::{Error, ExportFormat, ImportDocument, Library};
 use std::{
     io::Read,
     sync::atomic::{AtomicBool, Ordering},
@@ -25,12 +25,15 @@ fn import_persists_identity_order_and_offline_exports() {
     let txt = std::fs::read_to_string(&receipt.path).unwrap();
     assert!(txt.find("第一章").unwrap() < txt.find("第二章").unwrap());
     assert!(!receipt.partial);
-    assert!(
-        library
-            .export(&result.book_id, directory.path(), ExportFormat::Txt)
-            .is_err()
-    );
+    let repeated = library
+        .export(&result.book_id, directory.path(), ExportFormat::Txt)
+        .unwrap_err();
+    assert!(matches!(&repeated, Error::Conflict(message) if message.contains("导出文件已存在")));
     assert_eq!(std::fs::read_to_string(&receipt.path).unwrap(), txt);
+    assert_eq!(
+        library.book_details(&result.book_id).unwrap().exports.len(),
+        1
+    );
     drop(library);
     let reopened = Library::open(&path).unwrap();
     let snapshot = reopened.snapshot().unwrap();

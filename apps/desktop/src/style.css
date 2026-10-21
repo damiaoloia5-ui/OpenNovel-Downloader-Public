@@ -14,11 +14,11 @@ button:disabled { opacity: .45; cursor: default; }
 .brand-mark { background: #344b32; color: #eef2df; display: inline-flex; width: 42px; height: 44px; align-items: center; padding-left: 5px; font-family: Georgia, serif; font-size: 26px; border-radius: 4px 12px 4px 4px; }
 .brand-mark span { font-size: 21px; margin-left: -5px; padding-top: 8px; }
 .nav-label { font-size: 11px; color: #78836e; letter-spacing: 2px; margin: 55px 12px 14px; }
-nav { display: grid; gap: 7px; }
-nav button { border: 0; display: flex; align-items: center; gap: 12px; background: transparent; text-align: left; font-size: 14px; padding: 13px; }
-nav button > span { font-size: 21px; width: 22px; text-align: center; }
-nav button.selected { color: #2c4524; background: #dce4cd; font-weight: 600; }
-nav button b { margin-left: auto; font-size: 11px; background: #f3f5ed; padding: 2px 6px; border-radius: 3px; }
+.sidebar nav { display: grid; gap: 7px; }
+.sidebar nav button { border: 0; display: flex; align-items: center; gap: 12px; background: transparent; text-align: left; font-size: 14px; padding: 13px; }
+.sidebar nav button > span { font-size: 21px; width: 22px; text-align: center; }
+.sidebar nav button.selected { color: #2c4524; background: #dce4cd; font-weight: 600; }
+.sidebar nav button b { margin-left: auto; font-size: 11px; background: #f3f5ed; padding: 2px 6px; border-radius: 3px; }
 .sidebar-note { margin-top: auto; padding: 48px 8px 2px; font-size: 11px; color: #63705a; }
 .sidebar-note p { color: #838c7c; margin-left: 14px; }
 .dot { display: inline-block; background: #6d8846; width: 6px; height: 6px; border-radius: 50%; margin-right: 7px; }
@@ -93,6 +93,9 @@ progress { width: 100%; height: 6px; accent-color: #617c49; margin: 20px 0 13px;
 .detail-toggle { margin-top: 16px; font-size: 12px; }
 .chapter-details { margin-top: 18px; border-top: 1px solid #e4e8db; }
 .detail-toolbar, .detail-pagination { display: flex; align-items: center; gap: 12px; font-size: 12px; margin: 16px 0; }
+.list-pagination { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; margin: 20px 0; }
+.list-pagination span { margin-right: auto; color: #6d7b61; }
+.list-pagination button { font-size: 12px; }
 .detail-toolbar label { display: flex; align-items: center; gap: 10px; }
 .detail-toolbar select { padding: 7px; border: 1px solid #d4ddca; color: #334431; background: #fffefa; }
 .chapter-table { max-height: 440px; overflow: auto; }
@@ -134,4 +137,4 @@ progress { width: 100%; height: 6px; accent-color: #617c49; margin: 20px 0 13px;
 .success { background: #eaf1e0; border-color: #c9d9b8; color: #4d6739; }
 footer { border-top: 1px solid #e4e8db; display: flex; justify-content: space-between; margin-top: 42px; padding-top: 18px; font-size: 10px; color: #929c86; gap: 14px; }
 @media (max-width: 900px) { .sidebar { width: 185px; padding: 25px 14px; } .main-content { padding: 25px; } .topbar { padding: 0 25px; } h1 { font-size: 25px; } .page-heading { align-items: flex-start; flex-wrap: wrap; } }
-@media (max-width: 600px) { .sidebar { width: 72px; padding: 22px 12px; } .brand > span:last-child, .nav-label, .sidebar-note, nav button b { display: none; } nav { margin-top: 35px; } nav button { font-size: 0; padding: 12px 8px; } nav button > span { font-size: 24px; } .main-content { padding: 20px 15px; } .topbar { padding: 0 15px; } .stats > div { padding: 16px 12px; } .stats strong { font-size: 25px; } .stats span { font-size: 10px; } input[type=search] { width: 150px; } .source-list article { padding: 16px 12px; gap: 10px; } }
+@media (max-width: 600px) { .sidebar { width: 72px; padding: 22px 12px; } .brand > span:last-child, .nav-label, .sidebar-note, .sidebar nav button b { display: none; } .sidebar nav { margin-top: 35px; } .sidebar nav button { font-size: 0; padding: 12px 8px; } .sidebar nav button > span { font-size: 24px; } .main-content { padding: 20px 15px; } .topbar { padding: 0 15px; } .stats > div { padding: 16px 12px; } .stats strong { font-size: 25px; } .stats span { font-size: 10px; } input[type=search] { width: 150px; } .source-list article { padding: 16px 12px; gap: 10px; } }
