@@ -4,7 +4,7 @@
 
 **未完成的门禁**：起点/书旗真实登录、权限失效和已购正文验收；独立干净 Windows 及缺失 WebView2 的安装验证。当前不称 v1.0 全部阶段完成，也不把官网窗口打开称为已购下载支持。起点用户样本返回验证脚本页，书旗正文仍禁用下载。
 
-开始使用见 [使用指南](docs/USER_GUIDE.md)，逐平台边界见 [来源状态](docs/sources.md)，阶段状态见 [执行清单](docs/REMAINING_PHASES.md)。历史 v0.1/v0.2 安装包保留，新版不覆盖它们。
+开始使用见 [使用指南](docs/USER_GUIDE.md)，逐平台边界见 [来源状态](docs/sources.md)，阶段状态见 [执行清单](docs/REMAINING_PHASES.md) 和 [全阶段核对](docs/ACCEPTANCE_STATUS.md)。历史 v0.1/v0.2 安装包保留，新版不覆盖它们。
 
 ## 当前可用范围
 
