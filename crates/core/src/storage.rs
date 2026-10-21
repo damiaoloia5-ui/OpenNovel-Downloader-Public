@@ -38,13 +38,13 @@ impl Library {
         let mut connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 7 {
+        if version > 8 {
             return Err(Error::Conflict("书库来自较新版本，请使用匹配的程序".into()));
         }
         connection.execute_batch(
             "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;",
         )?;
-        if (1..7).contains(&version) {
+        if (1..8).contains(&version) {
             let backup =
                 path.with_file_name(format!("library-v{version}-backup-{}.db", Uuid::new_v4()));
             let reserved = OpenOptions::new()
@@ -131,6 +131,11 @@ impl Library {
                 CREATE TABLE history_chapters(snapshot_id TEXT NOT NULL REFERENCES catalog_history(id),chapter_id TEXT NOT NULL,position INTEGER NOT NULL,title TEXT NOT NULL,body_hash TEXT NOT NULL REFERENCES content_blobs(hash),PRIMARY KEY(snapshot_id,chapter_id));
                 CREATE TABLE job_history(job_id TEXT PRIMARY KEY REFERENCES jobs(id),snapshot_id TEXT NOT NULL REFERENCES catalog_history(id));
                 PRAGMA user_version=7;")?;
+            transaction.commit()?;
+        }
+        if version < 8 {
+            let transaction = connection.transaction()?;
+            transaction.execute_batch("CREATE TABLE accounts(id TEXT PRIMARY KEY,platform TEXT NOT NULL CHECK(platform IN ('qidian','shuqi')),label TEXT NOT NULL); PRAGMA user_version=8;")?;
             transaction.commit()?;
         }
         connection.execute(

@@ -1,5 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod accounts;
+use accounts::{account_list, close_account, create_account, open_account};
+
 use opennovel_core::sources::{Catalog, SourceHub, SourceInfo, identify, source_infos};
 use opennovel_core::{
     BookDetails, BookPreferences, DiagnosticReport, ExportFormat, ExportReceipt, ImportChapter,
@@ -21,6 +24,8 @@ struct AppState {
     restored: Mutex<HashMap<String, PathBuf>>,
     batches: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
     proposals: Mutex<HashMap<String, PendingUpdate>>,
+    sessions: Mutex<HashMap<String, accounts::BrowserSession>>,
+    session_root: PathBuf,
 }
 struct PendingUpdate {
     book_id: String,
@@ -648,46 +653,70 @@ fn main() {
                 restored: Mutex::default(),
                 batches: Arc::default(),
                 proposals: Mutex::default(),
+                sessions: Mutex::default(),
+                session_root: directory.join("session-cache"),
             });
+            tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
+                .data_directory(directory.join("ui-webview"))
+                .on_navigation(|url| accounts::local_ipc_allowed("main", url))
+                .build()?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            preview_catalog_update,
-            accept_catalog_update,
-            refresh_book_chapter,
-            book_history,
-            history_details,
-            read_history,
-            export_history,
-            search_books,
-            batch_snapshot,
-            create_batch,
-            resume_batch,
-            stop_batch,
-            book_preferences,
-            organize_book,
-            backup_library,
-            restore_library,
-            open_restored_library,
-            preview_diagnostics,
-            save_diagnostics,
-            source_capabilities,
-            library_snapshot,
-            book_details,
-            read_chapter,
-            export_job,
-            reveal_export,
-            pause_job,
-            job_details,
-            retry_chapters,
-            update_book,
-            import_book,
-            inspect_book,
-            download_book,
-            resume_job,
-            cancel_job,
-            export_book
-        ])
+        .invoke_handler({
+            let dispatch: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
+                Box::new(tauri::generate_handler![
+                    account_list,
+                    create_account,
+                    open_account,
+                    close_account,
+                    preview_catalog_update,
+                    accept_catalog_update,
+                    refresh_book_chapter,
+                    book_history,
+                    history_details,
+                    read_history,
+                    export_history,
+                    search_books,
+                    batch_snapshot,
+                    create_batch,
+                    resume_batch,
+                    stop_batch,
+                    book_preferences,
+                    organize_book,
+                    backup_library,
+                    restore_library,
+                    open_restored_library,
+                    preview_diagnostics,
+                    save_diagnostics,
+                    source_capabilities,
+                    library_snapshot,
+                    book_details,
+                    read_chapter,
+                    export_job,
+                    reveal_export,
+                    pause_job,
+                    job_details,
+                    retry_chapters,
+                    update_book,
+                    import_book,
+                    inspect_book,
+                    download_book,
+                    resume_job,
+                    cancel_job,
+                    export_book
+                ]);
+            move |invoke: tauri::ipc::Invoke<tauri::Wry>| {
+                let webview = invoke.message.webview_ref();
+                if !webview
+                    .url()
+                    .is_ok_and(|url| accounts::local_ipc_allowed(webview.label(), &url))
+                {
+                    invoke.resolver.reject("远程页面不能调用本地书库命令");
+                    return true;
+                }
+                dispatch(invoke)
+            }
+        })
         .run(tauri::generate_context!())
         .expect("无法启动 OpenNovel 桌面应用");
 }

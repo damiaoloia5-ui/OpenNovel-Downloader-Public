@@ -82,3 +82,10 @@ export function cancelJob(jobId: string): Promise<void> { return invoke('cancel_
 export function exportBook(bookId: string, format: 'txt' | 'epub'): Promise<Receipt> {
   return invoke('export_book', { bookId, format });
 }
+
+export interface AccountRecord {id:string;platform:string;label:string}
+export interface AccountStatus {account:AccountRecord;session:'closed'|'open_unverified';blocked_navigation:boolean;can_download:boolean}
+export function accountList():Promise<AccountStatus[]> {return invoke('account_list');}
+export function createAccount(platform:string,label:string):Promise<AccountRecord> {return invoke('create_account',{platform,label});}
+export function openAccount(id:string,bookUrl:string):Promise<void> {return invoke('open_account',{id,bookUrl});}
+export function closeAccount(id:string,remove:boolean):Promise<void> {return invoke('close_account',{id,remove});}

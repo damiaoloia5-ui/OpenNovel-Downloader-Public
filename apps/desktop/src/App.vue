@@ -4,10 +4,11 @@ import LibraryTools from './LibraryTools.vue';
 import SourceSearch from './SourceSearch.vue';
 import BatchPanel from './BatchPanel.vue';
 import RevisionPanel from './RevisionPanel.vue';
+import AccountPanel from './AccountPanel.vue';
 import {preferences,organizeBook,type BookPreferences} from './api';
 import { sourceCapabilities, type SourceInfo, bookDetails, cancelJob, desktopAvailable, downloadBook, exportBook, exportJob, importBook, inspectBook, jobDetails, pauseJob, readChapter, resumeJob, retryChapters, revealExport, snapshot, updateBook, type BookDetails, type Catalog, type ChapterContent, type JobDetails, type Snapshot } from './api';
 
-const page = ref<'download' | 'library' | 'tasks' | 'sources' | 'tools'>('download');
+const page = ref<'download' | 'library' | 'tasks' | 'sources' | 'tools' | 'accounts'>('download');
 const bookPreferences=ref<BookPreferences[]>([]);const archiveFilter=ref('active');const editingTags=ref('');
 const selectedPreferences=computed(()=>bookPreferences.value.find(p=>p.book_id===bookView.value?.book.id));
 const bookInput = ref('');
@@ -189,19 +190,20 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
         <button :class="{ selected: page === 'library' }" @click="page = 'library'"><span aria-hidden="true">▤</span>我的书库<b>{{ data.books.length }}</b></button>
         <button :class="{ selected: page === 'tasks' }" @click="page = 'tasks'"><span aria-hidden="true">↓</span>下载与导入<b v-if="active">{{ active }}</b></button>
         <button :class="{ selected: page === 'sources' }" @click="page = 'sources'"><span aria-hidden="true">◎</span>小说来源</button>
+        <button :class="{ selected: page === 'accounts' }" @click="page='accounts'"><span aria-hidden="true">◉</span>平台账户</button>
         <button :class="{ selected: page === 'tools' }" @click="page = 'tools'"><span aria-hidden="true">▣</span>备份与诊断</button>
       </nav>
       <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>多来源候选版 · 0.2.0</p></div>
     </aside>
 
     <main>
-      <header class="topbar"><span>个人工作空间 / {{ page === 'download' ? '添加小说' : page === 'library' ? '书库' : page === 'tasks' ? '任务' : page==='tools' ? '备份与诊断' : '来源' }}</span><span class="version">v0.2.0 · 多来源官网内容</span></header>
+      <header class="topbar"><span>个人工作空间 / {{ page === 'download' ? '添加小说' : page === 'library' ? '书库' : page === 'tasks' ? '任务' : page==='tools' ? '备份与诊断' : page==='accounts'?'账户':'来源' }}</span><span class="version">v0.2.0 · 多来源官网内容</span></header>
       <div class="main-content">
         <div v-if="!desktopAvailable" class="message warning" role="status">当前是浏览器界面预览。请运行桌面应用以使用本地书库和导出功能。</div>
         <div v-if="error" class="message failure" role="alert">{{ error }}<button aria-label="关闭错误提示" @click="error = ''">×</button></div>
         <div v-if="notice" class="message success" role="status">{{ notice }}<button aria-label="关闭提示" @click="notice = ''">×</button></div>
         <div class="page-heading">
-          <div><p class="eyebrow">YOUR STORIES, KEPT CLOSE</p><h1>{{ page === 'download' ? '从一条作品链接开始。' : page === 'library' ? '让故事留在身边。' : page === 'tasks' ? '每一章，都有着落。' : '一个书库，更多来源。' }}</h1><p class="intro">{{ page === 'download' ? '识别作品来源，查看目录并保存已支持的官网正文。' : page === 'library' ? '整理已经拥有的文字，随时导出、再次阅读。' : page === 'tasks' ? '查看真实保存进度，继续中断的任务。' : '平台能力逐项验证，支持范围持续公开。' }}</p></div>
+          <div><p class="eyebrow">YOUR STORIES, KEPT CLOSE</p><h1>{{ page === 'download' ? '从一条作品链接开始。' : page === 'library' ? '让故事留在身边。' : page === 'tasks' ? '每一章，都有着落。' : page==='accounts'?'连接你的平台账户。':'一个书库，更多来源。' }}</h1><p class="intro">{{ page === 'download' ? '识别作品来源，查看目录并保存已支持的官网正文。' : page === 'library' ? '整理已经拥有的文字，随时导出、再次阅读。' : page === 'tasks' ? '查看真实保存进度，继续中断的任务。' : page==='accounts'?'在官网独立登录，逐步验证阅读权限。':'平台能力逐项验证，支持范围持续公开。' }}</p></div>
           <button v-if="page !== 'sources'" class="primary" :disabled="!desktopAvailable || working" @click="fileInput?.click()">＋ 导入本地书籍</button>
           <input ref="fileInput" type="file" accept=".json,application/json" class="file-input" aria-label="选择 JSON 书籍文件" @change="chooseFile" />
         </div>
@@ -292,6 +294,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
           <p class="footnote">来源能力按目录、正文、账户与访问限制分别记录。付费平台留在后续路线，目前不承诺未购 VIP 正文获取能力。</p>
         </template>
         <LibraryTools v-if="page==='tools'" />
+        <AccountPanel v-if="page==='accounts'" />
         <footer>OpenNovel Downloader<span>开放的工具，长久的书库。</span></footer>
       </div>
     </main>
