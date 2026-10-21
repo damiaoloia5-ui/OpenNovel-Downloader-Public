@@ -127,6 +127,10 @@ npm run desktop:package
 
 历史章节明细与更新证据见 [前轮验证记录](docs/verification/2026-10-20-chapter-details.md) 和 [v0.1 验收记录](docs/verification/2026-10-20-v01.md)。
 
+## 可选的 Windows 代码签名
+
+开发和自用不需要购买签名证书。正式对外分发时可使用已接入的签名/验签入口；当前候选包仍未签名。办理条件和命令见 [Windows 代码签名](docs/WINDOWS_SIGNING.md)，本轮实际检查见 [签名验证记录](docs/verification/2026-10-21-signing.md)。
+
 ## 开源与贡献
 
 项目采用 [Apache-2.0](LICENSE)。依赖保留各自许可证，安装目录附带自动生成的 `THIRD_PARTY_NOTICES.txt`，补充文本及来源见 [third_party](third_party/README.md)。不复制参考下载器代码，不在仓库分发采集正文。贡献与问题报告方式见 [CONTRIBUTING.md](CONTRIBUTING.md)。

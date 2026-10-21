@@ -24,6 +24,10 @@ apps/desktop/src-tauri/gen/
 .env.*
 !.env.example
 *.pem
+*.pfx
+*.p12
+*.jks
+*.keystore
 *.key
 id_rsa
 id_ed25519
