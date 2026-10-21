@@ -193,11 +193,11 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
         <button :class="{ selected: page === 'accounts' }" @click="page='accounts'"><span aria-hidden="true">◉</span>平台账户</button>
         <button :class="{ selected: page === 'tools' }" @click="page = 'tools'"><span aria-hidden="true">▣</span>备份与诊断</button>
       </nav>
-      <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>多来源候选版 · 0.2.0</p></div>
+      <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>综合功能候选版 · 0.3.0</p></div>
     </aside>
 
     <main>
-      <header class="topbar"><span>个人工作空间 / {{ page === 'download' ? '添加小说' : page === 'library' ? '书库' : page === 'tasks' ? '任务' : page==='tools' ? '备份与诊断' : page==='accounts'?'账户':'来源' }}</span><span class="version">v0.2.0 · 多来源官网内容</span></header>
+      <header class="topbar"><span>个人工作空间 / {{ page === 'download' ? '添加小说' : page === 'library' ? '书库' : page === 'tasks' ? '任务' : page==='tools' ? '备份与诊断' : page==='accounts'?'账户':'来源' }}</span><span class="version">v0.3.0 · 综合功能候选版</span></header>
       <div class="main-content">
         <div v-if="!desktopAvailable" class="message warning" role="status">当前是浏览器界面预览。请运行桌面应用以使用本地书库和导出功能。</div>
         <div v-if="error" class="message failure" role="alert">{{ error }}<button aria-label="关闭错误提示" @click="error = ''">×</button></div>

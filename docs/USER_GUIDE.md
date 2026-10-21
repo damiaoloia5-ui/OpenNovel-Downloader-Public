@@ -1,0 +1,73 @@
+# OpenNovel 使用指南
+
+对应 0.3.0 综合候选版，2026-10-21。未验收的能力见 [来源状态](sources.md) 与 [阶段清单](REMAINING_PHASES.md)。
+
+## 安装与首次使用
+
+Windows x64 安装器按当前用户安装；不需要 Node、Rust 或 Java。运行需要 WebView2，缺失时安装器尝试下载引导程序。安装包未签名，其他系统与干净 Windows 尚未完整验收。
+
+首次可先导入仓库的 `examples/local-book.json`，验证导入、离线阅读和导出。正式书库保存在系统应用数据目录 `org.opennovel.downloader`；CLI 默认使用当前目录的 `.artifacts/library.db`。不要让 CLI 和桌面同时打开同一书库。
+
+## 获取公开内容
+
+在“添加小说”粘贴官网作品链接，读取目录后确认平台、书名、章节总数和限制。番茄、七猫、晋江可下载经过验证的公开正文；书旗当前只读详情和目录。纯数字沿用番茄 ID；其他来源用 `qimao:ID`、`shuqi:ID` 或 `jinjiang:ID`。
+
+选择连续范围或填写 `1,3,5-8`。界面展示的是本次所选集合；“所选完成”不等于整书保存完整。网页不可读、VIP 或锁定项保留受限状态，不用预览片段填充正文。晋江可通过界面搜索，返回当前官网首屏最多 20 项，不是全站全文搜索。
+
+“下载与导入”中可暂停、取消、继续、查看逐章原因和只重试失败章。429 或临时网络失败会停止本轮请求，按提示等待后手动继续。受限章节不能直接强行重试，应先重新检查官网目录。
+
+批次输入每行一个作品，最多 10 个输入；自动按来源和作品 ID 去重。默认每本前 3 章，也可指定集合。每次只执行一本；暂停后继续复用原任务，不另建重复任务。批次关联任务由批次面板统一控制。读取目录的在途请求可能等到有界超时后结束，停止后迟到结果不会创建新任务。
+
+## 书库、阅读与导出
+
+在“我的书库”搜索书名、作者或标签；可切换书架/已归档/全部。详情中修改逗号分隔的标签和归档状态；这些本地字段不随来源更新覆盖。归档不删除正文。
+
+目录按每页 100 项显示，可检索并预览已保存章节。TXT 为 UTF-8，EPUB 为 EPUB 3。书库导出包含该书全部已存正文；任务导出只包含该任务选择的集合；缺章会标为部分内容。同名文件已存在时拒绝覆盖，可换输出目录，或使用不同版本/任务导出。
+
+“检查更新并补齐”自动处理不变目录和末尾新增；若出现删章、重排或插章，打开“目录变更与历史版本”先预览，再明确确认。确认会保存旧快照，10 分钟后预览过期需重新读取。该书有待执行或暂停任务时，先完成或取消任务。
+
+选择已保存章节后，可检查该章正文修订。实际变化才保留旧文并更新；网络失败、取消、标题或身份不一致均保留原文。历史快照可查看旧章并导出。界面显示最近 20 个快照，更多记录可用 CLI；不自动清理历史。
+
+## 备份与恢复
+
+“备份与诊断”中创建一致性备份，程序给出包含 manifest 和数据库的目录。备份包含书库、任务、标签、修订历史、导出记录与非敏感账户别名；不复制导出文件、浏览器会话或凭据。
+
+填写该备份目录恢复时，先校验 SHA-256、完整性、版本与数量，再恢复到全新副本。成功后可打开独立窗口；不会替换当前书库。外部导出文件可能仍指向原位置，可从恢复副本重新导出。
+
+迁移前自动备份和手动备份都应另行保存到可靠存储。旧程序不能直接打开较新的 schema；需要恢复兼容备份到独立目录。卸载器默认保留数据；选择“删除应用数据”前请先备份。
+
+## 平台账户实验
+
+仅提供起点/书旗临时官网窗口。添加本地别名，作品链接留空或填写当前平台不含登录参数的官网作品链接，然后在官网本人登录。不要把密码、验证码或 Cookie 填入本软件或问题报告。
+
+不同账户使用独立临时浏览器环境；关闭窗口结束会话，下次需重新登录。“关闭并清理会话”先清理本机浏览数据再关闭，移除记录保留书库。当前不提供自动登录检测、凭据持久化、已购正文下载或其他设备退出。
+
+如果检测到全局 `WEBVIEW2_USER_DATA_FOLDER` 覆盖，账户窗口会拒绝创建，因为无法保证隔离。跨平台 SSO、外部弹窗和非平台导航暂不支持。窗口打开不代表登录成功，更不代表具有章节权益。起点样本当前可能显示空白验证页；书旗正文仍未通过验收。
+
+## 诊断和问题报告
+
+先预览诊断 JSON，再决定保存分享。固定内容只有版本、系统、schema、数量、任务状态和完整性布尔值，不含书名、正文、路径、标签、账户与网络错误原文。问题报告建议包含版本、来源、公开作品链接、操作步骤和可复现现象，不附数据库或完整平台正文。
+
+## CLI 补充入口
+
+运行 `opennovel --help` 查看所有命令。使用源码时将前缀替换为 `cargo run -p opennovel-cli --`。以下 ID 均替换为本机实际返回值；目录选择全新的路径。
+
+```powershell
+opennovel --database .artifacts/library.db search 书名 --source jinjiang-web
+opennovel batch book-links.txt --chapters "1,3,5"
+opennovel batches
+opennovel batch-resume BATCH_ID
+opennovel organize BOOK_ID --tag 收藏 --tag 连载 --archived
+opennovel backup D:/NovelBackups/new-backup
+opennovel restore D:/NovelBackups/new-backup --output D:/NovelRestored/new-copy
+opennovel diagnose
+opennovel diagnose --output D:/NovelReports/new-diagnostic.json
+opennovel update-preview BOOK_ID
+opennovel update-accept BOOK_ID --previous-hash PREVIOUS_HASH --proposed-hash PROPOSED_HASH
+opennovel refresh-chapter BOOK_ID CHAPTER_ID
+opennovel history BOOK_ID
+opennovel read-history SNAPSHOT_ID CHAPTER_ID
+opennovel export-history SNAPSHOT_ID --format epub --output D:/NovelExports/new-folder
+```
+
+`update-accept` 要求与先前预览一致的前后摘要；本地或官网已变化时拒绝。`organize` 未加 `--archived` 表示回到书架；标签以本次指定集合替换。CLI 不控制另一进程中的任务或账户窗口。
