@@ -29,10 +29,24 @@ pub fn account_navigation_allowed(platform: &str, url: &Url) -> bool {
             .host_str()
             .is_some_and(|h| h == host || h.ends_with(&format!(".{host}")))
 }
+/// Use the site's normal shelf-to-sign-in redirect, independent of the homepage overlay.
+pub fn account_login_url(platform: &str) -> Result<Url> {
+    platform_host(platform)?;
+    if platform != "qidian" {
+        return Err(Error::Invalid(
+            "该平台尚未验证独立登录入口，请使用官网窗口".into(),
+        ));
+    }
+    Url::parse("https://my.qidian.com/bookcase/")
+        .map_err(|_| Error::Invalid("平台登录地址无效".into()))
+}
 /// Only accept clean book links at entry; tokens and arbitrary URLs are not persisted.
 pub fn account_entry_url(platform: &str, input: &str) -> Result<Url> {
     let host = platform_host(platform)?;
     if input.trim().is_empty() {
+        if platform == "qidian" {
+            return account_login_url(platform);
+        }
         return Url::parse(&format!("https://www.{host}/"))
             .map_err(|_| Error::Invalid("平台地址无效".into()));
     }

@@ -1,5 +1,31 @@
-use opennovel_core::{Library, account_entry_url, account_navigation_allowed};
+use opennovel_core::{Library, account_entry_url, account_login_url, account_navigation_allowed};
 use tempfile::tempdir;
+
+#[test]
+fn qidian_empty_entry_avoids_homepage_overlay_without_accepting_arbitrary_links() {
+    let login = account_entry_url("qidian", "  ").unwrap();
+    assert_eq!(login.scheme(), "https");
+    assert_eq!(login.host_str(), Some("my.qidian.com"));
+    assert_eq!(login.path(), "/bookcase/");
+    assert!(login.query().is_none() && login.fragment().is_none());
+    assert_eq!(account_login_url("qidian").unwrap(), login);
+    assert!(account_login_url("shuqi").is_err());
+    assert!(account_login_url("unknown").is_err());
+    assert!(account_navigation_allowed("qidian", &login));
+    assert!(!account_navigation_allowed("shuqi", &login));
+    assert_eq!(
+        account_entry_url("shuqi", "").unwrap().as_str(),
+        "https://www.shuqi.com/"
+    );
+    assert!(account_entry_url("qidian", login.as_str()).is_err());
+    assert_eq!(
+        account_entry_url("qidian", "https://www.qidian.com/book/1045749425/")
+            .unwrap()
+            .path(),
+        "/book/1045749425/"
+    );
+}
+
 #[test]
 fn clean_platform_entries_and_navigation_never_cross_accounts_or_protocols() {
     let u = account_entry_url("qidian", "https://www.qidian.com/book/1045749425/").unwrap();

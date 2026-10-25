@@ -9,7 +9,9 @@ mod revisions;
 pub mod sources;
 mod storage;
 
-pub use accounts::{AccountRecord, account_entry_url, account_navigation_allowed};
+pub use accounts::{
+    AccountRecord, account_entry_url, account_login_url, account_navigation_allowed,
+};
 pub use batch::{BatchItem, BatchSnapshot, MAX_BATCH_ITEMS};
 pub use domain::*;
 pub use export::ExportFormat;

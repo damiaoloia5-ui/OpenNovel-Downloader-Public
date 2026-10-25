@@ -1,5 +1,7 @@
 use crate::AppState;
-use opennovel_core::{AccountRecord, account_entry_url, account_navigation_allowed};
+use opennovel_core::{
+    AccountRecord, account_entry_url, account_login_url, account_navigation_allowed,
+};
 use serde::Serialize;
 use std::sync::{
     Arc,
@@ -60,6 +62,7 @@ pub async fn create_account(
 pub async fn open_account(
     id: String,
     book_url: String,
+    login: Option<bool>,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
@@ -67,10 +70,17 @@ pub async fn open_account(
         return Err("检测到全局 WebView2 数据目录覆盖，无法保证账户隔离。请移除 WEBVIEW2_USER_DATA_FOLDER 环境变量后重启软件。".into());
     }
     let account = state.library.account(&id).map_err(|e| e.to_string())?;
-    let url = account_entry_url(&account.platform, &book_url).map_err(|e| e.to_string())?;
+    let url = if login.unwrap_or(false) {
+        account_login_url(&account.platform)
+    } else {
+        account_entry_url(&account.platform, &book_url)
+    }
+    .map_err(|e| e.to_string())?;
     let label = window_label(&id);
     if let Some(window) = app.get_webview_window(&label) {
         window.navigate(url).map_err(|_| "官网窗口导航失败")?;
+        window.show().map_err(|_| "无法显示官网窗口")?;
+        window.unminimize().map_err(|_| "无法恢复官网窗口")?;
         return window.set_focus().map_err(|_| "无法聚焦官网窗口".into());
     }
     std::fs::create_dir_all(&state.session_root).map_err(|_| "无法建立独立会话目录")?;
@@ -136,7 +146,7 @@ pub async fn open_account(
             sessions.remove(&id);
         }
     });
-    Ok(())
+    window.set_focus().map_err(|_| "无法聚焦官网窗口".into())
 }
 #[tauri::command]
 pub async fn close_account(

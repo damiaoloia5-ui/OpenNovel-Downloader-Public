@@ -4,8 +4,8 @@ import {accountList,createAccount,openAccount,closeAccount,type AccountStatus} f
 const accounts=ref<AccountStatus[]>([]);const platform=ref('qidian');const label=ref('');const bookUrl=ref('');const busy=ref(false);const error=ref('');const notice=ref('');
 async function reload(){accounts.value=await accountList();}
 async function action(work:()=>Promise<void>){if(busy.value)return;busy.value=true;error.value='';notice.value='';try{await work();await reload();}catch(e){error.value=String(e);}finally{busy.value=false;}}
-function add(){void action(async()=>{await createAccount(platform.value,label.value);label.value='';notice.value='已建立本地记录。打开官网窗口后，请在官网自行登录。';});}
-function open(id:string){void action(async()=>{await openAccount(id,bookUrl.value);notice.value='官网窗口已打开，阅读权限与已购正文仍待验收。';});}
+function add(){void action(async()=>{await createAccount(platform.value,label.value);label.value='';notice.value='已建立本地记录。起点请点“登录起点”，其他平台使用官网窗口。';});}
+function open(id:string,login=false){void action(async()=>{await openAccount(id,bookUrl.value,login);notice.value=login?'已打开起点官方书架登录入口，请在官网完成登录；窗口打开不代表登录成功。':'官网窗口已打开，阅读权限与已购正文仍待验收。';});}
 function close(id:string,remove:boolean){void action(async()=>{await closeAccount(id,remove);notice.value=remove?'已清理会话并移除本地记录，书库内容保留。':'已关闭并清理本地会话，再次打开需要重新登录。';});}
 onMounted(()=>{void action(reload);});
 </script>
@@ -15,11 +15,11 @@ onMounted(()=>{void action(reload);});
     <p>在平台官方窗口自行登录。每个账户窗口独立，关闭即结束会话；本软件不接收密码或 Cookie。窗口打开不代表已认证，已购正文下载尚待实测。</p>
     <form class="account-form" @submit.prevent="add"><label>平台<select v-model="platform" :disabled="busy"><option value="qidian">起点中文网</option><option value="shuqi">书旗小说</option></select></label><label>本地别名<input v-model="label" maxlength="40" placeholder="例如 我的起点账户，请勿填写凭据" :disabled="busy" required></label><button :disabled="busy||!label.trim()">添加账户记录</button></form>
     <label>打开的官网作品链接（可选）<input v-model="bookUrl" type="url" placeholder="https://www.qidian.com/book/作品ID/" :disabled="busy"></label>
-    <p class="footnote">仅接受当前平台无登录参数的作品链接；留空打开官网首页。部分跨站登录方式暂未适配，导航被阻止时会提示。退出只清理本机窗口，不注销平台其他设备。</p>
+    <p class="footnote">起点请点“登录起点”，通过官方书架进入独立登录页，不依赖首页登录弹层。填写作品链接后可用“打开官网窗口”查看作品；留空时起点进入登录入口，书旗打开首页。跨站登录方式可能被阻止，退出仅清理本机会话。</p>
     <p v-if="error" class="message failure" role="alert">{{ error }}</p><p v-if="notice" class="message success" role="status">{{ notice }}</p>
     <button :disabled="busy" @click="action(reload)">刷新会话状态</button>
     <p v-if="!accounts.length">尚无本地账户记录。</p>
-    <ul class="accounts"><li v-for="row in accounts" :key="row.account.id"><h3>{{ row.account.label }} <small>{{ row.account.platform==='qidian'?'起点':'书旗' }}</small></h3><p>{{ row.session==='closed'?'会话已关闭':'官网窗口已打开 · 登录与权限未验证' }}</p><p v-if="row.blocked_navigation" class="message failure">平台尝试了当前不支持的导航，已阻止。可关闭窗口后重新打开；不要将凭据复制到软件中。</p><div class="actions"><button :disabled="busy" @click="open(row.account.id)">打开官网窗口</button><button :disabled="busy||row.session==='closed'" @click="close(row.account.id,false)">关闭并清理会话</button><button :disabled="busy" @click="close(row.account.id,true)">移除记录并清理会话</button></div></li></ul>
+    <ul class="accounts"><li v-for="row in accounts" :key="row.account.id"><h3>{{ row.account.label }} <small>{{ row.account.platform==='qidian'?'起点':'书旗' }}</small></h3><p>{{ row.session==='closed'?'会话已关闭':'官网窗口已打开 · 登录与权限未验证' }}</p><p v-if="row.blocked_navigation" class="message failure">平台尝试了当前不支持的导航，已阻止。可关闭窗口后重新打开；不要将凭据复制到软件中。</p><div class="actions"><button v-if="row.account.platform==='qidian'" class="primary" :disabled="busy" @click="open(row.account.id,true)">登录起点</button><button :disabled="busy" @click="open(row.account.id)">打开官网窗口</button><button :disabled="busy||row.session==='closed'" @click="close(row.account.id,false)">关闭并清理会话</button><button :disabled="busy" @click="close(row.account.id,true)">移除记录并清理会话</button></div></li></ul>
   </section>
 </template>
 <style scoped>
