@@ -213,6 +213,46 @@ impl SessionChapter {
 }
 
 impl Library {
+    pub fn is_session_download(&self, job_id: &str) -> Result<bool> {
+        Ok(self.connection()?.query_row("SELECT EXISTS(SELECT 1 FROM jobs j JOIN books b ON b.id=j.book_id JOIN job_items i ON i.job_id=j.id WHERE j.id=?1 AND b.source=?2 AND CASE WHEN json_valid(i.payload) THEN json_extract(i.payload,'$.automatic_session') ELSE 0 END=1)",params![job_id,QIDIAN_SESSION_SOURCE],|r|r.get(0))?)
+    }
+
+    pub fn session_download_jobs(&self, book_id: &str) -> Result<Vec<crate::JobSnapshot>> {
+        self.session_catalog(book_id)?;
+        let ids = self.connection()?.prepare("SELECT j.id FROM jobs j WHERE j.book_id=?1 AND EXISTS(SELECT 1 FROM job_items i WHERE i.job_id=j.id AND CASE WHEN json_valid(i.payload) THEN json_extract(i.payload,'$.automatic_session') ELSE 0 END=1) ORDER BY j.rowid DESC LIMIT 20")?.query_map([book_id],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
+        ids.iter().map(|id| self.job(id)).collect()
+    }
+
+    pub fn session_catalog(&self, book_id: &str) -> Result<Catalog> {
+        let raw: String = self.connection()?.query_row(
+            "SELECT c.catalog FROM source_catalogs c JOIN books b ON b.id=c.book_id WHERE b.id=?1 AND b.source=?2",
+            params![book_id,QIDIAN_SESSION_SOURCE],|r|r.get(0)
+        ).optional()?.ok_or_else(||Error::Invalid("请先确认保存起点的完整目录".into()))?;
+        let catalog: Catalog = serde_json::from_str(&raw)?;
+        catalog.validate()?;
+        if catalog.source != QIDIAN_SESSION_SOURCE
+            || !numeric_id(&catalog.remote_id)
+            || catalog.chapters.iter().any(|c| !numeric_id(&c.id))
+        {
+            return Err(Error::Invalid("保存的起点目录身份无效".into()));
+        }
+        Ok(catalog)
+    }
+
+    /// Account-bound browser workers use this entry; generic HTTP/batch download stays disabled.
+    pub fn create_session_download(
+        &self,
+        book_id: &str,
+        selection: Option<&str>,
+    ) -> Result<String> {
+        let catalog = self.session_catalog(book_id)?;
+        let positions = match selection.filter(|s| !s.trim().is_empty()) {
+            Some(s) => crate::parse_selection(s, catalog.chapters.len())?,
+            None => (1..=catalog.chapters.len()).collect(),
+        };
+        self.create_download_authorized(&catalog, &positions, None, true)
+    }
+
     pub fn register_session_catalog(&self, captured: &SessionCatalog) -> Result<String> {
         let catalog = captured.catalog();
         let raw = serde_json::to_string(catalog)?;
@@ -244,6 +284,10 @@ impl Library {
                 ));
             }
             if previous != raw {
+                let active: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM jobs WHERE book_id=?1 AND state IN ('queued','running','paused'))",[&id],|r|r.get(0))?;
+                if active {
+                    return Err(Error::Conflict("请先完成或取消自动任务，再更新目录".into()));
+                }
                 crate::revisions::snapshot(&tx, &id, &previous, "catalog_update")?;
                 tx.execute(
                     "UPDATE books SET title=?2,author=?3,total=?4 WHERE id=?1",

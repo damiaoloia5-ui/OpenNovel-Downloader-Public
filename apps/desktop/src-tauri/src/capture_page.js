@@ -6,6 +6,7 @@
     const match = location.pathname.match(/^\/(book|chapter)\/(\d+)\/(?:(\d+|catalog)\/?)?$/);
     if (location.origin !== 'https://www.qidian.com' || !match) return { error: 'page' };
     const book = match[2];
+    if (document.readyState !== 'complete') return { error: 'loading' };
     const shown = element => {
       for (let node = element; node; node = node.parentElement) {
         const style = getComputedStyle(node);
@@ -27,6 +28,10 @@
       }
       return '';
     };
+    if (Array.from(document.querySelectorAll('iframe')).some(e => {
+      const r = e.getBoundingClientRect();
+      return shown(e) && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth && (e.title.includes('验证码') || /captcha/i.test(e.src));
+    })) return { error: 'verification' };
     if (mode === 'catalog') {
       if (match[1] !== 'book') return { error: 'catalog_page' };
       const anchors = document.querySelectorAll('#allCatalog .chapter-item a[href], .volume-wrap a[href], #j-catalogWrap a[href], .catalog-content a[href]');
@@ -57,6 +62,7 @@
     }
     if (match[1] !== 'chapter' || !match[3]) return { error: 'chapter_page' };
     const chapter = match[3].replace('/', '');
+    if (Array.from(document.querySelectorAll('button')).some(e => shown(e) && e.innerText.trim() === '订阅本章')) return { error: 'restricted' };
     const modernReader = document.getElementById('c-' + chapter);
     const modernOwner = modernReader?.closest('[data-id="' + chapter + '"]');
     const owner = modernOwner || document.getElementById('chapter-' + chapter) || document.querySelector('.main-text-wrap[data-cid="' + chapter + '"]');

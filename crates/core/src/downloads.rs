@@ -28,8 +28,20 @@ impl Library {
         positions: &[usize],
         batch: Option<(&str, usize, u64)>,
     ) -> Result<String> {
+        self.create_download_authorized(catalog, positions, batch, false)
+    }
+
+    pub(crate) fn create_download_authorized(
+        &self,
+        catalog: &Catalog,
+        positions: &[usize],
+        batch: Option<(&str, usize, u64)>,
+        session: bool,
+    ) -> Result<String> {
         catalog.validate()?;
-        if !crate::sources::download_supported(&catalog.source) {
+        let session_authorized =
+            session && catalog.source == crate::QIDIAN_SESSION_SOURCE && batch.is_none();
+        if !session_authorized && !crate::sources::download_supported(&catalog.source) {
             return Err(Error::Invalid(
                 "该来源尚未通过正文下载验收，不能创建下载任务".into(),
             ));
@@ -130,7 +142,11 @@ impl Library {
                 |row| row.get(0),
             )?;
             let state = if saved { "completed" } else { "queued" };
-            transaction.execute("INSERT INTO job_items (job_id,chapter_id,position,payload,state) VALUES (?1,?2,?3,?4,?5)",params![job_id,chapter.id,position,serde_json::to_string(chapter)?,state])?;
+            let mut payload = serde_json::to_value(chapter)?;
+            if session_authorized {
+                payload["automatic_session"] = serde_json::Value::Bool(true);
+            }
+            transaction.execute("INSERT INTO job_items (job_id,chapter_id,position,payload,state) VALUES (?1,?2,?3,?4,?5)",params![job_id,chapter.id,position,serde_json::to_string(&payload)?,state])?;
         }
         if let Some((batch_id, position, _)) = batch {
             transaction.execute("UPDATE batch_items SET job_id=?3,state='running',error=NULL WHERE batch_id=?1 AND position=?2",params![batch_id,position,job_id])?;
@@ -197,6 +213,7 @@ impl Library {
                     position: row.get::<_, u32>(1)? + 1,
                     title: row.get(2)?,
                     retryable: job.source != "local-json"
+                        && job.source != crate::QIDIAN_SESSION_SOURCE
                         && state == "failed"
                         && job.state != "running",
                     state,
@@ -255,6 +272,10 @@ impl Library {
                 ));
             }
             transaction.execute("UPDATE job_items SET state='queued',error=NULL,error_kind=NULL WHERE job_id=?1 AND state='failed' AND (?2 IS NULL OR chapter_id IN (SELECT value FROM json_each(?2)))",params![job_id,selected])?;
+            if job.source == crate::QIDIAN_SESSION_SOURCE {
+                // A blocked page is revisited only after an explicit account-bound resume.
+                transaction.execute("UPDATE job_items SET state='queued',error=NULL,error_kind=NULL WHERE job_id=?1 AND state='blocked'", [job_id])?;
+            }
             transaction.commit()?;
         }
         let result = self.download_items(job_id, source, cancelled, selected.as_deref());
@@ -314,6 +335,12 @@ impl Library {
                 if content.id != chapter.id {
                     return Err(Error::SourceChanged("正文身份与任务不一致".into()));
                 }
+                if source.source_id() == crate::QIDIAN_SESSION_SOURCE
+                    && content.title.split_whitespace().collect::<String>()
+                        != chapter.title.split_whitespace().collect::<String>()
+                {
+                    return Err(Error::SourceChanged("正文标题与已确认目录不一致".into()));
+                }
                 validate_content(&remote_id, content)
             });
             if cancelled.load(Ordering::Acquire) || matches!(fetched, Err(Error::Cancelled)) {
@@ -356,7 +383,9 @@ impl Library {
                     )?;
                     last_error = Some(format!("{}：{message}", chapter.title));
                     // A rate limit or changed page can affect every chapter; stop the run instead of hammering the source.
-                    if !matches!(error, Error::Restricted(_)) {
+                    if source.source_id() == crate::QIDIAN_SESSION_SOURCE
+                        || !matches!(error, Error::Restricted(_))
+                    {
                         break;
                     }
                 }

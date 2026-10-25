@@ -1,7 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod account_download;
 mod accounts;
 mod capture;
+use account_download::{account_download_jobs, resume_account_download, start_account_download};
 use accounts::{account_list, close_account, create_account, open_account};
 use capture::{confirm_account_page, preview_account_page};
 
@@ -359,6 +361,7 @@ async fn save_diagnostics(state: State<'_, AppState>) -> Result<String, String> 
 struct ActiveTask {
     book_id: String,
     token: Arc<AtomicBool>,
+    account_id: Option<String>,
 }
 
 #[tauri::command]
@@ -528,6 +531,9 @@ async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> 
     let library = Arc::clone(&state.library);
     let requested = job.to_owned();
     let snapshot = blocking(move || library.job(&requested)).await?;
+    if snapshot.source == opennovel_core::QIDIAN_SESSION_SOURCE {
+        return Err("起点自动任务请在平台账户选择官网会话后继续".into());
+    }
     if let Some(chapters) = &selection {
         let library = Arc::clone(&state.library);
         let requested = job.to_owned();
@@ -568,6 +574,7 @@ async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> 
         ActiveTask {
             book_id: snapshot.book_id.clone(),
             token: Arc::clone(&token),
+            account_id: None,
         },
     );
     let library = Arc::clone(&state.library);
@@ -672,6 +679,9 @@ fn main() {
                     account_list,
                     preview_account_page,
                     confirm_account_page,
+                    start_account_download,
+                    resume_account_download,
+                    account_download_jobs,
                     create_account,
                     open_account,
                     close_account,

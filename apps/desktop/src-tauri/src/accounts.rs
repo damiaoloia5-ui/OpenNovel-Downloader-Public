@@ -15,6 +15,7 @@ pub struct BrowserSession {
     pub generation: String,
     pub revision: Arc<AtomicU64>,
     pub reading: Arc<AtomicBool>,
+    pub last_automatic_navigation: Arc<std::sync::Mutex<Option<std::time::Instant>>>,
 }
 #[derive(Serialize)]
 pub struct AccountStatus {
@@ -73,6 +74,15 @@ pub async fn open_account(
         return Err("检测到全局 WebView2 数据目录覆盖，无法保证账户隔离。请移除 WEBVIEW2_USER_DATA_FOLDER 环境变量后重启软件。".into());
     }
     let account = state.library.account(&id).map_err(|e| e.to_string())?;
+    if state
+        .sessions
+        .lock()
+        .map_err(|_| "账户会话不可用")?
+        .get(&id)
+        .is_some_and(|s| s.reading.load(Ordering::Acquire))
+    {
+        return Err("官网正在读取或自动保存，请先暂停任务后再打开其他页面".into());
+    }
     let url = if login.unwrap_or(false) {
         account_login_url(&account.platform)
     } else {
@@ -144,6 +154,7 @@ pub async fn open_account(
             generation: uuid::Uuid::new_v4().to_string(),
             revision,
             reading: Arc::new(AtomicBool::new(false)),
+            last_automatic_navigation: Arc::new(std::sync::Mutex::new(None)),
         },
     );
     let handle = app.clone();

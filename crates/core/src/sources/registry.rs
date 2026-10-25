@@ -19,7 +19,7 @@ static SOURCES: [SourceInfo; 5] = [
         name: "起点当前可读章节",
         can_download: false,
         can_search: false,
-        note: "请在平台账户读取完整目录，逐章预览并确认保存；无自动批量下载，真实已购场景待验收。",
+        note: "在平台账户确认目录后自动逐章保存正常可读正文，支持暂停与继续；遇到限制即停止，真实已购全书仍待验收。",
         example: "https://www.qidian.com/book/作品ID/",
     },
     SourceInfo {

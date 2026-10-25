@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import {onMounted,ref} from 'vue';
 import CapturePanel from './CapturePanel.vue';
+import AutoSavePanel from './AutoSavePanel.vue';
+const props=defineProps<{bookId?:string}>();
+const selectedBook=ref('');const catalogRevision=ref(0);
+function savedBook(id:string){selectedBook.value=id;catalogRevision.value++;emit('saved',id);}
 const emit=defineEmits<{saved:[bookId:string];read:[bookId:string]}>();
 import {accountList,createAccount,openAccount,closeAccount,type AccountStatus} from './api';
 const accounts=ref<AccountStatus[]>([]);const platform=ref('qidian');const label=ref('');const bookUrl=ref('');const busy=ref(false);const error=ref('');const notice=ref('');
@@ -21,7 +25,7 @@ onMounted(()=>{void action(reload);});
     <p v-if="error" class="message failure" role="alert">{{ error }}</p><p v-if="notice" class="message success" role="status">{{ notice }}</p>
     <button :disabled="busy" @click="action(reload)">刷新会话状态</button>
     <p v-if="!accounts.length">尚无本地账户记录。</p>
-    <ul class="accounts"><li v-for="row in accounts" :key="row.account.id"><h3>{{ row.account.label }} <small>{{ row.account.platform==='qidian'?'起点':'书旗' }}</small></h3><p>{{ row.session==='closed'?'会话已关闭':'官网窗口已打开 · 登录与权限未验证' }}</p><p v-if="row.blocked_navigation" class="message failure">平台尝试了当前不支持的导航，已阻止。可关闭窗口后重新打开；不要将凭据复制到软件中。</p><div class="actions"><button v-if="row.account.platform==='qidian'" class="primary" :disabled="busy" @click="open(row.account.id,true)">登录起点</button><button :disabled="busy" @click="open(row.account.id)">打开官网窗口</button><button :disabled="busy||row.session==='closed'" @click="close(row.account.id,false)">关闭并清理会话</button><button :disabled="busy" @click="close(row.account.id,true)">移除记录并清理会话</button></div><CapturePanel v-if="row.account.platform==='qidian'" :account-id="row.account.id" :opened="row.session!=='closed'" @saved="emit('saved',$event)" @read="emit('read',$event)" /></li></ul>
+    <ul class="accounts"><li v-for="row in accounts" :key="row.account.id"><h3>{{ row.account.label }} <small>{{ row.account.platform==='qidian'?'起点':'书旗' }}</small></h3><p>{{ row.session==='closed'?'会话已关闭':'官网窗口已打开 · 登录与权限未验证' }}</p><p v-if="row.blocked_navigation" class="message failure">平台尝试了当前不支持的导航，已阻止。可关闭窗口后重新打开；不要将凭据复制到软件中。</p><div class="actions"><button v-if="row.account.platform==='qidian'" class="primary" :disabled="busy" @click="open(row.account.id,true)">登录起点</button><button :disabled="busy" @click="open(row.account.id)">打开官网窗口</button><button :disabled="busy||row.session==='closed'" @click="close(row.account.id,false)">关闭并清理会话</button><button :disabled="busy" @click="close(row.account.id,true)">移除记录并清理会话</button></div><AutoSavePanel v-if="row.account.platform==='qidian'" :account-id="row.account.id" :opened="row.session!=='closed'" :preferred-book="selectedBook||props.bookId||''" :revision="catalogRevision" @saved="emit('saved',$event)" @read="emit('read',$event)" /><CapturePanel v-if="row.account.platform==='qidian'" :account-id="row.account.id" :opened="row.session!=='closed'" @saved="savedBook" @read="emit('read',$event)" /></li></ul>
   </section>
 </template>
 <style scoped>

@@ -13,6 +13,8 @@ const page = ref<'download' | 'library' | 'tasks' | 'sources' | 'tools' | 'accou
 const bookPreferences=ref<BookPreferences[]>([]);const archiveFilter=ref('active');const editingTags=ref('');
 const preferencesByBook = computed(() => new Map(bookPreferences.value.map(p => [p.book_id, p])));
 const selectedPreferences=computed(()=>preferencesByBook.value.get(bookView.value?.book.id ?? ''));
+const accountBook=ref('');
+function openAccountBook(id:string){accountBook.value=id;page.value='accounts';}
 const bookInput = ref('');
 const inspectedInput = ref('');
 const catalog = ref<Catalog | null>(null);
@@ -287,6 +289,7 @@ onUnmounted(() => { disposed = true; if (timer) clearTimeout(timer); unlistenRes
             <p class="footnote">{{ bookView.book.author || '未标注作者' }} · {{ sourceLabel(bookView.book.source) }} · 已保存 {{ bookView.book.saved_chapters }}/{{ bookView.book.total_chapters }} 章<br />最近目录任务时间：{{ bookView.acquired_at }} UTC</p>
             <p class="book-description">{{ bookView.description || '未提供简介。' }}</p>
             <div class="range-row"><label>标签（逗号分隔）<input v-model="editingTags" placeholder="例如 连载，收藏" :disabled="working" /></label><button :disabled="working" @click="saveOrganization(!!selectedPreferences?.archived)">保存标签</button><button :disabled="working" @click="saveOrganization(!selectedPreferences?.archived)">{{ selectedPreferences?.archived ? '移回书架' : '归档作品' }}</button></div>
+            <button v-if="bookView.book.source==='qidian-session'" class="primary" @click="openAccountBook(bookView.book.id)">自动保存本书正文</button>
             <RevisionPanel :key="bookView.book.id" :book-id="bookView.book.id" :chapter-id="reading?.id||null" :online="sourceInfos.some(s=>s.id===bookView?.book.source&&s.can_download)" @changed="changedBook" />
             <div class="reader-layout">
               <div class="reader-directory"><label>目录检索<input v-model="readerFilter" type="search" placeholder="序号或章节标题" @input="readerPage = 1" /></label><ol><li v-for="chapter in visibleChapters" :key="chapter.id"><button :disabled="working || !chapter.saved" :aria-current="reading?.id === chapter.id ? 'true' : undefined" @click="openChapter(chapter.id)">{{ chapter.position }} · {{ chapter.title }}{{ chapter.saved ? '' : '（未保存）' }}</button></li></ol><div class="detail-pagination"><button :disabled="readerPage <= 1" @click="readerPage--">前页</button><span>{{ Math.min(readerPage,readerPages) }}/{{ readerPages }}</span><button :disabled="readerPage >= readerPages" @click="readerPage++">后页</button></div></div>
@@ -324,7 +327,7 @@ onUnmounted(() => { disposed = true; if (timer) clearTimeout(timer); unlistenRes
           <article v-for="job in visibleJobs" :key="job.id" class="task-card">
             <div class="task-heading"><h3>{{ job.title }}</h3><span class="state-tag">{{ labels[job.state] || job.state }}</span></div>
             <progress :value="job.saved" :max="job.total" :aria-label="`${job.title}保存进度`"></progress>
-            <div class="task-bottom"><span>本次范围已保存 {{ job.saved }} / {{ job.total }} 章 · 受限 {{ job.blocked }} · 失败 {{ job.failed }}</span><div class="task-controls"><button v-if="job.state === 'running' || job.state === 'queued'" :disabled="working" @click="action(() => pauseJob(job.id))">暂停</button><button v-if="['running','queued','paused'].includes(job.state)" :disabled="working" @click="action(() => cancelJob(job.id))">取消任务</button><button v-if="!['running','queued','completed','blocked'].includes(job.state) && (job.state !== 'partial' || job.failed || job.saved + job.blocked < job.total)" :disabled="working" @click="action(() => resumeJob(job.id))">继续 / 重试</button></div></div>
+            <div class="task-bottom"><span>本次范围已保存 {{ job.saved }} / {{ job.total }} 章 · 受限 {{ job.blocked }} · 失败 {{ job.failed }}</span><div class="task-controls"><button v-if="job.state === 'running' || job.state === 'queued'" :disabled="working" @click="action(() => pauseJob(job.id))">暂停</button><button v-if="['running','queued','paused'].includes(job.state)" :disabled="working" @click="action(() => cancelJob(job.id))">取消任务</button><button v-if="job.source==='qidian-session' && !['running','queued','completed'].includes(job.state)" :disabled="working" @click="openAccountBook(job.book_id)">选择账户继续</button><button v-if="job.source!=='qidian-session' && !['running','queued','completed','blocked'].includes(job.state) && (job.state !== 'partial' || job.failed || job.saved + job.blocked < job.total)" :disabled="working" @click="action(() => resumeJob(job.id))">继续 / 重试</button></div></div>
             <div v-if="job.saved" class="task-controls task-export"><button :disabled="working" @click="saveJob(job.id,'txt')">导出本次选章 TXT</button><button :disabled="working" @click="saveJob(job.id,'epub')">导出本次选章 EPUB</button></div>
             <p v-if="job.error" class="task-error">{{ job.error }}</p>
             <button class="detail-toggle" :aria-expanded="openedJob === job.id" :disabled="working" @click="showDetails(job.id)">{{ openedJob === job.id ? '收起章节明细' : '查看章节明细' }}</button>
@@ -343,15 +346,15 @@ onUnmounted(() => { disposed = true; if (timer) clearTimeout(timer); unlistenRes
         </template>
 
         <template v-if="page === 'sources'">
-          <div class="source-intro"><h2>当前支持范围</h2><p>番茄、七猫与晋江支持已验证的官网免费正文；书旗先提供详情与目录。起点在平台账户提供逐章预览保存实验。所选范围完成不代表整本完整。</p></div>
+          <div class="source-intro"><h2>当前支持范围</h2><p>番茄、七猫与晋江支持已验证的官网免费正文；书旗先提供详情与目录。起点在平台账户提供自动逐章保存实验。所选范围完成不代表整本完整。</p></div>
           <div class="source-list">
             <article><span class="source-monogram">本</span><div><h3>本地 JSON 内容</h3><p>用户提供的作品与章节 · 任务恢复 · TXT / EPUB</p></div><span class="available">已接入</span></article>
-            <article v-for="source in sourceInfos" :key="source.id"><span class="source-monogram">{{ source.name.slice(0,1) }}</span><div><h3>{{ source.name }}</h3><p>{{ source.note }}</p><small>{{ source.example }}</small></div><span :class="source.can_download ? 'available' : 'pending-label'">{{ source.id==='qidian-session'?'逐章预览保存':source.can_download ? '实验性下载' : '仅详情/目录' }}</span></article>
+            <article v-for="source in sourceInfos" :key="source.id"><span class="source-monogram">{{ source.name.slice(0,1) }}</span><div><h3>{{ source.name }}</h3><p>{{ source.note }}</p><small>{{ source.example }}</small></div><span :class="source.can_download ? 'available' : 'pending-label'">{{ source.id==='qidian-session'?'账户内自动保存':source.can_download ? '实验性下载' : '仅详情/目录' }}</span></article>
           </div>
           <p class="footnote">来源能力按目录、正文、账户与访问限制分别记录。付费平台留在后续路线，目前不承诺未购 VIP 正文获取能力。</p>
         </template>
         <LibraryTools v-if="page==='tools'" />
-        <AccountPanel v-if="page==='accounts'" @saved="refresh" @read="showBook" />
+        <AccountPanel v-if="page==='accounts'" :book-id="accountBook" @saved="refresh" @read="showBook" />
         <footer>OpenNovel Downloader<span>开放的工具，长久的书库。</span></footer>
       </div>
     </main>

@@ -1,6 +1,239 @@
+use opennovel_core::{
+    Error, ImportChapter, Result,
+    sources::{ChapterRef, SourceAdapter},
+};
 use opennovel_core::{ExportFormat, Library, SessionCatalog, SessionChapter, qidian_capture_url};
 use serde_json::{Value, json};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use tempfile::tempdir;
+
+#[derive(Default)]
+struct BrowserReader {
+    calls: Mutex<Vec<String>>,
+    blocked: AtomicBool,
+    wrong_title: bool,
+}
+impl SourceAdapter for BrowserReader {
+    fn source_id(&self) -> &str {
+        "qidian-session"
+    }
+    fn fetch_chapter(
+        &self,
+        _book: &str,
+        c: &ChapterRef,
+        _stop: &AtomicBool,
+    ) -> Result<ImportChapter> {
+        self.calls.lock().unwrap().push(c.id.clone());
+        if c.id == "30" && self.blocked.load(Ordering::Acquire) {
+            return Err(Error::Restricted("原创未购页面".into()));
+        }
+        let mut content = chapter(&c.id, &c.title).chapter;
+        if c.id == "30" && self.wrong_title {
+            content.title = "另一章".into();
+        }
+        Ok(content)
+    }
+}
+
+#[test]
+fn automatic_job_requires_confirmed_catalog_and_keeps_generic_http_disabled() {
+    let d = tempdir().unwrap();
+    let l = Library::open(d.path().join("library.db")).unwrap();
+    assert!(l.create_session_download("missing", None).is_err());
+    let book = l.register_session_catalog(&catalog()).unwrap();
+    assert!(!opennovel_core::sources::download_supported(
+        "qidian-session"
+    ));
+    assert!(l.create_download(catalog().catalog(), 1, 3).is_err());
+    assert!(l.create_session_download(&book, Some("1,1")).is_err());
+    let job = l.create_session_download(&book, None).unwrap();
+    assert!(l.is_session_download(&job).unwrap());
+    assert_eq!(l.job(&job).unwrap().total, 3);
+    assert!(l.create_session_download(&book, None).is_err());
+}
+
+#[test]
+fn automatic_whole_book_skips_cached_body_and_exports_complete_content() {
+    let d = tempdir().unwrap();
+    let l = Library::open(d.path().join("library.db")).unwrap();
+    let book = l.register_session_catalog(&catalog()).unwrap();
+    l.save_session_chapter(&chapter("10", "第一章 出发"))
+        .unwrap();
+    let manual = l.snapshot().unwrap().jobs[0].id.clone();
+    assert!(!l.is_session_download(&manual).unwrap());
+    let job = l.create_session_download(&book, None).unwrap();
+    let source = BrowserReader::default();
+    let done = l.run_job(&job, &source, &AtomicBool::new(false)).unwrap();
+    assert_eq!(done.state, "completed");
+    assert_eq!(done.saved, 3);
+    assert_eq!(*source.calls.lock().unwrap(), ["30", "20"]);
+    assert_eq!(l.session_download_jobs(&book).unwrap().len(), 1);
+    assert!(
+        !l.export(&book, d.path().join("export"), ExportFormat::Txt)
+            .unwrap()
+            .partial
+    );
+}
+
+#[test]
+fn restricted_page_stops_before_next_chapter_and_only_explicit_resume_retries() {
+    let d = tempdir().unwrap();
+    let l = Library::open(d.path().join("library.db")).unwrap();
+    let book = l.register_session_catalog(&catalog()).unwrap();
+    let job = l.create_session_download(&book, None).unwrap();
+    let source = BrowserReader::default();
+    source.blocked.store(true, Ordering::Release);
+    let partial = l.run_job(&job, &source, &AtomicBool::new(false)).unwrap();
+    assert_eq!(partial.state, "partial");
+    assert_eq!(partial.saved, 1);
+    assert_eq!(partial.blocked, 1);
+    assert_eq!(*source.calls.lock().unwrap(), ["10", "30"]);
+    assert_eq!(l.job_details(&job).unwrap().items[2].state, "queued");
+    source.blocked.store(false, Ordering::Release);
+    assert_eq!(
+        l.run_job(&job, &source, &AtomicBool::new(false))
+            .unwrap()
+            .state,
+        "completed"
+    );
+    assert_eq!(*source.calls.lock().unwrap(), ["10", "30", "30", "20"]);
+}
+
+#[test]
+fn pause_discards_late_browser_page_and_reopen_continues_only_missing_chapters() {
+    let d = tempdir().unwrap();
+    let path = d.path().join("library.db");
+    let l = Arc::new(Library::open(&path).unwrap());
+    let book = l.register_session_catalog(&catalog()).unwrap();
+    let job = l.create_session_download(&book, None).unwrap();
+    struct Pausing {
+        library: Arc<Library>,
+        job: String,
+    }
+    impl SourceAdapter for Pausing {
+        fn source_id(&self) -> &str {
+            "qidian-session"
+        }
+        fn fetch_chapter(
+            &self,
+            _b: &str,
+            c: &ChapterRef,
+            _s: &AtomicBool,
+        ) -> Result<ImportChapter> {
+            if c.id == "30" {
+                self.library.pause_job(&self.job)?;
+            }
+            Ok(chapter(&c.id, &c.title).chapter)
+        }
+    }
+    let source = Pausing {
+        library: Arc::clone(&l),
+        job: job.clone(),
+    };
+    assert_eq!(
+        l.run_job(&job, &source, &AtomicBool::new(false))
+            .unwrap()
+            .state,
+        "paused"
+    );
+    assert_eq!(l.book_details(&book).unwrap().book.saved_chapters, 1);
+    drop(source);
+    drop(l);
+    let l = Library::open(path).unwrap();
+    let source = BrowserReader::default();
+    assert_eq!(
+        l.run_job(&job, &source, &AtomicBool::new(false))
+            .unwrap()
+            .saved,
+        3
+    );
+    assert_eq!(*source.calls.lock().unwrap(), ["30", "20"]);
+}
+
+#[test]
+fn wrong_title_stops_and_cannot_be_saved_as_a_completed_chapter() {
+    let d = tempdir().unwrap();
+    let l = Library::open(d.path().join("library.db")).unwrap();
+    let book = l.register_session_catalog(&catalog()).unwrap();
+    let job = l.create_session_download(&book, None).unwrap();
+    let source = BrowserReader {
+        wrong_title: true,
+        ..Default::default()
+    };
+    let result = l.run_job(&job, &source, &AtomicBool::new(false)).unwrap();
+    assert_eq!(result.saved, 1);
+    assert_eq!(result.failed, 1);
+    assert_eq!(*source.calls.lock().unwrap(), ["10", "30"]);
+    assert!(l.read_chapter(&book, "30").is_err());
+}
+
+#[test]
+fn automatic_body_and_completion_roll_back_together_then_resume() {
+    let d = tempdir().unwrap();
+    let path = d.path().join("library.db");
+    let l = Library::open(&path).unwrap();
+    let book = l.register_session_catalog(&catalog()).unwrap();
+    let job = l.create_session_download(&book, None).unwrap();
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("CREATE TRIGGER automatic_failure BEFORE UPDATE OF state ON job_items WHEN NEW.chapter_id='30' AND NEW.state='completed' BEGIN SELECT RAISE(ABORT,'controlled write failure'); END;").unwrap();
+    let source = BrowserReader::default();
+    assert!(l.run_job(&job, &source, &AtomicBool::new(false)).is_err());
+    assert_eq!(l.job(&job).unwrap().saved, 1);
+    assert!(l.read_chapter(&book, "30").is_err());
+    db.execute_batch("DROP TRIGGER automatic_failure;").unwrap();
+    assert_eq!(
+        l.run_job(&job, &source, &AtomicBool::new(false))
+            .unwrap()
+            .saved,
+        3
+    );
+    assert_eq!(*source.calls.lock().unwrap(), ["10", "30", "30", "20"]);
+}
+
+#[test]
+fn catalog_changes_wait_for_automatic_job_to_finish_or_be_cancelled() {
+    let d = tempdir().unwrap();
+    let l = Library::open(d.path().join("library.db")).unwrap();
+    let book = l.register_session_catalog(&catalog()).unwrap();
+    let job = l.create_session_download(&book, None).unwrap();
+    let mut v = catalog_value();
+    v["declared_total"] = json!(4);
+    v["chapters"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":"40","title":"第四章"}));
+    let added = SessionCatalog::parse(&v.to_string(), BOOK).unwrap();
+    assert!(l.register_session_catalog(&added).is_err());
+    l.cancel_job(&job).unwrap();
+    assert_eq!(l.register_session_catalog(&added).unwrap(), book);
+}
+
+#[test]
+fn selected_automatic_range_never_claims_whole_book_completeness() {
+    let d = tempdir().unwrap();
+    let l = Library::open(d.path().join("library.db")).unwrap();
+    let book = l.register_session_catalog(&catalog()).unwrap();
+    let job = l.create_session_download(&book, Some("1,3")).unwrap();
+    let source = BrowserReader::default();
+    let done = l.run_job(&job, &source, &AtomicBool::new(false)).unwrap();
+    assert_eq!(done.total, 2);
+    assert_eq!(done.saved, 2);
+    assert_eq!(done.state, "completed");
+    assert_eq!(*source.calls.lock().unwrap(), ["10", "20"]);
+    assert!(
+        l.export(&book, d.path().join("export"), ExportFormat::Epub)
+            .unwrap()
+            .partial
+    );
+    assert!(
+        !l.export_job(&job, d.path().join("export"), ExportFormat::Epub)
+            .unwrap()
+            .partial
+    );
+}
 
 const BOOK: &str = "https://www.qidian.com/book/123/";
 fn catalog_value() -> Value {

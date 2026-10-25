@@ -6,6 +6,8 @@
 
 开始使用见 [使用指南](docs/USER_GUIDE.md)，逐平台边界见 [来源状态](docs/sources.md)，阶段状态见 [执行清单](docs/REMAINING_PHASES.md) 和 [全阶段核对](docs/ACCEPTANCE_STATUS.md)。历史 v0.1/v0.2 安装包保留，新版不覆盖它们。
 
+2026-10-25 新增起点账户内“自动保存全书”实验：从已确认目录逐章补齐，支持范围、跳过已存、暂停及重启后选择账户继续，遇到访问限制或异常即停止。核心回归、真实浏览器 DOM 契约和原生构建通过；本轮原生窗口控制授权未完成，官网自动连续保存与真实已购全书仍待验收。见 [操作步骤](docs/USER_GUIDE.md#起点自动保存全书实验性) 和 [证据边界](docs/verification/2026-10-25-automatic-session-download.md)。
+
 ## 当前可用范围
 
 - 用户提供的 JSON 书籍导入，每章内容和任务完成状态同时提交到 SQLite。
