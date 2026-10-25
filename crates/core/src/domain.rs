@@ -68,14 +68,14 @@ impl ImportDocument {
     }
 }
 
-fn validate_label(value: &str, name: &str, max: usize) -> Result<()> {
+pub(crate) fn validate_label(value: &str, name: &str, max: usize) -> Result<()> {
     if value.is_empty() || value.chars().count() > max || invalid_xml(value) {
         return Err(Error::Invalid(format!("{name}为空、过长或含无效字符")));
     }
     Ok(())
 }
 
-fn invalid_xml(value: &str) -> bool {
+pub(crate) fn invalid_xml(value: &str) -> bool {
     value.chars().any(|ch| {
         !matches!(ch as u32, 0x9 | 0xA | 0xD | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF)
     })
@@ -114,11 +114,13 @@ impl BookSummary {
             "shuqi-web" => "书旗官网目录",
             "jinjiang-web" => "晋江官网免费章节",
             "local-json" => "本地 JSON 导入",
+            "qidian-session" => "起点当前可读章节（实验性）",
             _ => &self.source,
         }
     }
     pub fn source_url(&self) -> Option<String> {
         match self.source.as_str() {
+            "qidian-session" => Some(format!("https://www.qidian.com/book/{}/", self.remote_id)),
             "fanqie-web" => Some(format!("https://fanqienovel.com/page/{}", self.remote_id)),
             "qimao-web" => Some(format!("https://www.qimao.com/shuku/{}/", self.remote_id)),
             "jinjiang-web" => Some(format!(

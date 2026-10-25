@@ -343,16 +343,15 @@ onUnmounted(() => { disposed = true; if (timer) clearTimeout(timer); unlistenRes
         </template>
 
         <template v-if="page === 'sources'">
-          <div class="source-intro"><h2>当前支持范围</h2><p>番茄、七猫与晋江支持已验证的官网免费正文；书旗先提供详情与目录。所选范围完成不代表整本完整。</p></div>
+          <div class="source-intro"><h2>当前支持范围</h2><p>番茄、七猫与晋江支持已验证的官网免费正文；书旗先提供详情与目录。起点在平台账户提供逐章预览保存实验。所选范围完成不代表整本完整。</p></div>
           <div class="source-list">
             <article><span class="source-monogram">本</span><div><h3>本地 JSON 内容</h3><p>用户提供的作品与章节 · 任务恢复 · TXT / EPUB</p></div><span class="available">已接入</span></article>
-            <article v-for="source in sourceInfos" :key="source.id"><span class="source-monogram">{{ source.name.slice(0,1) }}</span><div><h3>{{ source.name }}</h3><p>{{ source.note }}</p><small>{{ source.example }}</small></div><span :class="source.can_download ? 'available' : 'pending-label'">{{ source.can_download ? '实验性下载' : '仅详情/目录' }}</span></article>
-            <article><span class="source-monogram pending">起</span><div><h3>起点中文网</h3><p>正常网页当前返回访问验证页，账户与公开内容适配正在研究。</p></div><span class="pending-label">未接入</span></article>
+            <article v-for="source in sourceInfos" :key="source.id"><span class="source-monogram">{{ source.name.slice(0,1) }}</span><div><h3>{{ source.name }}</h3><p>{{ source.note }}</p><small>{{ source.example }}</small></div><span :class="source.can_download ? 'available' : 'pending-label'">{{ source.id==='qidian-session'?'逐章预览保存':source.can_download ? '实验性下载' : '仅详情/目录' }}</span></article>
           </div>
           <p class="footnote">来源能力按目录、正文、账户与访问限制分别记录。付费平台留在后续路线，目前不承诺未购 VIP 正文获取能力。</p>
         </template>
         <LibraryTools v-if="page==='tools'" />
-        <AccountPanel v-if="page==='accounts'" />
+        <AccountPanel v-if="page==='accounts'" @saved="refresh" @read="showBook" />
         <footer>OpenNovel Downloader<span>开放的工具，长久的书库。</span></footer>
       </div>
     </main>

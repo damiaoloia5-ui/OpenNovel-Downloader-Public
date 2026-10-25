@@ -1,7 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod accounts;
+mod capture;
 use accounts::{account_list, close_account, create_account, open_account};
+use capture::{confirm_account_page, preview_account_page};
 
 use opennovel_core::sources::{Catalog, SourceHub, SourceInfo, identify, source_infos};
 use opennovel_core::{
@@ -26,6 +28,7 @@ struct AppState {
     proposals: Mutex<HashMap<String, PendingUpdate>>,
     sessions: Mutex<HashMap<String, accounts::BrowserSession>>,
     session_root: PathBuf,
+    captures: Mutex<HashMap<String, capture::PendingCapture>>,
 }
 struct PendingUpdate {
     book_id: String,
@@ -655,6 +658,7 @@ fn main() {
                 proposals: Mutex::default(),
                 sessions: Mutex::default(),
                 session_root: directory.join("session-cache"),
+                captures: Mutex::default(),
             });
             tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
                 .data_directory(directory.join("ui-webview"))
@@ -666,6 +670,8 @@ fn main() {
             let dispatch: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
                 Box::new(tauri::generate_handler![
                     account_list,
+                    preview_account_page,
+                    confirm_account_page,
                     create_account,
                     open_account,
                     close_account,

@@ -439,11 +439,11 @@ impl Library {
                 })
                 .collect::<Result<Vec<_>>>()?
         };
-        let modified=transaction.query_row("SELECT MAX(moment) FROM (SELECT created_at AS moment FROM jobs WHERE book_id=?1 UNION ALL SELECT created_at AS moment FROM catalog_history WHERE book_id=?1)",[book_id],|r|r.get::<_,String>(0))?;
-        transaction.commit()?;
         if chapters.is_empty() {
             return Err(Error::Conflict("尚无已保存章节，无法导出".into()));
         }
+        let modified=transaction.query_row("SELECT MAX(moment) FROM (SELECT created_at AS moment FROM jobs WHERE book_id=?1 UNION ALL SELECT created_at AS moment FROM catalog_history WHERE book_id=?1)",[book_id],|r|r.get::<_,String>(0))?;
+        transaction.commit()?;
         Ok(BookContent {
             summary,
             chapters,

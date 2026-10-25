@@ -5,13 +5,16 @@ use opennovel_core::{
 use serde::Serialize;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 pub struct BrowserSession {
     pub _directory: tempfile::TempDir,
     pub blocked_navigation: Arc<AtomicBool>,
+    pub generation: String,
+    pub revision: Arc<AtomicU64>,
+    pub reading: Arc<AtomicBool>,
 }
 #[derive(Serialize)]
 pub struct AccountStatus {
@@ -20,7 +23,7 @@ pub struct AccountStatus {
     blocked_navigation: bool,
     can_download: bool,
 }
-fn window_label(id: &str) -> String {
+pub(crate) fn window_label(id: &str) -> String {
     format!("account-{id}")
 }
 
@@ -90,6 +93,8 @@ pub async fn open_account(
         .map_err(|_| "无法建立独立会话目录")?;
     let blocked = Arc::new(AtomicBool::new(false));
     let navigation_blocked = Arc::clone(&blocked);
+    let revision = Arc::new(AtomicU64::new(0));
+    let navigation_revision = Arc::clone(&revision);
     let popup_blocked = Arc::clone(&blocked);
     let platform = account.platform.clone();
     let popup_platform = platform.clone();
@@ -111,6 +116,7 @@ pub async fn open_account(
         .incognito(true)
         .devtools(false)
         .on_navigation(move |url| {
+            navigation_revision.fetch_add(1, Ordering::AcqRel);
             let allowed = account_navigation_allowed(&platform, url);
             if !allowed {
                 navigation_blocked.store(true, Ordering::Release);
@@ -135,6 +141,9 @@ pub async fn open_account(
         BrowserSession {
             _directory: directory,
             blocked_navigation: blocked,
+            generation: uuid::Uuid::new_v4().to_string(),
+            revision,
+            reading: Arc::new(AtomicBool::new(false)),
         },
     );
     let handle = app.clone();
@@ -144,6 +153,10 @@ pub async fn open_account(
             && let Ok(mut sessions) = state.sessions.lock()
         {
             sessions.remove(&id);
+            drop(sessions);
+            if let Ok(mut previews) = state.captures.lock() {
+                previews.retain(|_, p| p.account != id);
+            }
         }
     });
     window.set_focus().map_err(|_| "无法聚焦官网窗口".into())
@@ -167,6 +180,11 @@ pub async fn close_account(
         .lock()
         .map_err(|_| "账户会话不可用")?
         .remove(&id);
+    state
+        .captures
+        .lock()
+        .map_err(|_| "页面预览不可用")?
+        .retain(|_, p| p.account != id);
     if remove {
         state
             .library

@@ -6,6 +6,7 @@ mod export;
 mod maintenance;
 mod reading;
 mod revisions;
+mod session_capture;
 pub mod sources;
 mod storage;
 
@@ -18,6 +19,10 @@ pub use export::ExportFormat;
 pub use maintenance::{BackupManifest, BookPreferences, DiagnosticReport};
 pub use revisions::{
     CatalogChange, CatalogFieldChange, CatalogUpdate, HistoryEntry, RefreshReceipt,
+};
+pub use session_capture::{
+    MAX_CAPTURE_BYTES, QIDIAN_SESSION_SOURCE, SessionCatalog, SessionChapter, SessionSaveReceipt,
+    qidian_capture_url,
 };
 pub use storage::Library;
 

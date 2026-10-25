@@ -13,7 +13,15 @@ pub struct SourceInfo {
     pub note: &'static str,
     pub example: &'static str,
 }
-static SOURCES: [SourceInfo; 4] = [
+static SOURCES: [SourceInfo; 5] = [
+    SourceInfo {
+        id: "qidian-session",
+        name: "起点当前可读章节",
+        can_download: false,
+        can_search: false,
+        note: "请在平台账户读取完整目录，逐章预览并确认保存；无自动批量下载，真实已购场景待验收。",
+        example: "https://www.qidian.com/book/作品ID/",
+    },
     SourceInfo {
         id: "fanqie-web",
         name: "番茄官网网页",

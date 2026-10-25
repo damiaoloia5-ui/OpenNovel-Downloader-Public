@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import {onMounted,ref} from 'vue';
+import CapturePanel from './CapturePanel.vue';
+const emit=defineEmits<{saved:[bookId:string];read:[bookId:string]}>();
 import {accountList,createAccount,openAccount,closeAccount,type AccountStatus} from './api';
 const accounts=ref<AccountStatus[]>([]);const platform=ref('qidian');const label=ref('');const bookUrl=ref('');const busy=ref(false);const error=ref('');const notice=ref('');
 async function reload(){accounts.value=await accountList();}
@@ -12,14 +14,14 @@ onMounted(()=>{void action(reload);});
 <template>
   <section class="account-panel" aria-label="平台账户">
     <h2>平台账户 · 实验性</h2>
-    <p>在平台官方窗口自行登录。每个账户窗口独立，关闭即结束会话；本软件不接收密码或 Cookie。窗口打开不代表已认证，已购正文下载尚待实测。</p>
+    <p>在平台官方窗口自行登录。每个账户窗口独立，关闭即结束会话；本软件不接收密码或 Cookie。窗口打开不代表已认证。起点支持当前可读章节的预览确认保存实验，真实已购场景尚待实测。</p>
     <form class="account-form" @submit.prevent="add"><label>平台<select v-model="platform" :disabled="busy"><option value="qidian">起点中文网</option><option value="shuqi">书旗小说</option></select></label><label>本地别名<input v-model="label" maxlength="40" placeholder="例如 我的起点账户，请勿填写凭据" :disabled="busy" required></label><button :disabled="busy||!label.trim()">添加账户记录</button></form>
     <label>打开的官网作品链接（可选）<input v-model="bookUrl" type="url" placeholder="https://www.qidian.com/book/作品ID/" :disabled="busy"></label>
     <p class="footnote">起点请点“登录起点”，通过官方书架进入独立登录页，不依赖首页登录弹层。填写作品链接后可用“打开官网窗口”查看作品；留空时起点进入登录入口，书旗打开首页。跨站登录方式可能被阻止，退出仅清理本机会话。</p>
     <p v-if="error" class="message failure" role="alert">{{ error }}</p><p v-if="notice" class="message success" role="status">{{ notice }}</p>
     <button :disabled="busy" @click="action(reload)">刷新会话状态</button>
     <p v-if="!accounts.length">尚无本地账户记录。</p>
-    <ul class="accounts"><li v-for="row in accounts" :key="row.account.id"><h3>{{ row.account.label }} <small>{{ row.account.platform==='qidian'?'起点':'书旗' }}</small></h3><p>{{ row.session==='closed'?'会话已关闭':'官网窗口已打开 · 登录与权限未验证' }}</p><p v-if="row.blocked_navigation" class="message failure">平台尝试了当前不支持的导航，已阻止。可关闭窗口后重新打开；不要将凭据复制到软件中。</p><div class="actions"><button v-if="row.account.platform==='qidian'" class="primary" :disabled="busy" @click="open(row.account.id,true)">登录起点</button><button :disabled="busy" @click="open(row.account.id)">打开官网窗口</button><button :disabled="busy||row.session==='closed'" @click="close(row.account.id,false)">关闭并清理会话</button><button :disabled="busy" @click="close(row.account.id,true)">移除记录并清理会话</button></div></li></ul>
+    <ul class="accounts"><li v-for="row in accounts" :key="row.account.id"><h3>{{ row.account.label }} <small>{{ row.account.platform==='qidian'?'起点':'书旗' }}</small></h3><p>{{ row.session==='closed'?'会话已关闭':'官网窗口已打开 · 登录与权限未验证' }}</p><p v-if="row.blocked_navigation" class="message failure">平台尝试了当前不支持的导航，已阻止。可关闭窗口后重新打开；不要将凭据复制到软件中。</p><div class="actions"><button v-if="row.account.platform==='qidian'" class="primary" :disabled="busy" @click="open(row.account.id,true)">登录起点</button><button :disabled="busy" @click="open(row.account.id)">打开官网窗口</button><button :disabled="busy||row.session==='closed'" @click="close(row.account.id,false)">关闭并清理会话</button><button :disabled="busy" @click="close(row.account.id,true)">移除记录并清理会话</button></div><CapturePanel v-if="row.account.platform==='qidian'" :account-id="row.account.id" :opened="row.session!=='closed'" @saved="emit('saved',$event)" @read="emit('read',$event)" /></li></ul>
   </section>
 </template>
 <style scoped>

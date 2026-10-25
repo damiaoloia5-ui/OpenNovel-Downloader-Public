@@ -2546,6 +2546,7 @@ version = "0.3.0"
 dependencies = [
  "opennovel-core",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tempfile",
