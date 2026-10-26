@@ -2,6 +2,23 @@ use opennovel_core::{Library, account_entry_url, account_login_url, account_navi
 use tempfile::tempdir;
 
 #[test]
+fn qidian_catalog_entry_keeps_the_same_strict_book_identity_boundary() {
+    let url = account_entry_url("qidian", "https://www.qidian.com/book/123/catalog/").unwrap();
+    assert_eq!(url.path(), "/book/123/catalog/");
+    for input in [
+        "https://www.qidian.com/book/123catalog/",
+        "https://www.qidian.com/book/123/catalog/456/",
+        "https://www.qidian.com/book/123/catalog/?token=test",
+        "https://www.qidian.com/book/123/catalog/#token",
+        "https://user@www.qidian.com/book/123/catalog/",
+        "https://www.qidian.com.evil/book/123/catalog/",
+    ] {
+        assert!(account_entry_url("qidian", input).is_err(), "{input}");
+    }
+    assert!(account_entry_url("shuqi", "https://www.shuqi.com/book/123/catalog/").is_err());
+}
+
+#[test]
 fn qidian_empty_entry_avoids_homepage_overlay_without_accepting_arbitrary_links() {
     let login = account_entry_url("qidian", "  ").unwrap();
     assert_eq!(login.scheme(), "https");

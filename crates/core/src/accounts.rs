@@ -56,7 +56,7 @@ pub fn account_entry_url(platform: &str, input: &str) -> Result<Url> {
         if platform == "shuqi" {
             p.strip_suffix(".html")
         } else {
-            Some(p)
+            Some(p.strip_suffix("/catalog").unwrap_or(p))
         }
     });
     if !account_navigation_allowed(platform, &url)
