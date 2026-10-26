@@ -1,236 +1,69 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import {computed,nextTick,onMounted,onUnmounted,ref,watch} from 'vue';
+import {getCurrentWindow} from '@tauri-apps/api/window';
 import LibraryTools from './LibraryTools.vue';
 import SourceSearch from './SourceSearch.vue';
 import BatchPanel from './BatchPanel.vue';
-import RevisionPanel from './RevisionPanel.vue';
 import AccountPanel from './AccountPanel.vue';
 import HelpGuide from './HelpGuide.vue';
-import ExportActions from './ExportActions.vue';
+import BookWorkspace from './BookWorkspace.vue';
 import {qidianBookLink} from './workflow';
-import {preferences,organizeBook,type BookPreferences} from './api';
-import { sourceCapabilities, type SourceInfo, bookDetails, cancelJob, desktopAvailable, downloadBook, exportJob, importBook, inspectBook, jobDetails, pauseJob, readChapter, resumeJob, retryChapters, revealExport, snapshot, updateBook, type BookDetails, type Catalog, type ChapterContent, type JobDetails, type Snapshot } from './api';
+import type {WorkbenchTab} from './workbenchModel';
+import {preferences,sourceCapabilities,cancelJob,desktopAvailable,downloadBook,exportJob,importBook,inspectBook,jobDetails,pauseJob,resumeJob,retryChapters,snapshot,type BookPreferences,type SourceInfo,type JobDetails,type Snapshot,type Catalog} from './api';
 
-const page = ref<'download' | 'library' | 'tasks' | 'sources' | 'tools' | 'accounts' | 'help'>('download');
+const page=ref<'download'|'library'|'tasks'|'sources'|'tools'|'accounts'|'help'|'book'>('download');
 const pageHeading=ref<HTMLElement|null>(null);
-watch(page,async value=>{if(value==='help'){notice.value='';error.value='';}await nextTick();pageHeading.value?.focus();});
-const bookPreferences=ref<BookPreferences[]>([]);const archiveFilter=ref('active');const editingTags=ref('');
-const preferencesByBook = computed(() => new Map(bookPreferences.value.map(p => [p.book_id, p])));
-const selectedPreferences=computed(()=>preferencesByBook.value.get(bookView.value?.book.id ?? ''));
-const accountBook=ref('');const accountUrl=ref('');
-function openAccountBook(id:string){accountBook.value=id;accountUrl.value='';page.value='accounts';}
-const bookInput = ref('');
-const inspectedInput = ref('');
-const catalog = ref<Catalog | null>(null);
-const sourceInfos=ref<SourceInfo[]>([]);
+const workspaceBook=ref('');const workspaceTab=ref<WorkbenchTab>('overview');const workspaceAccount=ref('');
+const accountUrl=ref('');const bookInput=ref('');const inspectedInput=ref('');const catalog=ref<Catalog|null>(null);
+const sourceInfos=ref<SourceInfo[]>([]);const bookPreferences=ref<BookPreferences[]>([]);
+const preferencesByBook=computed(()=>new Map(bookPreferences.value.map(p=>[p.book_id,p])));
 const catalogSource=computed(()=>sourceInfos.value.find(s=>s.id===catalog.value?.source));
-const catalogCanDownload=computed(()=>catalogSource.value?.can_download ?? false);
-const firstChapter = ref(1);
-const lastChapter = ref(1);
-const selection = ref('');
-const bookView = ref<BookDetails | null>(null);
-const reading = ref<ChapterContent | null>(null);
-const readerPanel = ref<HTMLElement | null>(null);
-const readerPage = ref(1);
-const readerFilter = ref('');
-const readingChapters = computed(() => bookView.value?.chapters.filter(c => `${c.position} ${c.title}`.includes(readerFilter.value)) ?? []);
-const readerPages = computed(() => Math.max(1,Math.ceil(readingChapters.value.length/100)));
-const visibleChapters = computed(() => readingChapters.value.slice((Math.min(readerPage.value,readerPages.value)-1)*100,Math.min(readerPage.value,readerPages.value)*100));
-const savedChapters = computed(() => bookView.value?.chapters.filter(c => c.saved) ?? []);
-const readingIndex = computed(() => savedChapters.value.findIndex(c => c.id === reading.value?.id));
-const accessible = computed(() => catalog.value?.chapters.filter(chapter => !chapter.restricted).length ?? 0);
-const data = ref<Snapshot>({ books: [], jobs: [] });
-const error = ref('');
-const notice = ref('');
-const working = ref(false);
-const filter = ref('');
-const fileInput = ref<HTMLInputElement | null>(null);
-const openedJob = ref('');
-const details = ref<JobDetails | null>(null);
-const chapterFilter = ref('missing');
-const detailPage = ref(1);
-const filteredItems = computed(() => details.value?.items.filter(item => chapterFilter.value === 'all' || (chapterFilter.value === 'missing' ? item.state !== 'completed' : item.state === chapterFilter.value)) ?? []);
-const detailPages = computed(() => Math.max(1, Math.ceil(filteredItems.value.length / 100)));
-const visibleItems = computed(() => filteredItems.value.slice((Math.min(detailPage.value, detailPages.value)-1)*100, Math.min(detailPage.value, detailPages.value)*100));
-const chapterLabels: Record<string,string> = {queued:'待下载',completed:'已保存',failed:'失败',blocked:'网页受限'};
-const errorLabels: Record<string,string> = {network:'网络请求',restricted:'访问限制',source_changed:'来源结构变化',invalid_content:'正文校验',io:'读写错误',other:'其他错误'};
-const books = computed(() => data.value.books.filter(book => {
-  const p=preferencesByBook.value.get(book.id);
-  return (archiveFilter.value==='all'||(archiveFilter.value==='archived'?!!p?.archived:!p?.archived)) && `${book.title} ${book.author} ${p?.tags.join(' ')||''}`.toLocaleLowerCase().includes(filter.value.toLocaleLowerCase());
-}));
-const bookPage = ref(1);
-const bookPages = computed(() => Math.max(1, Math.ceil(books.value.length / 48)));
-const visibleBooks = computed(() => books.value.slice((bookPage.value - 1) * 48, bookPage.value * 48));
-const taskPage = ref(1);
-const taskFilter = ref('all');
-const filteredJobs = computed(() => data.value.jobs.filter(job => taskFilter.value === 'all' ||
-  (taskFilter.value === 'active' ? ['queued','running','paused'].includes(job.state) :
-    taskFilter.value === 'attention' ? ['failed','partial','blocked','cancelled'].includes(job.state) : job.state === 'completed')));
-const taskPages = computed(() => Math.max(1, Math.ceil(filteredJobs.value.length / 20)));
-const visibleJobs = computed(() => filteredJobs.value.slice((taskPage.value - 1) * 20, taskPage.value * 20));
-watch([filter, archiveFilter], () => { bookPage.value = 1; });
-watch(bookPages, pages => { bookPage.value = Math.min(bookPage.value, pages); });
-watch(taskFilter, () => { taskPage.value = 1; });
-watch(taskPages, pages => { taskPage.value = Math.min(taskPage.value, pages); });
-const saved = computed(() => data.value.books.reduce((total, book) => total + book.saved_chapters, 0));
-const active = computed(() => data.value.jobs.filter(job => job.state === 'queued' || job.state === 'running').length);
-const labels: Record<string, string> = { queued: '等待执行', running: '正在保存', paused: '中断待继续', cancelled: '已取消', failed: '执行失败', partial: '部分保存', blocked: '网页访问受限', completed: '所选范围完成' };
-let timer: ReturnType<typeof setTimeout> | undefined;
-let disposed = false;
-let refreshing = false;
-let minimized = false;
-let unlistenResize: (() => void) | undefined;
-
-async function refresh() {
-  if (!desktopAvailable || refreshing) return;
-  refreshing = true;
-  try {
-    const [currentSnapshot, currentPreferences] = await Promise.all([snapshot(), preferences()]);
-    data.value = currentSnapshot; bookPreferences.value=currentPreferences; await refreshDetails();
-    const shown=bookView.value;
-    const current=data.value.books.find(book => book.id === shown?.book.id);
-    if (shown && current && (shown.book.saved_chapters !== current.saved_chapters || shown.book.total_chapters !== current.total_chapters)) {
-      const updated=await bookDetails(shown.book.id);
-      if (bookView.value?.book.id === updated.book.id) bookView.value=updated;
-    }
-  }
-  catch (reason) { error.value = String(reason); }
-  finally { refreshing = false; schedulePoll(); }
+const catalogCanDownload=computed(()=>catalogSource.value?.can_download??false);
+const firstChapter=ref(1);const lastChapter=ref(1);const selection=ref('');
+const accessible=computed(()=>catalog.value?.chapters.filter(c=>!c.restricted).length??0);
+const data=ref<Snapshot>({books:[],jobs:[]});const error=ref('');const notice=ref('');const working=ref(false);
+const filter=ref('');const archiveFilter=ref('active');const fileInput=ref<HTMLInputElement|null>(null);
+const openedJob=ref('');const details=ref<JobDetails|null>(null);const chapterFilter=ref('missing');const detailPage=ref(1);
+const filteredItems=computed(()=>details.value?.items.filter(i=>chapterFilter.value==='all'||(chapterFilter.value==='missing'?i.state!=='completed':i.state===chapterFilter.value))??[]);
+const detailPages=computed(()=>Math.max(1,Math.ceil(filteredItems.value.length/100)));
+const visibleItems=computed(()=>filteredItems.value.slice((Math.min(detailPage.value,detailPages.value)-1)*100,Math.min(detailPage.value,detailPages.value)*100));
+const chapterLabels:Record<string,string>={queued:'待下载',completed:'已保存',failed:'失败',blocked:'网页受限'};
+const errorLabels:Record<string,string>={network:'网络请求',restricted:'访问限制',source_changed:'来源结构变化',invalid_content:'正文校验',io:'读写错误',other:'其他错误'};
+const books=computed(()=>data.value.books.filter(b=>{const p=preferencesByBook.value.get(b.id);return (archiveFilter.value==='all'||(archiveFilter.value==='archived'?!!p?.archived:!p?.archived))&&`${b.title} ${b.author} ${p?.tags.join(' ')||''}`.toLocaleLowerCase().includes(filter.value.toLocaleLowerCase());}));
+const bookPage=ref(1);const bookPages=computed(()=>Math.max(1,Math.ceil(books.value.length/48)));const visibleBooks=computed(()=>books.value.slice((bookPage.value-1)*48,bookPage.value*48));
+const taskPage=ref(1);const taskFilter=ref('all');
+const filteredJobs=computed(()=>data.value.jobs.filter(j=>taskFilter.value==='all'||(taskFilter.value==='active'?['queued','running','paused'].includes(j.state):taskFilter.value==='attention'?['failed','partial','blocked','cancelled'].includes(j.state):j.state==='completed')));
+const taskPages=computed(()=>Math.max(1,Math.ceil(filteredJobs.value.length/20)));const visibleJobs=computed(()=>filteredJobs.value.slice((taskPage.value-1)*20,taskPage.value*20));
+const saved=computed(()=>data.value.books.reduce((n,b)=>n+b.saved_chapters,0));const active=computed(()=>data.value.jobs.filter(j=>['queued','running'].includes(j.state)).length);
+const labels:Record<string,string>={queued:'等待执行',running:'正在保存',paused:'中断待继续',cancelled:'已取消',failed:'执行失败',partial:'部分保存',blocked:'网页访问受限',completed:'所选范围完成'};
+let navigationEpoch=0;let timer:ReturnType<typeof setTimeout>|undefined;let disposed=false;let refreshing=false;let minimized=false;let unlistenResize:(()=>void)|undefined;
+watch(page,async value=>{navigationEpoch++;if(value==='help'){notice.value='';error.value='';}await nextTick();pageHeading.value?.focus();},{flush:'sync'});
+watch([filter,archiveFilter],()=>{bookPage.value=1;});watch(bookPages,n=>{bookPage.value=Math.min(bookPage.value,n);});
+watch(taskFilter,()=>{taskPage.value=1;});watch(taskPages,n=>{taskPage.value=Math.min(taskPage.value,n);});
+function openWorkspace(id:string,tab:WorkbenchTab='overview',account=''){workspaceBook.value=id;workspaceTab.value=tab;workspaceAccount.value=account;error.value='';notice.value='';page.value='book';}
+function showBook(id:string){openWorkspace(id);}
+function openAccountBook(id:string){openWorkspace(id,'save');}
+async function refresh(){
+  if(!desktopAvailable||refreshing)return;refreshing=true;
+  try{const [s,p]=await Promise.all([snapshot(),preferences()]);if(disposed)return;data.value=s;bookPreferences.value=p;await refreshDetails();}
+  catch(e){error.value=String(e);}finally{refreshing=false;schedulePoll();}
 }
-
-function schedulePoll() {
-  if (!disposed) {
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => void poll(), active.value && !document.hidden && !minimized ? 800 : 5000);
-  }
-}
-
-async function poll() {
-  if (disposed) return;
-  if (document.hidden) schedulePoll();
-  else {
-    try {
-      minimized = await getCurrentWindow().isMinimized();
-      if (disposed) return;
-      if (minimized) schedulePoll();
-      else await refresh();
-    } catch (reason) { error.value = String(reason); schedulePoll(); }
-  }
-}
-
-function visibilityChanged() {
-  if (!document.hidden) {
-    if (timer) clearTimeout(timer);
-    void poll();
-  }
-}
-
-async function refreshDetails() {
-  const id = openedJob.value;
-  if (!id) return;
-  const result = await jobDetails(id);
-  if (openedJob.value === id) details.value = result;
-}
-
-async function showDetails(id:string) {
-  if (openedJob.value === id) { openedJob.value = ''; details.value = null; return; }
-  openedJob.value = id; details.value = null; detailPage.value = 1; chapterFilter.value = 'missing';
-  await action(refreshDetails);
-}
-
-async function retryChapter(jobId:string, chapterId:string) {
-  await action(async () => { await retryChapters(jobId,[chapterId]); notice.value = '只重试所选失败章节；其他待下载章节保持原状态。'; });
-}
-
-async function checkUpdates(bookId:string) {
-  await action(async () => { await updateBook(bookId); page.value = 'tasks'; notice.value = '已重新读取官网目录并创建补齐任务；已有章节复用，受限章节仍会明确显示。'; });
-}
-
-async function showBook(id:string) {
-  await action(async () => { bookView.value=await bookDetails(id); editingTags.value=bookPreferences.value.find(p=>p.book_id===id)?.tags.join('，')||''; reading.value=null; readerPage.value=1; readerFilter.value=''; page.value='library'; });
-  await nextTick(); readerPanel.value?.focus();
-}
-async function saveOrganization(archived:boolean) {
-  const id=bookView.value?.book.id;if(!id)return;
-  await action(async()=>{await organizeBook(id,editingTags.value.split(/[,，]/).map(t=>t.trim()).filter(Boolean),archived);notice.value=archived?'已归档，离线正文和导出保留。':'书库标签已保存，作品在书架显示。';});
-}
-function changedBook(){void action(async()=>{const id=bookView.value?.book.id;if(!id)return;const previous=reading.value?.id;bookView.value=await bookDetails(id);reading.value=previous&&bookView.value.chapters.some(c=>c.id===previous&&c.saved)?await readChapter(id,previous):null;});}
-
-async function openChapter(id:string) {
-  const book=bookView.value;
-  if (!book) return;
-  await action(async () => { const content=await readChapter(book.book.id,id); if (bookView.value?.book.id === book.book.id) reading.value=content; });
-}
-
-async function saveJob(id:string,format:'txt'|'epub') {
-  await action(async () => {
-    const receipt=await exportJob(id,format);
-    notice.value=`本次任务选章已导出（${receipt.saved_chapters}/${receipt.total_chapters} 章${receipt.partial ? '，部分内容' : ''}）：${receipt.path}`;
-  });
-}
-
-async function action(work: () => Promise<void>) {
-  if (working.value) return;
-  error.value = '';
-  notice.value = '';
-  working.value = true;
-  try { await work(); await refresh(); }
-  catch (reason) { error.value = String(reason); }
-  finally { working.value = false; }
-}
-
-async function chooseFile(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (!file) return;
-  await action(async () => {
-    if (file.size > 16 * 1024 * 1024) throw new Error('文件超过 16 MiB，请拆分后导入。');
-    await importBook(await file.text());
-    notice.value = '导入任务已创建，章节将逐一保存到本地。';
-    page.value = 'tasks';
-  });
-  input.value = '';
-}
-
-async function inspect() {
-  const link=qidianBookLink(bookInput.value);
-  if(link){accountUrl.value=link;accountBook.value='';page.value='accounts';error.value='';notice.value='已识别起点作品，请按下方步骤登录并保存。';return;}
-  await action(async () => {
-    catalog.value = null;
-    const input = bookInput.value.trim();
-    const result = await inspectBook(input);
-    catalog.value = result;
-    inspectedInput.value = input;
-    firstChapter.value = 1;
-    lastChapter.value = result.chapters.length;
-    selection.value = '';
-  });
-}
-async function selectSearchResult(input:string) {bookInput.value=input;await inspect();}
-
-async function startDownload() {
-  await action(async () => {
-    if (!catalogCanDownload.value) throw new Error(catalogSource.value?.note || '该来源暂不支持正文下载');
-    if (bookInput.value.trim() !== inspectedInput.value) throw new Error('链接已改变，请重新读取目录。');
-    await downloadBook(inspectedInput.value, firstChapter.value, lastChapter.value,selection.value);
-    page.value = 'tasks';
-    notice.value = '下载任务已创建；网页受限章节会单独计数，不保存截断预览。';
-  });
-}
-
-function sourceLabel(source: string) { const info=sourceInfos.value.find(s=>s.id===source); return source==='local-json' ? '本地 JSON' : info ? `${info.name} · 实验性` : source; }
-
-onMounted(() => {
-  if (!desktopAvailable) return;
-  void sourceCapabilities().then(result=>sourceInfos.value=result).catch(reason=>error.value=String(reason));
-  void getCurrentWindow().onResized(visibilityChanged).then(unlisten => {
-    if (disposed) unlisten(); else unlistenResize = unlisten;
-  }).catch(reason => { error.value = String(reason); });
-  void poll();
-  document.addEventListener('visibilitychange', visibilityChanged);
-});
-onUnmounted(() => { disposed = true; if (timer) clearTimeout(timer); unlistenResize?.(); document.removeEventListener('visibilitychange', visibilityChanged); });
+function schedulePoll(){if(!disposed){if(timer)clearTimeout(timer);timer=setTimeout(()=>void poll(),active.value&&!document.hidden&&!minimized?800:5000);}}
+async function poll(){if(disposed)return;if(document.hidden){schedulePoll();return;}try{minimized=await getCurrentWindow().isMinimized();if(disposed)return;if(minimized)schedulePoll();else await refresh();}catch(e){error.value=String(e);schedulePoll();}}
+function visibilityChanged(){if(!document.hidden){if(timer)clearTimeout(timer);void poll();}}
+async function refreshDetails(){const id=openedJob.value;if(!id)return;const result=await jobDetails(id);if(openedJob.value===id)details.value=result;}
+async function showDetails(id:string){if(openedJob.value===id){openedJob.value='';details.value=null;return;}openedJob.value=id;details.value=null;detailPage.value=1;chapterFilter.value='missing';await action(refreshDetails);}
+async function retryChapter(id:string,chapter:string){await action(async()=>{await retryChapters(id,[chapter]);notice.value='只重试所选失败章节，其他章节保持原状态。';});}
+async function saveJob(id:string,format:'txt'|'epub'){await action(async()=>{const r=await exportJob(id,format);notice.value=`本次任务选章已导出（${r.saved_chapters}/${r.total_chapters} 章${r.partial?'，部分内容':''}）：${r.path}`;});}
+async function action(work:()=>Promise<void>){if(working.value)return;working.value=true;error.value='';notice.value='';try{await work();await refresh();}catch(e){error.value=String(e);}finally{working.value=false;}}
+async function openCreatedJob(id:string,epoch:number){try{const result=await jobDetails(id);if(disposed||epoch!==navigationEpoch)return;openWorkspace(result.job.book_id,'save');notice.value='任务已创建，可在本书工作台保存、阅读和导出。';}catch{if(disposed||epoch!==navigationEpoch)return;page.value='tasks';notice.value='任务已创建，暂时无法读取作品信息，请在任务进度中查看。';}}
+async function chooseFile(event:Event){const input=event.target as HTMLInputElement;const file=input.files?.[0];if(!file)return;await action(async()=>{if(file.size>16*1024*1024)throw new Error('文件超过 16 MiB，请拆分后导入。');const epoch=navigationEpoch;const id=await importBook(await file.text());await openCreatedJob(id,epoch);});input.value='';}
+async function inspect(){const link=qidianBookLink(bookInput.value);if(link){accountUrl.value=link;page.value='accounts';error.value='';notice.value='已识别起点作品，确认目录后会进入本书工作台。';return;}await action(async()=>{catalog.value=null;const input=bookInput.value.trim();const result=await inspectBook(input);catalog.value=result;inspectedInput.value=input;firstChapter.value=1;lastChapter.value=result.chapters.length;selection.value='';});}
+async function selectSearchResult(input:string){bookInput.value=input;await inspect();}
+async function startDownload(){await action(async()=>{if(!catalogCanDownload.value)throw new Error(catalogSource.value?.note||'该来源暂不支持正文下载');if(bookInput.value.trim()!==inspectedInput.value)throw new Error('链接已改变，请重新读取目录。');const epoch=navigationEpoch;const id=await downloadBook(inspectedInput.value,firstChapter.value,lastChapter.value,selection.value);await openCreatedJob(id,epoch);});}
+function sourceLabel(id:string){const info=sourceInfos.value.find(s=>s.id===id);return id==='local-json'?'本地 JSON':info?`${info.name} · 实验性`:id;}
+onMounted(()=>{if(!desktopAvailable)return;void sourceCapabilities().then(r=>sourceInfos.value=r).catch(e=>error.value=String(e));void getCurrentWindow().onResized(visibilityChanged).then(unlisten=>{if(disposed)unlisten();else unlistenResize=unlisten;}).catch(e=>error.value=String(e));void poll();document.addEventListener('visibilitychange',visibilityChanged);});
+onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();document.removeEventListener('visibilitychange',visibilityChanged);});
 </script>
 
 <template>
@@ -243,7 +76,7 @@ onUnmounted(() => { disposed = true; if (timer) clearTimeout(timer); unlistenRes
       <div class="nav-label">工作空间</div>
       <nav aria-label="主导航">
         <button :class="{ selected: page === 'download' }" @click="page = 'download'"><span aria-hidden="true">＋</span>添加小说</button>
-        <button :class="{ selected: page === 'library' }" @click="page = 'library'"><span aria-hidden="true">▤</span>我的书库<b>{{ data.books.length }}</b></button>
+        <button :class="{ selected: page === 'library' || page === 'book' }" @click="page = 'library'"><span aria-hidden="true">▤</span>我的书库<b>{{ data.books.length }}</b></button>
         <button :class="{ selected: page === 'tasks' }" @click="page = 'tasks'"><span aria-hidden="true">↓</span>任务进度<b v-if="active">{{ active }}</b></button>
         <button :class="{ selected: page === 'sources' }" @click="page = 'sources'"><span aria-hidden="true">◎</span>小说来源</button>
         <button :class="{ selected: page === 'accounts' }" @click="page='accounts'"><span aria-hidden="true">◉</span>平台账户</button>
@@ -254,12 +87,12 @@ onUnmounted(() => { disposed = true; if (timer) clearTimeout(timer); unlistenRes
     </aside>
 
     <main>
-      <header class="topbar"><span>个人工作空间 / {{ page==='help'?'使用指引':page === 'download' ? '添加小说' : page === 'library' ? '书库' : page === 'tasks' ? '任务' : page==='tools' ? '备份与诊断' : page==='accounts'?'账户':'来源' }}</span><button class="help-entry" @click="page='help'">不会操作？查看指引</button></header>
+      <header class="topbar"><span>个人工作空间 / {{ page==='book'?'作品工作台':page==='help'?'使用指引':page === 'download' ? '添加小说' : page === 'library' ? '书库' : page === 'tasks' ? '任务' : page==='tools' ? '备份与诊断' : page==='accounts'?'账户':'来源' }}</span><button class="help-entry" @click="page='help'">不会操作？查看指引</button></header>
       <div class="main-content">
         <div v-if="!desktopAvailable" class="message warning" role="status">当前是浏览器界面预览。请运行桌面应用以使用本地书库和导出功能。</div>
         <div v-if="error" class="message failure" role="alert">{{ error }}<button aria-label="关闭错误提示" @click="error = ''">×</button></div>
         <div v-if="notice" class="message success" role="status">{{ notice }}<button aria-label="关闭提示" @click="notice = ''">×</button></div>
-        <div class="page-heading">
+        <div v-if="page!=='book'" class="page-heading">
           <div><h1 ref="pageHeading" tabindex="-1">{{ page==='help'?'使用指引':page === 'download' ? '添加小说' : page === 'library' ? '我的书库' : page === 'tasks' ? '任务进度' : page==='accounts'?'登录与保存正文':page==='tools'?'备份与诊断':'小说来源' }}</h1><p class="intro">{{ page==='help'?'从添加到导出，按步骤完成。':page === 'download' ? '粘贴官网作品链接，接着保存正文，再导出文件。' : page === 'library' ? '选择作品，阅读或导出已经保存的正文。' : page === 'tasks' ? '查看保存进度，继续中断的任务。' : page==='accounts'?'起点按步骤引导；书旗入口在高级操作中。':page==='tools'?'创建书库备份、恢复副本，查看诊断信息。':'查看各个平台已验证的支持范围。' }}</p></div>
           <button v-if="page==='library'" :disabled="!desktopAvailable || working" @click="fileInput?.click()">导入本地 JSON</button>
           <input ref="fileInput" type="file" accept=".json,application/json" class="file-input" aria-label="选择 JSON 书籍文件" @change="chooseFile" />
@@ -283,20 +116,6 @@ onUnmounted(() => { disposed = true; if (timer) clearTimeout(timer); unlistenRes
         </template>
 
         <template v-if="page === 'library'">
-          <section v-if="bookView" ref="readerPanel" class="reading-panel" tabindex="-1" aria-label="作品详情与离线阅读">
-            <div class="section-heading"><h2>{{ bookView.book.title }}</h2><button @click="bookView = null; reading = null">关闭预览</button></div>
-            <p class="footnote">{{ bookView.book.author || '未标注作者' }} · {{ sourceLabel(bookView.book.source) }} · 已保存 {{ bookView.book.saved_chapters }}/{{ bookView.book.total_chapters }} 章<br />最近目录任务时间：{{ bookView.acquired_at }} UTC</p>
-            <p class="book-description">{{ bookView.description || '未提供简介。' }}</p>
-            <details class="optional-options"><summary>整理作品：标签与归档</summary><div class="range-row"><label>标签（逗号分隔）<input v-model="editingTags" placeholder="例如 连载，收藏" :disabled="working" /></label><button :disabled="working" @click="saveOrganization(!!selectedPreferences?.archived)">保存标签</button><button :disabled="working" @click="saveOrganization(!selectedPreferences?.archived)">{{ selectedPreferences?.archived ? '移回书架' : '归档作品' }}</button></div></details>
-            <button v-if="bookView.book.source==='qidian-session'" class="primary" @click="openAccountBook(bookView.book.id)">自动保存本书正文</button>
-            <ExportActions :key="bookView.book.id" :book-id="bookView.book.id" :saved="bookView.book.saved_chapters" :total="bookView.book.total_chapters" @exported="changedBook" />
-            <RevisionPanel :key="bookView.book.id" :book-id="bookView.book.id" :chapter-id="reading?.id||null" :online="sourceInfos.some(s=>s.id===bookView?.book.source&&s.can_download)" @changed="changedBook" />
-            <div class="reader-layout">
-              <div class="reader-directory"><label>目录检索<input v-model="readerFilter" type="search" placeholder="序号或章节标题" @input="readerPage = 1" /></label><ol><li v-for="chapter in visibleChapters" :key="chapter.id"><button :disabled="working || !chapter.saved" :aria-current="reading?.id === chapter.id ? 'true' : undefined" @click="openChapter(chapter.id)">{{ chapter.position }} · {{ chapter.title }}{{ chapter.saved ? '' : '（未保存）' }}</button></li></ol><div class="detail-pagination"><button :disabled="readerPage <= 1" @click="readerPage--">前页</button><span>{{ Math.min(readerPage,readerPages) }}/{{ readerPages }}</span><button :disabled="readerPage >= readerPages" @click="readerPage++">后页</button></div></div>
-              <article class="reader-text" aria-label="已保存正文"><template v-if="reading"><h3>{{ reading.title }}</h3><p v-for="(paragraph,index) in reading.paragraphs" :key="index">{{ paragraph }}</p><div class="detail-pagination"><button :disabled="working || readingIndex <= 0" @click="openChapter(savedChapters[readingIndex-1]!.id)">上一章</button><button :disabled="working || readingIndex < 0 || readingIndex >= savedChapters.length-1" @click="openChapter(savedChapters[readingIndex+1]!.id)">下一章</button></div></template><p v-else class="footnote">选择已保存章节即可离线预览。未保存或受限正文不会在此补造。</p></article>
-            </div>
-            <h3>最近导出记录</h3><p v-if="!bookView.exports.length" class="footnote">尚无本版本记录的导出。</p><ul class="export-history"><li v-for="record in bookView.exports" :key="record.id"><span>{{ record.job_id ? '任务选章' : '书库内容' }} · {{ record.format.toUpperCase() }} · {{ record.saved }}/{{ record.total }} 章 · {{ record.created_at }} UTC</span><code>{{ record.path }}</code><button :disabled="working" @click="action(() => revealExport(record.id))">打开文件夹</button></li></ul>
-          </section>
           <section class="stats" aria-label="书库统计">
             <div><span>本地作品</span><strong>{{ data.books.length }}<small>本</small></strong></div>
             <div><span>已保存章节</span><strong>{{ saved }}<small>章</small></strong></div>
@@ -309,9 +128,8 @@ onUnmounted(() => { disposed = true; if (timer) clearTimeout(timer); unlistenRes
               <div class="book-info">
 <span class="source-tag">{{ sourceLabel(book.source) }}</span><h3>{{ book.title }}</h3><p>{{ book.saved_chapters }} / {{ book.total_chapters }} 章<span>{{ book.saved_chapters === book.total_chapters ? '完整保存' : '部分保存' }}</span></p>
                 <p v-if="preferencesByBook.get(book.id)?.tags.length" class="footnote">{{ preferencesByBook.get(book.id)?.tags.join(' · ') }}</p>
-                <div class="book-actions"><button :disabled="working" @click="showBook(book.id)">阅读与导出</button><button v-if="book.source==='qidian-session'&&book.saved_chapters<book.total_chapters" :disabled="working" @click="openAccountBook(book.id)">保存缺章</button></div>
-                <button v-if="sourceInfos.some(s=>s.id===book.source && s.can_download)" class="update-book" :disabled="working || data.jobs.some(job => job.book_id === book.id && ['queued','running','paused'].includes(job.state))" @click="checkUpdates(book.id)">检查更新并补齐</button>
-              </div>
+                <div class="book-actions"><button :disabled="working" @click="showBook(book.id)">打开作品工作台</button></div>
+</div>
             </article>
           </section>
           <div v-else class="empty-state"><span class="empty-icon" aria-hidden="true">▤</span><h2>{{ filter ? '没有找到这本书' : archiveFilter === 'archived' ? '还没有归档作品' : '从第一本书开始' }}</h2><p>{{ filter ? '试试其他书名、作者或标签。' : archiveFilter === 'archived' ? '在作品详情中归档后，会显示在这里。' : '先在“添加小说”粘贴作品链接并保存正文，也可导入已有本地 JSON。' }}</p><p v-if="!filter && archiveFilter !== 'archived'" class="muted">首次操作可打开右上角“查看指引”，了解保存正文与导出文件的区别。</p></div>
@@ -353,7 +171,8 @@ onUnmounted(() => { disposed = true; if (timer) clearTimeout(timer); unlistenRes
           <p class="footnote">来源能力按目录、正文、账户与访问限制分别记录。付费平台留在后续路线，目前不承诺未购 VIP 正文获取能力。</p>
         </template>
         <LibraryTools v-if="page==='tools'" />
-        <AccountPanel v-if="page==='accounts'" :book-id="accountBook" :initial-url="accountUrl" @saved="refresh" @read="showBook" />
+        <AccountPanel v-if="page==='accounts'" :initial-url="accountUrl" @saved="refresh" @ready="(id,account)=>openWorkspace(id,'save',account)" @read="id=>openWorkspace(id,'read')" />
+        <BookWorkspace v-if="page==='book'&&workspaceBook" :key="workspaceBook" :book-id="workspaceBook" :initial-tab="workspaceTab" :account-id="workspaceAccount" :sources="sourceInfos" :jobs="data.jobs" :summary="data.books.find(b=>b.id===workspaceBook)" :preference="preferencesByBook.get(workspaceBook)" @changed="refresh" @back="page='library'" @tasks="page='tasks'" @help="page='help'" />
         <HelpGuide v-if="page==='help'" @navigate="page=$event" @import="fileInput?.click()" />
         <footer>OpenNovel Downloader<span>开放的工具，长久的书库。</span></footer>
       </div>
