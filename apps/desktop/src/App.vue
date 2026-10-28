@@ -7,6 +7,7 @@ import BatchPanel from './BatchPanel.vue';
 import AccountPanel from './AccountPanel.vue';
 import HelpGuide from './HelpGuide.vue';
 import BookWorkspace from './BookWorkspace.vue';
+import {catalogAvailability} from './availabilityModel';
 import {qidianBookLink} from './workflow';
 import type {WorkbenchTab} from './workbenchModel';
 import {preferences,sourceCapabilities,cancelJob,desktopAvailable,downloadBook,exportJob,importBook,inspectBook,jobDetails,pauseJob,resumeJob,retryChapters,snapshot,type BookPreferences,type SourceInfo,type JobDetails,type Snapshot,type Catalog} from './api';
@@ -20,7 +21,7 @@ const preferencesByBook=computed(()=>new Map(bookPreferences.value.map(p=>[p.boo
 const catalogSource=computed(()=>sourceInfos.value.find(s=>s.id===catalog.value?.source));
 const catalogCanDownload=computed(()=>catalogSource.value?.can_download??false);
 const firstChapter=ref(1);const lastChapter=ref(1);const selection=ref('');
-const accessible=computed(()=>catalog.value?.chapters.filter(c=>!c.restricted).length??0);
+const access=computed(()=>catalog.value?catalogAvailability(catalog.value,sourceInfos.value):null);
 const data=ref<Snapshot>({books:[],jobs:[]});const error=ref('');const notice=ref('');const working=ref(false);
 const filter=ref('');const archiveFilter=ref('active');const fileInput=ref<HTMLInputElement|null>(null);
 const openedJob=ref('');const details=ref<JobDetails|null>(null);const chapterFilter=ref('missing');const detailPage=ref(1);
@@ -60,7 +61,7 @@ async function openCreatedJob(id:string,epoch:number){try{const result=await job
 async function chooseFile(event:Event){const input=event.target as HTMLInputElement;const file=input.files?.[0];if(!file)return;await action(async()=>{if(file.size>16*1024*1024)throw new Error('文件超过 16 MiB，请拆分后导入。');const epoch=navigationEpoch;const id=await importBook(await file.text());await openCreatedJob(id,epoch);});input.value='';}
 async function inspect(){const link=qidianBookLink(bookInput.value);if(link){accountUrl.value=link;page.value='accounts';error.value='';notice.value='已识别起点作品，确认目录后会进入本书工作台。';return;}await action(async()=>{catalog.value=null;const input=bookInput.value.trim();const result=await inspectBook(input);catalog.value=result;inspectedInput.value=input;firstChapter.value=1;lastChapter.value=result.chapters.length;selection.value='';});}
 async function selectSearchResult(input:string){bookInput.value=input;await inspect();}
-async function startDownload(){await action(async()=>{if(!catalogCanDownload.value)throw new Error(catalogSource.value?.note||'该来源暂不支持正文下载');if(bookInput.value.trim()!==inspectedInput.value)throw new Error('链接已改变，请重新读取目录。');const epoch=navigationEpoch;const id=await downloadBook(inspectedInput.value,firstChapter.value,lastChapter.value,selection.value);await openCreatedJob(id,epoch);});}
+async function startDownload(openOnly=false){await action(async()=>{if(!catalogCanDownload.value)throw new Error(catalogSource.value?.note||'该来源暂不支持正文下载');if(bookInput.value.trim()!==inspectedInput.value)throw new Error('链接已改变，请重新读取目录。');const chosen=openOnly?access.value?.selection:selection.value;if(openOnly&&!chosen)throw new Error('当前目录没有标记开放的章节。');const epoch=navigationEpoch;const id=await downloadBook(inspectedInput.value,firstChapter.value,lastChapter.value,chosen);await openCreatedJob(id,epoch);});}
 function sourceLabel(id:string){const info=sourceInfos.value.find(s=>s.id===id);return id==='local-json'?'本地 JSON':info?`${info.name} · 实验性`:id;}
 onMounted(()=>{if(!desktopAvailable)return;void sourceCapabilities().then(r=>sourceInfos.value=r).catch(e=>error.value=String(e));void getCurrentWindow().onResized(visibilityChanged).then(unlisten=>{if(disposed)unlisten();else unlistenResize=unlisten;}).catch(e=>error.value=String(e));void poll();document.addEventListener('visibilitychange',visibilityChanged);});
 onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();document.removeEventListener('visibilitychange',visibilityChanged);});
@@ -106,11 +107,12 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
             <p class="footnote">起点会进入登录保存引导；书旗目前只有目录。部分免费平台网页也可能存在缺章。</p>
           </form>
           <section v-if="catalog" class="download-panel" aria-label="作品目录">
-            <h2>{{ catalog.title }}</h2><p class="footnote">{{ catalogSource?.name || catalog.source }} · {{ catalog.author || '未标注作者' }} · 全目录 {{ catalog.chapters.length }} 章<span v-if="catalogCanDownload"> · 网页标记开放 {{ accessible }} 章</span></p>
+            <h2>{{ catalog.title }}</h2><p class="footnote">{{ catalogSource?.name || catalog.source }} · {{ catalog.author || '未标注作者' }} · 全目录 {{ catalog.chapters.length }} 章</p>
+            <section v-if="access" aria-label="目录可获取范围"><h3>先看当前获取范围</h3><p v-if="access.supported" role="status">目录标记开放 {{ access.open }} 章 · 目录受限 {{ access.restricted }} 章。开放标记仅表示可以尝试，不代表正文已验证，也不保证整书免费。</p><p v-else role="status">正文待验证 {{ access.unverified }} 章，当前来源没有开放网页正文下载。</p><p class="footnote">受限可能涉及付费、锁定或渠道限制；实际结果以逐章保存为准。不会自动购买、广告解锁或切换来源。</p></section>
             <p v-if="!catalogCanDownload" class="message warning" role="status">{{ catalogSource?.note || '该来源暂不支持正文下载' }}</p>
             <p v-if="catalog.description" class="book-description">{{ catalog.description }}</p>
-            <button class="primary" :disabled="working || !catalogCanDownload || (!selection.trim() && (firstChapter < 1 || lastChapter < firstChapter || lastChapter > catalog.chapters.length))" @click="startDownload">{{ selection.trim()||firstChapter!==1||lastChapter!==catalog.chapters.length?'保存所选章节':'保存全部可获取章节' }}</button>
-            <details class="optional-options"><summary>选章设置与目录预览（可选）</summary><div class="range-row"><label>起始序号<input v-model.number="firstChapter" type="number" min="1" :max="catalog.chapters.length" :disabled="!!selection.trim()" /></label><label>结束序号<input v-model.number="lastChapter" type="number" :min="firstChapter" :max="catalog.chapters.length" :disabled="!!selection.trim()" /></label></div><label class="selection-label">指定序号（可选）<input v-model="selection" type="text" placeholder="例如 1,3,5-8" /></label><ol class="catalog-list"><li v-for="chapter in catalog.chapters.slice(0, 100)" :key="chapter.id"><span>{{ chapter.title }}</span><small>{{ !catalogCanDownload ? '正文访问未验证' : chapter.restricted ? '网页受限' : '网页标记开放' }}</small></li></ol><p v-if="catalog.chapters.length>100" class="footnote">预览前 100 章；保存范围可选择完整目录。</p></details>
+            <button class="primary" :disabled="working||!access?.open||bookInput.trim()!==inspectedInput" @click="startDownload(true)">仅保存目录标记开放章（{{ access?.open||0 }}）</button>
+            <details class="optional-options"><summary>选章设置与目录预览（可选）</summary><div class="range-row"><label>起始序号<input v-model.number="firstChapter" type="number" min="1" :max="catalog.chapters.length" :disabled="!!selection.trim()" /></label><label>结束序号<input v-model.number="lastChapter" type="number" :min="firstChapter" :max="catalog.chapters.length" :disabled="!!selection.trim()" /></label></div><label class="selection-label">指定序号（可选）<input v-model="selection" type="text" placeholder="例如 1,3,5-8" /></label><button :disabled="working||!catalogCanDownload||bookInput.trim()!==inspectedInput||(!selection.trim()&&(!Number.isInteger(firstChapter)||!Number.isInteger(lastChapter)||firstChapter<1||lastChapter<firstChapter||lastChapter>catalog.chapters.length))" @click="startDownload()">保存自定义范围（包含受限标记时会明确记录）</button><ol class="catalog-list"><li v-for="chapter in catalog.chapters.slice(0, 100)" :key="chapter.id"><span>{{ chapter.title }}</span><small>{{ !catalogCanDownload ? '正文访问未验证' : chapter.restricted ? '网页受限' : '网页标记开放' }}</small></li></ol><p v-if="catalog.chapters.length>100" class="footnote">预览前 100 章；保存范围可选择完整目录。</p></details>
           </section>
           <details class="optional-options"><summary>其他方式：按书名搜索或导入本地文件</summary><SourceSearch :sources="sourceInfos" :busy="working" @select="selectSearchResult" /><button :disabled="!desktopAvailable||working" @click="fileInput?.click()">选择本地 JSON 文件</button><p class="footnote">仅支持符合 OpenNovel 格式的 JSON，暂不导入 TXT 或 EPUB。</p></details>
         </template>

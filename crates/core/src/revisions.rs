@@ -415,6 +415,7 @@ impl Library {
                 .enumerate()
                 .map(|(p, c)| ReadingChapter {
                     saved: saved.contains(&c.id),
+                    availability: None,
                     id: c.id,
                     title: c.title,
                     position: p as u32 + 1,

@@ -24,8 +24,16 @@ impl Library {
             .prepare("SELECT chapter_id FROM chapters WHERE book_id=?1")?
             .query_map([book_id], |r| r.get::<_, String>(0))?
             .collect::<std::result::Result<std::collections::HashSet<_>, _>>()?;
-        let (description, chapters) = if let Some(raw) = raw {
+        let mut restricted = std::collections::HashSet::new();
+        let (description, mut chapters) = if let Some(raw) = raw {
             let catalog: Catalog = serde_json::from_str(&raw)?;
+            restricted.extend(
+                catalog
+                    .chapters
+                    .iter()
+                    .filter(|c| c.restricted)
+                    .map(|c| c.id.clone()),
+            );
             (
                 catalog.description,
                 catalog
@@ -34,6 +42,7 @@ impl Library {
                     .enumerate()
                     .map(|(position, c)| ReadingChapter {
                         saved: saved.contains(&c.id),
+                        availability: None,
                         id: c.id,
                         title: c.title,
                         position: position as u32 + 1,
@@ -41,9 +50,16 @@ impl Library {
                     .collect(),
             )
         } else {
-            let chapters=connection.prepare("SELECT i.chapter_id,COALESCE(c.title,json_extract(i.payload,'$.title')),i.position FROM job_items i JOIN jobs j ON j.id=i.job_id LEFT JOIN chapters c ON c.book_id=j.book_id AND c.chapter_id=i.chapter_id WHERE j.book_id=?1 ORDER BY i.position")?.query_map([book_id],|r|{let id:String=r.get(0)?;Ok(ReadingChapter{saved:saved.contains(&id),id,title:r.get(1)?,position:r.get::<_,u32>(2)?+1})})?.collect::<std::result::Result<Vec<_>,_>>()?;
+            let chapters=connection.prepare("SELECT i.chapter_id,COALESCE(c.title,json_extract(i.payload,'$.title')),i.position FROM job_items i JOIN jobs j ON j.id=i.job_id LEFT JOIN chapters c ON c.book_id=j.book_id AND c.chapter_id=i.chapter_id WHERE j.book_id=?1 ORDER BY i.position")?.query_map([book_id],|r|{let id:String=r.get(0)?;Ok(ReadingChapter{saved:saved.contains(&id),availability:None,id,title:r.get(1)?,position:r.get::<_,u32>(2)?+1})})?.collect::<std::result::Result<Vec<_>,_>>()?;
             (String::new(), chapters)
         };
+        crate::availability::annotate(
+            &connection,
+            book_id,
+            &book.source,
+            &restricted,
+            &mut chapters,
+        )?;
         let acquired_at = connection
             .query_row(
                 "SELECT MAX(created_at) FROM jobs WHERE book_id=?1",

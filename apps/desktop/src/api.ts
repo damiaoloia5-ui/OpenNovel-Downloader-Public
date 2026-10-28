@@ -50,7 +50,9 @@ export function exportHistory(id:string,format:'txt'|'epub'):Promise<Receipt> {r
 export function sourceCapabilities():Promise<SourceInfo[]> {return invoke('source_capabilities');}
 export interface ChapterContent {id:string;title:string;paragraphs:string[]}
 export interface ExportRecord {id:string;book_id:string;job_id:string|null;path:string;format:string;saved:number;total:number;partial:boolean;created_at:string}
-export interface BookDetails {book:Book;description:string;acquired_at:string;chapters:{id:string;title:string;position:number;saved:boolean}[];exports:ExportRecord[]}
+export interface ChapterAvailability {state:string;reason:string;job_id:string|null}
+export interface ReadingChapter {id:string;title:string;position:number;saved:boolean;availability?:ChapterAvailability|null}
+export interface BookDetails {book:Book;description:string;acquired_at:string;chapters:ReadingChapter[];exports:ExportRecord[]}
 export interface Receipt { path: string; saved_chapters: number; total_chapters: number; partial: boolean }
 export interface BookPreferences {book_id:string;tags:string[];archived:boolean}
 export interface MaintenanceReceipt {id:string;path:string;books:number;chapters:number}

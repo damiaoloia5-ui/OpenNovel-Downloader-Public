@@ -186,6 +186,16 @@ pub struct ReadingChapter {
     pub title: String,
     pub position: u32,
     pub saved: bool,
+    #[serde(default)]
+    pub availability: Option<ChapterAvailability>,
+}
+
+/// Evidence about this chapter, not a promise of remote reading entitlement.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChapterAvailability {
+    pub state: String,
+    pub reason: String,
+    pub job_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

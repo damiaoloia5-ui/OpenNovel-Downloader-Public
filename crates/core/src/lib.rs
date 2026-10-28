@@ -1,4 +1,5 @@
 mod accounts;
+mod availability;
 mod batch;
 mod domain;
 mod downloads;
