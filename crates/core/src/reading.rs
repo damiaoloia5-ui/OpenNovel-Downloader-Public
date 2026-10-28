@@ -100,4 +100,15 @@ impl Library {
             .optional()?
             .ok_or_else(|| Error::Invalid("导出记录不存在".into()))
     }
+
+    pub fn export_record_id(&self, book_id: &str, path: &str) -> Result<String> {
+        self.connection()?
+            .query_row(
+                "SELECT id FROM exports WHERE book_id=?1 AND path=?2 ORDER BY rowid DESC LIMIT 1",
+                [book_id, path],
+                |r| r.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| Error::Invalid("导出记录不存在".into()))
+    }
 }

@@ -17,7 +17,7 @@ export function workbenchStatus(book:Book,jobs:readonly Job[],mode:SaveMode):Wor
   if(running)return {kind:'running',title:'正在保存',message:'可以在这里查看进度或暂停，已保存正文可随时阅读和导出。',action:'查看保存进度',tab:'save',job:running};
   const paused=own.find(j=>j.state==='paused');
   if(paused)return {kind:'paused',title:'已暂停，进度保留',message:mode==='account'?'打开原账户官网窗口并核对登录后，继续原任务。':'继续原任务会复用已经保存的正文。',action:'继续保存',tab:'save',job:paused};
-  if(book.total_chapters>0&&book.saved_chapters===book.total_chapters)return {kind:'complete',title:'正文已保存完整',message:'可以离线阅读，或导出为 TXT / EPUB 文件。',action:'导出文件',tab:'export'};
+  if(book.total_chapters>0&&book.saved_chapters===book.total_chapters)return {kind:'complete',title:'正文已保存完整',message:'后台会自动生成 TXT，可在本页打开文件夹；也可离线阅读或手动导出其他格式。',action:'查看文件与其他导出',tab:'export'};
   if(mode==='unavailable')return {kind:'unavailable',title:'当前来源未开放正文保存',message:'目录不等于正文。已有内容仍可阅读或导出，来源权限和支持范围保持不变。',action:book.saved_chapters?'阅读已保存正文':'查看支持说明',tab:book.saved_chapters?'read':'save'};
   const latest=own[0];
   if(latest&&['failed','partial','blocked','cancelled'].includes(latest.state))return {kind:'attention',title:latest.state==='cancelled'?'任务已取消，正文保留':'保存已停止，需要处理',message:latest.error||'查看任务原因后再继续。已保存内容不会丢失。',action:'查看原因与下一步',tab:'save',job:latest};

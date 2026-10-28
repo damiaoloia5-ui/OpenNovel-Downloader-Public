@@ -4,10 +4,12 @@ import AccountPanel from './AccountPanel.vue';
 import ExportActions from './ExportActions.vue';
 import RevisionPanel from './RevisionPanel.vue';
 import AvailabilityPanel from './AvailabilityPanel.vue';
+import AutomaticTxtPanel from './AutomaticTxtPanel.vue';
+import type {AutoTxtStatus} from './api';
 import {bookDetails,readChapter,jobDetails,pauseJob,resumeJob,cancelJob,updateBook,retryChapters,revealExport,organizeBook,type Book,type BookDetails,type BookPreferences,type ChapterContent,type Job,type JobDetails,type SourceInfo} from './api';
 import {saveMode,workbenchStatus,type WorkbenchTab} from './workbenchModel';
 
-const props=defineProps<{bookId:string;initialTab?:WorkbenchTab;accountId?:string;sources:SourceInfo[];jobs:Job[];summary?:Book;preference?:BookPreferences}>();
+const props=defineProps<{bookId:string;initialTab?:WorkbenchTab;accountId?:string;sources:SourceInfo[];jobs:Job[];summary?:Book;preference?:BookPreferences;automatic?:AutoTxtStatus}>();
 const emit=defineEmits<{changed:[];back:[];tasks:[];help:[]}>();
 const tab=ref<WorkbenchTab>(props.initialTab||'overview');
 const selectedAccount=ref(props.accountId||'');
@@ -79,6 +81,7 @@ function accountSaved(id:string){if(id===props.bookId){void refresh();emit('chan
 function readSaved(){void selectTab('read');if(!reader.value&&savedChapters.value[0])void openChapter(savedChapters.value[0].id);}
 function organize(archived:boolean){void action(async()=>{preference.value=await organizeBook(props.bookId,tags.value.split(/[,，]/).map(t=>t.trim()).filter(Boolean),archived);tagsDirty.value=false;notice.value=archived?'作品已归档，正文和导出保留。':'书库整理设置已保存。';emit('changed');},true);}
 watch(()=>props.initialTab,value=>{if(value)void selectTab(value);});
+watch(()=>props.automatic?.receipt?.path,()=>{void refresh();});
 watch(()=>props.preference,value=>{preference.value=value;if(!tagsDirty.value)tags.value=(value?.tags||[]).join('，');});
 watch(()=>JSON.stringify([props.summary?.saved_chapters,props.summary?.total_chapters,ownJobs.value.map(j=>[j.id,j.state,j.saved,j.failed,j.blocked])]),()=>{void refresh();if(tab.value==='save'&&openedJob.value&&!busy.value)void loadJob(openedJob.value).catch(e=>{if(!disposed)error.value=String(e);});});
 watch([search,onlySaved],()=>{readerPage.value=1;});
@@ -97,6 +100,7 @@ onUnmounted(()=>{disposed=true;loadSequence++;readSequence++;jobSequence++;});
     <template v-if="book&&detail&&status">
       <header class="workspace-heading"><h1 ref="heading" tabindex="-1">{{ book.title }}</h1><p>{{ book.author||'未标注作者' }} · {{ mode==='local'?'本地 JSON':source?.name||book.source }}</p></header>
       <section class="book-status" :data-state="status.kind" aria-label="本书保存状态"><div><strong>{{ status.title }}</strong><p>{{ status.message }}</p><p>全书正文已保存 <b>{{ book.saved_chapters }}/{{ book.total_chapters }}</b> 章 · 尚缺 {{ Math.max(0,book.total_chapters-book.saved_chapters) }} 章</p></div><button v-if="tab!==status.tab" class="primary" :disabled="busy" @click="selectTab(status.tab)">{{ status.action }}</button></section>
+      <AutomaticTxtPanel :book-id="book.id" :saved="book.saved_chapters" :active="active" :status="automatic" />
       <div class="workspace-tabs" role="tablist" aria-label="作品功能" @keydown="tabKeys"><button v-for="entry in tabs" :id="`book-tab-${entry.id}`" :key="entry.id" role="tab" :aria-selected="tab===entry.id" :aria-controls="`book-panel-${entry.id}`" :tabindex="tab===entry.id?0:-1" @click="selectTab(entry.id)">{{ entry.label }}</button></div>
       <section :id="`book-panel-${tab}`" ref="panel" role="tabpanel" :aria-labelledby="`book-tab-${tab}`" tabindex="-1" class="workspace-panel">
         <template v-if="tab==='overview'">

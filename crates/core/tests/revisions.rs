@@ -152,6 +152,7 @@ fn chapter_revision_failures_and_cancellation_keep_old_text_and_revised_exports_
         .unwrap()
         .book_id;
     let before = l.export(&book, d.path(), ExportFormat::Txt).unwrap();
+    let automatic_before = l.export_automatic_txt(&book, d.path()).unwrap();
     assert!(
         !l.refresh_chapter(&book, "1", &original, &AtomicBool::new(false))
             .unwrap()
@@ -188,6 +189,18 @@ fn chapter_revision_failures_and_cancellation_keep_old_text_and_revised_exports_
         .refresh_chapter(&book, "1", &revised, &AtomicBool::new(false))
         .unwrap();
     assert!(r.changed);
+    let automatic_after = l.export_automatic_txt(&book, d.path()).unwrap();
+    assert_ne!(automatic_before.path, automatic_after.path);
+    assert!(
+        std::fs::read_to_string(&automatic_before.path)
+            .unwrap()
+            .contains("原创正文 v1 1")
+    );
+    assert!(
+        std::fs::read_to_string(&automatic_after.path)
+            .unwrap()
+            .contains("原创正文 v2 1")
+    );
     let id = r.snapshot_id.unwrap();
     assert_eq!(
         l.read_history(&id, "1").unwrap().paragraphs,

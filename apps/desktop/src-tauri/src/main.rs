@@ -2,6 +2,7 @@
 
 mod account_download;
 mod accounts;
+mod auto_txt;
 mod capture;
 use account_download::{account_download_jobs, resume_account_download, start_account_download};
 use accounts::{account_list, close_account, create_account, open_account};
@@ -20,6 +21,7 @@ use std::{
 use tauri::{Manager, State};
 
 struct AppState {
+    auto_txt: auto_txt::AutoTxtService,
     library: Arc<Library>,
     source: Arc<SourceHub>,
     cancellations: Arc<Mutex<HashMap<String, ActiveTask>>>,
@@ -108,14 +110,20 @@ async fn accept_catalog_update(
         return Err("目录预览已过期，请重新读取".into());
     }
     let library = Arc::clone(&state.library);
-    blocking(move || {
+    let automatic = state.auto_txt.clone();
+    let changed_book = proposal.book_id.clone();
+    let result = blocking(move || {
         library.accept_catalog_update(
             &proposal.book_id,
             &proposal.catalog,
             &proposal.previous_hash,
         )
     })
-    .await
+    .await;
+    if result.is_ok() {
+        let _ = automatic.request(&changed_book);
+    }
+    result
 }
 #[tauri::command]
 async fn refresh_book_chapter(
@@ -124,8 +132,10 @@ async fn refresh_book_chapter(
     state: State<'_, AppState>,
 ) -> Result<opennovel_core::RefreshReceipt, String> {
     let library = Arc::clone(&state.library);
+    let automatic = state.auto_txt.clone();
+    let changed_book = book_id.clone();
     let hub = Arc::clone(&state.source);
-    blocking(move || {
+    let result = blocking(move || {
         let book = library.book_details(&book_id)?.book;
         library.refresh_chapter(
             &book_id,
@@ -134,7 +144,11 @@ async fn refresh_book_chapter(
             &AtomicBool::new(false),
         )
     })
-    .await
+    .await;
+    if result.is_ok() {
+        let _ = automatic.request(&changed_book);
+    }
+    result
 }
 #[tauri::command]
 async fn book_history(
@@ -654,8 +668,14 @@ fn main() {
                 _ => return Err("参数无效；可使用 --database <path> 打开独立书库".into()),
             };
             let directory = database.parent().ok_or("书库目录无效")?;
+            let library = Arc::new(Library::open(&database)?);
+            let auto_txt = auto_txt::AutoTxtService::start(
+                Arc::clone(&library),
+                directory.join("exports").join("automatic-txt"),
+            )?;
             app.manage(AppState {
-                library: Arc::new(Library::open(&database)?),
+                library,
+                auto_txt,
                 source: Arc::default(),
                 cancellations: Arc::default(),
                 exports: directory.join("exports"),
@@ -676,6 +696,8 @@ fn main() {
         .invoke_handler({
             let dispatch: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
                 Box::new(tauri::generate_handler![
+                    auto_txt::automatic_txt_snapshot,
+                    auto_txt::retry_automatic_txt,
                     account_list,
                     preview_account_page,
                     confirm_account_page,

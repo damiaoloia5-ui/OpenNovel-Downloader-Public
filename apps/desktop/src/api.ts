@@ -54,6 +54,9 @@ export interface ChapterAvailability {state:string;reason:string;job_id:string|n
 export interface ReadingChapter {id:string;title:string;position:number;saved:boolean;availability?:ChapterAvailability|null}
 export interface BookDetails {book:Book;description:string;acquired_at:string;chapters:ReadingChapter[];exports:ExportRecord[]}
 export interface Receipt { path: string; saved_chapters: number; total_chapters: number; partial: boolean }
+export interface AutoTxtStatus {book_id:string;state:string;receipt:Receipt|null;export_id:string|null;error:string|null}
+export function automaticTxtSnapshot():Promise<AutoTxtStatus[]> {return invoke('automatic_txt_snapshot');}
+export function retryAutomaticTxt(bookId:string):Promise<void> {return invoke('retry_automatic_txt',{bookId});}
 export interface BookPreferences {book_id:string;tags:string[];archived:boolean}
 export interface MaintenanceReceipt {id:string;path:string;books:number;chapters:number}
 export interface DiagnosticReport {version:string;operating_system:string;architecture:string;schema:number;books:number;saved_chapters:number;jobs:number;job_states:Record<string,number>;integrity_ok:boolean;foreign_keys_ok:boolean}

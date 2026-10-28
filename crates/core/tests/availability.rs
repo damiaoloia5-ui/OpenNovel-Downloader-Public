@@ -62,6 +62,16 @@ fn whole_catalog_reasons_keep_out_of_range_and_restriction_evidence() {
     let book = l.job(&job).unwrap().book_id;
     l.run_job(&job, &Fake { fail: false }, &AtomicBool::new(false))
         .unwrap();
+    let partial = l
+        .export_automatic_txt(&book, d.path().join("exports"))
+        .unwrap();
+    assert!(partial.partial);
+    assert_eq!(partial.total_chapters, 5);
+    assert!(
+        std::fs::read_to_string(&partial.path)
+            .unwrap()
+            .contains("部分内容")
+    );
     assert_eq!(
         states(&l, &book),
         [

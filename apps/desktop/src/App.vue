@@ -7,6 +7,7 @@ import BatchPanel from './BatchPanel.vue';
 import AccountPanel from './AccountPanel.vue';
 import HelpGuide from './HelpGuide.vue';
 import BookWorkspace from './BookWorkspace.vue';
+import {automaticTxtSnapshot,type AutoTxtStatus} from './api';
 import {catalogAvailability} from './availabilityModel';
 import {qidianBookLink} from './workflow';
 import type {WorkbenchTab} from './workbenchModel';
@@ -22,6 +23,7 @@ const catalogSource=computed(()=>sourceInfos.value.find(s=>s.id===catalog.value?
 const catalogCanDownload=computed(()=>catalogSource.value?.can_download??false);
 const firstChapter=ref(1);const lastChapter=ref(1);const selection=ref('');
 const access=computed(()=>catalog.value?catalogAvailability(catalog.value,sourceInfos.value):null);
+const automaticFiles=ref<AutoTxtStatus[]>([]);
 const data=ref<Snapshot>({books:[],jobs:[]});const error=ref('');const notice=ref('');const working=ref(false);
 const filter=ref('');const archiveFilter=ref('active');const fileInput=ref<HTMLInputElement|null>(null);
 const openedJob=ref('');const details=ref<JobDetails|null>(null);const chapterFilter=ref('missing');const detailPage=ref(1);
@@ -46,7 +48,7 @@ function showBook(id:string){openWorkspace(id);}
 function openAccountBook(id:string){openWorkspace(id,'save');}
 async function refresh(){
   if(!desktopAvailable||refreshing)return;refreshing=true;
-  try{const [s,p]=await Promise.all([snapshot(),preferences()]);if(disposed)return;data.value=s;bookPreferences.value=p;await refreshDetails();}
+  try{const [s,p,a]=await Promise.all([snapshot(),preferences(),automaticTxtSnapshot()]);if(disposed)return;data.value=s;bookPreferences.value=p;automaticFiles.value=a;await refreshDetails();}
   catch(e){error.value=String(e);}finally{refreshing=false;schedulePoll();}
 }
 function schedulePoll(){if(!disposed){if(timer)clearTimeout(timer);timer=setTimeout(()=>void poll(),active.value&&!document.hidden&&!minimized?800:5000);}}
@@ -57,9 +59,19 @@ async function showDetails(id:string){if(openedJob.value===id){openedJob.value='
 async function retryChapter(id:string,chapter:string){await action(async()=>{await retryChapters(id,[chapter]);notice.value='只重试所选失败章节，其他章节保持原状态。';});}
 async function saveJob(id:string,format:'txt'|'epub'){await action(async()=>{const r=await exportJob(id,format);notice.value=`本次任务选章已导出（${r.saved_chapters}/${r.total_chapters} 章${r.partial?'，部分内容':''}）：${r.path}`;});}
 async function action(work:()=>Promise<void>){if(working.value)return;working.value=true;error.value='';notice.value='';try{await work();await refresh();}catch(e){error.value=String(e);}finally{working.value=false;}}
-async function openCreatedJob(id:string,epoch:number){try{const result=await jobDetails(id);if(disposed||epoch!==navigationEpoch)return;openWorkspace(result.job.book_id,'save');notice.value='任务已创建，可在本书工作台保存、阅读和导出。';}catch{if(disposed||epoch!==navigationEpoch)return;page.value='tasks';notice.value='任务已创建，暂时无法读取作品信息，请在任务进度中查看。';}}
+async function openCreatedJob(id:string,epoch:number){try{const result=await jobDetails(id);if(disposed||epoch!==navigationEpoch)return;openWorkspace(result.job.book_id,'save');notice.value='任务已创建，保存结束后会自动生成 TXT；请在本书工作台查看。';}catch{if(disposed||epoch!==navigationEpoch)return;page.value='tasks';notice.value='任务已创建，暂时无法读取作品信息，请在任务进度中查看。';}}
 async function chooseFile(event:Event){const input=event.target as HTMLInputElement;const file=input.files?.[0];if(!file)return;await action(async()=>{if(file.size>16*1024*1024)throw new Error('文件超过 16 MiB，请拆分后导入。');const epoch=navigationEpoch;const id=await importBook(await file.text());await openCreatedJob(id,epoch);});input.value='';}
-async function inspect(){const link=qidianBookLink(bookInput.value);if(link){accountUrl.value=link;page.value='accounts';error.value='';notice.value='已识别起点作品，确认目录后会进入本书工作台。';return;}await action(async()=>{catalog.value=null;const input=bookInput.value.trim();const result=await inspectBook(input);catalog.value=result;inspectedInput.value=input;firstChapter.value=1;lastChapter.value=result.chapters.length;selection.value='';});}
+async function inspect(autoSave=false){
+  const link=qidianBookLink(bookInput.value);if(link){accountUrl.value=link;page.value='accounts';error.value='';notice.value='起点需要本人核对官网登录与目录，保存结束后会自动生成 TXT。';return;}
+  await action(async()=>{
+    const epoch=navigationEpoch;catalog.value=null;const input=bookInput.value.trim();
+    const result=await inspectBook(input);if(disposed||epoch!==navigationEpoch)return;
+    if(!sourceInfos.value.length)sourceInfos.value=await sourceCapabilities();
+    catalog.value=result;inspectedInput.value=input;firstChapter.value=1;lastChapter.value=result.chapters.length;selection.value='';
+    if(autoSave){const range=catalogAvailability(result,sourceInfos.value);if(!range.supported||!range.open){notice.value='已识别目录，当前没有可自动保存的开放章，请查看下方范围说明。';return;}
+      if(disposed||epoch!==navigationEpoch)return;const id=await downloadBook(input,1,result.chapters.length,range.selection);await openCreatedJob(id,epoch);}
+  });
+}
 async function selectSearchResult(input:string){bookInput.value=input;await inspect();}
 async function startDownload(openOnly=false){await action(async()=>{if(!catalogCanDownload.value)throw new Error(catalogSource.value?.note||'该来源暂不支持正文下载');if(bookInput.value.trim()!==inspectedInput.value)throw new Error('链接已改变，请重新读取目录。');const chosen=openOnly?access.value?.selection:selection.value;if(openOnly&&!chosen)throw new Error('当前目录没有标记开放的章节。');const epoch=navigationEpoch;const id=await downloadBook(inspectedInput.value,firstChapter.value,lastChapter.value,chosen);await openCreatedJob(id,epoch);});}
 function sourceLabel(id:string){const info=sourceInfos.value.find(s=>s.id===id);return id==='local-json'?'本地 JSON':info?`${info.name} · 实验性`:id;}
@@ -100,11 +112,11 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         </div>
 
         <template v-if="page === 'download'">
-          <ol class="quick-path" aria-label="基本操作步骤"><li><b>1</b> 添加作品链接</li><li><b>2</b> 保存正文到书库</li><li><b>3</b> 导出 TXT / EPUB</li></ol>
-          <form class="download-panel" @submit.prevent="inspect">
+          <ol class="quick-path" aria-label="基本操作步骤"><li><b>1</b> 添加作品链接</li><li><b>2</b> 保存正文到书库</li><li><b>3</b> 自动生成 TXT</li></ol>
+          <form class="download-panel" @submit.prevent="inspect(true)">
             <label for="novel-link">粘贴小说的官网作品链接</label>
-            <div class="link-row"><input id="novel-link" v-model="bookInput" type="text" placeholder="支持番茄、七猫、晋江、起点、书旗官网作品链接" :disabled="working" required /><button class="primary" :disabled="!desktopAvailable || working">{{ working ? '处理中…' : '下一步' }}</button></div>
-            <p class="footnote">起点会进入登录保存引导；书旗目前只有目录。部分免费平台网页也可能存在缺章。</p>
+            <div class="link-row"><input id="novel-link" v-model="bookInput" type="text" placeholder="支持番茄、七猫、晋江、起点、书旗官网作品链接" :disabled="working" required /><button class="primary" :disabled="!desktopAvailable || working">{{ working ? '处理中…' : '识别并保存为 TXT' }}</button></div>
+            <button type="button" :disabled="!desktopAvailable||working||!bookInput.trim()" @click="inspect()">只看获取范围</button><p class="footnote">自动识别来源并保存目录标记开放章，结束后生成 TXT；有缺章时文件明确标注。起点仍需本人登录并确认保存；书旗目前只有目录。</p>
           </form>
           <section v-if="catalog" class="download-panel" aria-label="作品目录">
             <h2>{{ catalog.title }}</h2><p class="footnote">{{ catalogSource?.name || catalog.source }} · {{ catalog.author || '未标注作者' }} · 全目录 {{ catalog.chapters.length }} 章</p>
@@ -174,7 +186,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         </template>
         <LibraryTools v-if="page==='tools'" />
         <AccountPanel v-if="page==='accounts'" :initial-url="accountUrl" @saved="refresh" @ready="(id,account)=>openWorkspace(id,'save',account)" @read="id=>openWorkspace(id,'read')" />
-        <BookWorkspace v-if="page==='book'&&workspaceBook" :key="workspaceBook" :book-id="workspaceBook" :initial-tab="workspaceTab" :account-id="workspaceAccount" :sources="sourceInfos" :jobs="data.jobs" :summary="data.books.find(b=>b.id===workspaceBook)" :preference="preferencesByBook.get(workspaceBook)" @changed="refresh" @back="page='library'" @tasks="page='tasks'" @help="page='help'" />
+        <BookWorkspace v-if="page==='book'&&workspaceBook" :key="workspaceBook" :book-id="workspaceBook" :initial-tab="workspaceTab" :account-id="workspaceAccount" :sources="sourceInfos" :jobs="data.jobs" :summary="data.books.find(b=>b.id===workspaceBook)" :preference="preferencesByBook.get(workspaceBook)" :automatic="automaticFiles.find(a=>a.book_id===workspaceBook)" @changed="refresh" @back="page='library'" @tasks="page='tasks'" @help="page='help'" />
         <HelpGuide v-if="page==='help'" @navigate="page=$event" @import="fileInput?.click()" />
         <footer>OpenNovel Downloader<span>开放的工具，长久的书库。</span></footer>
       </div>

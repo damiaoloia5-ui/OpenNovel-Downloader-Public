@@ -20,6 +20,36 @@ impl ExportFormat {
 }
 
 impl Library {
+    /// Generate a TXT snapshot without overwriting any previous or edited file.
+    /// Repeated calls repair a missing file/record and reuse identical bytes.
+    pub fn export_automatic_txt(
+        &self,
+        book_id: &str,
+        directory: impl AsRef<Path>,
+    ) -> Result<ExportReceipt> {
+        let mut content = self.content(book_id)?;
+        let digest = txt_digest(&content)?;
+        let title: String = content
+            .summary
+            .title
+            .chars()
+            .filter(|c| !c.is_control() && !"<>:\"/\\|?*".contains(*c))
+            .take(20)
+            .collect();
+        content.summary.id = format!(
+            "auto-{}-{book_id}-{}",
+            title.trim_end_matches([' ', '.']),
+            &digest[..16]
+        );
+        self.persist_export_inner(
+            book_id,
+            None,
+            content,
+            directory.as_ref(),
+            ExportFormat::Txt,
+            Some(&digest),
+        )
+    }
     pub fn export(
         &self,
         book_id: &str,
@@ -77,6 +107,18 @@ impl Library {
         directory: &Path,
         format: ExportFormat,
     ) -> Result<ExportReceipt> {
+        self.persist_export_inner(book_id, job_id, content, directory, format, None)
+    }
+
+    fn persist_export_inner(
+        &self,
+        book_id: &str,
+        job_id: Option<&str>,
+        content: BookContent,
+        directory: &Path,
+        format: ExportFormat,
+        automatic_digest: Option<&str>,
+    ) -> Result<ExportReceipt> {
         std::fs::create_dir_all(directory)?;
         let partial = content.summary.saved_chapters != content.summary.total_chapters;
         let extension = match format {
@@ -115,26 +157,37 @@ impl Library {
             "{prefix}{}{revision}{suffix}.{extension}",
             content.summary.id
         )))?;
-        if path.try_exists()? {
+        if path.try_exists()? && automatic_digest.is_none() {
             return Err(export_exists(&path));
         }
-        let mut temporary = NamedTempFile::new_in(directory)?;
-        match format {
-            ExportFormat::Txt => write_txt(&mut temporary, &content)?,
-            ExportFormat::Epub => write_epub(temporary.as_file_mut(), &content)?,
-        }
-        temporary.as_file_mut().flush()?;
-        temporary.as_file().sync_all()?;
-        temporary.persist_noclobber(&path).map_err(|error| {
-            if error.error.kind() == std::io::ErrorKind::AlreadyExists
-                || path.try_exists().unwrap_or(false)
-            {
-                export_exists(&path)
-            } else {
-                Error::Io(error.error)
+        if !path.try_exists()? {
+            let mut temporary = NamedTempFile::new_in(directory)?;
+            match format {
+                ExportFormat::Txt => write_txt(&mut temporary, &content)?,
+                ExportFormat::Epub => write_epub(temporary.as_file_mut(), &content)?,
             }
-        })?;
-        self.connection()?.execute("INSERT INTO exports (id,book_id,job_id,path,format,saved,total,partial) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",rusqlite::params![uuid::Uuid::new_v4().to_string(),book_id,job_id,path.to_string_lossy(),extension,content.summary.saved_chapters,content.summary.total_chapters,partial])?;
+            temporary.as_file_mut().flush()?;
+            temporary.as_file().sync_all()?;
+            if let Err(error) = temporary.persist_noclobber(&path)
+                && (automatic_digest.is_none() || !path.try_exists()?)
+            {
+                return Err(if path.try_exists()? {
+                    export_exists(&path)
+                } else {
+                    Error::Io(error.error)
+                });
+            }
+        }
+        if let Some(expected) = automatic_digest {
+            let mut hash = HashWriter::default();
+            std::io::copy(&mut std::fs::File::open(&path)?, &mut hash)?;
+            if hash.finish() != expected {
+                return Err(Error::Conflict(
+                    "自动 TXT 的目标文件已被修改，已保留；请先移走该文件再重试".into(),
+                ));
+            }
+        }
+        self.connection()?.execute("INSERT INTO exports (id,book_id,job_id,path,format,saved,total,partial) SELECT ?1,?2,?3,?4,?5,?6,?7,?8 WHERE NOT EXISTS (SELECT 1 FROM exports WHERE book_id=?2 AND path=?4)",rusqlite::params![uuid::Uuid::new_v4().to_string(),book_id,job_id,path.to_string_lossy(),extension,content.summary.saved_chapters,content.summary.total_chapters,partial])?;
         Ok(ExportReceipt {
             path: path.to_string_lossy().into_owned(),
             saved_chapters: content.summary.saved_chapters,
@@ -142,6 +195,30 @@ impl Library {
             partial,
         })
     }
+}
+
+#[derive(Default)]
+struct HashWriter(sha2::Sha256);
+impl Write for HashWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        use sha2::Digest;
+        self.0.update(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+impl HashWriter {
+    fn finish(self) -> String {
+        use sha2::Digest;
+        format!("{:x}", self.0.finalize())
+    }
+}
+fn txt_digest(content: &BookContent) -> Result<String> {
+    let mut hash = HashWriter::default();
+    write_txt(&mut hash, content)?;
+    Ok(hash.finish())
 }
 
 fn export_exists(path: &Path) -> Error {
