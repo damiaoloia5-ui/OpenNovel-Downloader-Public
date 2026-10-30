@@ -14,10 +14,16 @@ use std::{
 };
 use tauri::{Manager, State};
 
-const INTERVAL: Duration = Duration::from_secs(3);
+fn navigation_interval(value: Option<u64>) -> std::result::Result<Duration, String> {
+    match value.unwrap_or(3000) {
+        ms @ (1000 | 3000 | 6000) => Ok(Duration::from_millis(ms)),
+        _ => Err("保存节奏只支持 1000、3000 或 6000 毫秒".into()),
+    }
+}
 const PAGE_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct AccountReader {
+    interval: Duration,
     app: tauri::AppHandle,
     account: String,
     generation: String,
@@ -154,7 +160,7 @@ impl SourceAdapter for AccountReader {
             .last_navigation
             .lock()
             .map_err(|_| Error::Conflict("页面调度不可用".into()))?
-            .map(|t| INTERVAL.saturating_sub(t.elapsed()))
+            .map(|t| self.interval.saturating_sub(t.elapsed()))
             .unwrap_or_default();
         wait(delay, cancelled)?;
         let window = self.window(cancelled)?;
@@ -246,6 +252,7 @@ pub async fn account_download_jobs(
 pub async fn start_account_download(
     id: String,
     no_auto_purchase: bool,
+    interval_ms: Option<u64>,
     book_id: String,
     selection: Option<String>,
     app: tauri::AppHandle,
@@ -254,12 +261,20 @@ pub async fn start_account_download(
     if !no_auto_purchase {
         return Err("开始前请本人确认官网已关闭自动订阅".into());
     }
-    launch(id, Some((book_id, selection)), None, app, &state)
+    launch(
+        id,
+        Some((book_id, selection)),
+        None,
+        navigation_interval(interval_ms)?,
+        app,
+        &state,
+    )
 }
 #[tauri::command]
 pub async fn resume_account_download(
     id: String,
     no_auto_purchase: bool,
+    interval_ms: Option<u64>,
     job_id: String,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -267,12 +282,20 @@ pub async fn resume_account_download(
     if !no_auto_purchase {
         return Err("继续前请本人确认官网已关闭自动订阅".into());
     }
-    launch(id, None, Some(job_id), app, &state)
+    launch(
+        id,
+        None,
+        Some(job_id),
+        navigation_interval(interval_ms)?,
+        app,
+        &state,
+    )
 }
 fn launch(
     id: String,
     new: Option<(String, Option<String>)>,
     resume: Option<String>,
+    interval: Duration,
     app: tauri::AppHandle,
     state: &AppState,
 ) -> std::result::Result<String, String> {
@@ -350,6 +373,7 @@ fn launch(
         job_id: job_id.clone(),
     };
     let reader = AccountReader {
+        interval,
         app,
         account: id,
         generation,
@@ -370,6 +394,21 @@ fn launch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bounded_speed_modes_keep_legacy_default() {
+        assert_eq!(navigation_interval(None).unwrap(), Duration::from_secs(3));
+        assert_eq!(
+            navigation_interval(Some(1000)).unwrap(),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            navigation_interval(Some(6000)).unwrap(),
+            Duration::from_secs(6)
+        );
+        for value in [0, 1, 500, 1001, u64::MAX] {
+            assert!(navigation_interval(Some(value)).is_err());
+        }
+    }
     #[test]
     fn cancellation_interrupts_wait_and_loading_never_returns_text() {
         assert!(matches!(

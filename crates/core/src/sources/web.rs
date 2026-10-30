@@ -8,6 +8,17 @@ use std::{
     time::{Duration, Instant},
 };
 
+fn interval_from(value: Option<&str>) -> Duration {
+    let ms = value
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| (250..=60000).contains(v))
+        .unwrap_or(500);
+    Duration::from_millis(ms)
+}
+fn request_interval() -> Duration {
+    interval_from(std::env::var("OPENNOVEL_HTTP_INTERVAL_MS").ok().as_deref())
+}
+
 pub(super) struct WebClient {
     client: Client,
     hosts: &'static [&'static str],
@@ -76,7 +87,7 @@ impl WebClient {
             if cancelled.load(Ordering::Acquire) {
                 return Err(Error::Cancelled);
             }
-            *next = Instant::now() + Duration::from_secs(1);
+            *next = Instant::now() + request_interval();
         }
         self.request(url, cancelled, maximum)
     }
@@ -136,6 +147,24 @@ impl WebClient {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn http_pacing_has_bounded_fast_override_and_safe_fallback() {
+        use std::time::Duration;
+        assert_eq!(super::interval_from(None), Duration::from_millis(500));
+        for value in ["250", "1000", "60000"] {
+            assert_eq!(
+                super::interval_from(Some(value)),
+                Duration::from_millis(value.parse().unwrap())
+            );
+        }
+        for value in ["0", "249", "60001", "-1", "invalid"] {
+            assert_eq!(
+                super::interval_from(Some(value)),
+                Duration::from_millis(500)
+            );
+        }
+    }
+
     use super::*;
     #[test]
     fn observed_qimao_header_folding_is_opt_in_and_does_not_disable_url_checks() {

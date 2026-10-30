@@ -344,11 +344,35 @@ impl Library {
     }
 
     pub fn job(&self, job_id: &str) -> Result<JobSnapshot> {
-        self.snapshot()?
-            .jobs
-            .into_iter()
-            .find(|job| job.id == job_id)
+        self.connection()?
+            .query_row(
+                "SELECT j.id,j.book_id,b.title,j.state,
+             COALESCE(SUM(i.state='completed'),0),COUNT(i.chapter_id),j.error,b.source,
+             COALESCE(SUM(i.state='blocked'),0),COALESCE(SUM(i.state='failed'),0)
+             FROM jobs j JOIN books b ON b.id=j.book_id LEFT JOIN job_items i ON i.job_id=j.id
+             WHERE j.id=?1 GROUP BY j.id",
+                [job_id],
+                |row| {
+                    Ok(JobSnapshot {
+                        id: row.get(0)?,
+                        book_id: row.get(1)?,
+                        title: row.get(2)?,
+                        state: row.get(3)?,
+                        saved: row.get(4)?,
+                        total: row.get(5)?,
+                        error: row.get(6)?,
+                        source: row.get(7)?,
+                        blocked: row.get(8)?,
+                        failed: row.get(9)?,
+                    })
+                },
+            )
+            .optional()?
             .ok_or_else(|| Error::Invalid("任务不存在".into()))
+    }
+
+    pub fn book_summary(&self, book_id: &str) -> Result<BookSummary> {
+        self.connection()?.query_row("SELECT b.id,b.title,b.author,b.source,(SELECT COUNT(*) FROM chapters c WHERE c.book_id=b.id),b.total,b.remote_id FROM books b WHERE b.id=?1",[book_id],|row|Ok(BookSummary{id:row.get(0)?,title:row.get(1)?,author:row.get(2)?,source:row.get(3)?,saved_chapters:row.get(4)?,total_chapters:row.get(5)?,remote_id:row.get(6)?})).optional()?.ok_or_else(||Error::Invalid("作品不存在".into()))
     }
 
     pub fn snapshot(&self) -> Result<LibrarySnapshot> {

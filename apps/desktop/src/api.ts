@@ -100,5 +100,5 @@ export interface CaptureReceipt {kind:'catalog'|'chapter';book_id:string;save:{b
 export function previewAccountPage(id:string,kind:'catalog'|'chapter'):Promise<CapturePreview> {return invoke('preview_account_page',{id,kind});}
 export function confirmAccountPage(id:string,token:string):Promise<CaptureReceipt> {return invoke('confirm_account_page',{id,token});}
 export function accountDownloadJobs(bookId:string):Promise<Job[]> {return invoke('account_download_jobs',{bookId});}
-export function startAccountDownload(id:string,bookId:string,selection:string,noAutoPurchase:boolean):Promise<string> {return invoke('start_account_download',{id,bookId,selection:selection.trim()||null,noAutoPurchase});}
-export function resumeAccountDownload(id:string,jobId:string,noAutoPurchase:boolean):Promise<string> {return invoke('resume_account_download',{id,jobId,noAutoPurchase});}
+export function startAccountDownload(id:string,bookId:string,selection:string,noAutoPurchase:boolean,intervalMs=1000):Promise<string> {return invoke('start_account_download',{id,bookId,selection:selection.trim()||null,noAutoPurchase,intervalMs});}
+export function resumeAccountDownload(id:string,jobId:string,noAutoPurchase:boolean,intervalMs=1000):Promise<string> {return invoke('resume_account_download',{id,jobId,noAutoPurchase,intervalMs});}

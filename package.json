@@ -11,7 +11,7 @@
     "lint": "eslint apps/desktop/src apps/desktop/vite.config.ts",
     "typecheck": "npm run typecheck --workspace @opennovel/desktop",
     "test": "cargo test --workspace",
-    "test:frontend": "node --experimental-strip-types --test scripts/workflow.test.mjs scripts/workbench.test.mjs scripts/availability.test.mjs scripts/availability-render.test.mjs scripts/automatic-txt.test.mjs",
+    "test:frontend": "node --experimental-strip-types --test scripts/workflow.test.mjs scripts/workbench.test.mjs scripts/availability.test.mjs scripts/availability-render.test.mjs scripts/automatic-txt.test.mjs scripts/performance-ui.test.mjs",
     "build": "npm run build --workspace @opennovel/desktop",
     "desktop:dev": "npm run tauri --workspace @opennovel/desktop -- dev",
     "desktop:build": "npm run tauri --workspace @opennovel/desktop -- build --no-bundle",

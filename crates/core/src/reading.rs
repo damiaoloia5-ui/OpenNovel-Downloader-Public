@@ -6,12 +6,7 @@ use rusqlite::OptionalExtension;
 
 impl Library {
     pub fn book_details(&self, book_id: &str) -> Result<BookDetails> {
-        let book = self
-            .snapshot()?
-            .books
-            .into_iter()
-            .find(|book| book.id == book_id)
-            .ok_or_else(|| Error::Invalid("作品不存在".into()))?;
+        let book = self.book_summary(book_id)?;
         let connection = self.connection()?;
         let raw: Option<String> = connection
             .query_row(

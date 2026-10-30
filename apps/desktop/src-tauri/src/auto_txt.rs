@@ -32,12 +32,12 @@ impl AutoTxtService {
                 let mut forced = HashSet::new();
                 loop {
                     if let Ok(snapshot) = library.snapshot() {
+                        let mut by_book: HashMap<&str, Vec<_>> = HashMap::new();
+                        for job in &snapshot.jobs {
+                            by_book.entry(&job.book_id).or_default().push(job);
+                        }
                         for book in &snapshot.books {
-                            let own: Vec<_> = snapshot
-                                .jobs
-                                .iter()
-                                .filter(|j| j.book_id == book.id)
-                                .collect();
+                            let own = by_book.get(book.id.as_str()).cloned().unwrap_or_default();
                             if book.saved_chapters == 0 {
                                 set(
                                     &output,
