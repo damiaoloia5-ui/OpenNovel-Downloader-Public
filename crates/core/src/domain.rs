@@ -28,7 +28,33 @@ impl ImportDocument {
         if json.len() > MAX_IMPORT_BYTES {
             return Err(Error::Invalid("文件超过 16 MiB".into()));
         }
-        let mut document: Self = serde_json::from_str(json)?;
+        let document: Self = serde_json::from_str(json)?;
+        document.normalize()
+    }
+
+    pub(crate) fn validated(self) -> Result<Self> {
+        // Preserve the serialized 16 MiB budget without allocating and parsing
+        // another full copy of an already typed chapter/document.
+        struct Budget(usize);
+        impl std::io::Write for Budget {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0 = self.0.saturating_add(bytes.len());
+                if self.0 > MAX_IMPORT_BYTES {
+                    return Err(std::io::Error::other("size budget"));
+                }
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        serde_json::to_writer(&mut Budget(0), &self)
+            .map_err(|_| Error::Invalid("文件超过 16 MiB".into()))?;
+        self.normalize()
+    }
+
+    fn normalize(mut self) -> Result<Self> {
+        let document = &mut self;
         document.id = document.id.trim().to_owned();
         document.title = document.title.trim().to_owned();
         document.author = document.author.trim().to_owned();
@@ -64,7 +90,7 @@ impl ImportDocument {
                 )));
             }
         }
-        Ok(document)
+        Ok(self)
     }
 }
 
@@ -73,6 +99,50 @@ pub(crate) fn validate_label(value: &str, name: &str, max: usize) -> Result<()> 
         return Err(Error::Invalid(format!("{name}为空、过长或含无效字符")));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod typed_validation_tests {
+    use super::*;
+    #[test]
+    fn typed_validation_matches_json_normalization_and_rejections() {
+        let base = ImportDocument {
+            id: " original ".into(),
+            title: " 原创 ".into(),
+            author: " 作者 ".into(),
+            chapters: vec![ImportChapter {
+                id: " c1 ".into(),
+                title: " 一章 ".into(),
+                paragraphs: vec![" ".into(), " 原创\\\"正文\n ".into()],
+            }],
+        };
+        let typed = base.clone().validated().unwrap();
+        let parsed = ImportDocument::parse(&serde_json::to_string(&base).unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(typed).unwrap(),
+            serde_json::to_value(parsed).unwrap()
+        );
+        for paragraphs in [vec![], vec![" ".into()], vec!["正文\u{0001}".into()]] {
+            let mut doc = base.clone();
+            doc.chapters[0].paragraphs = paragraphs;
+            assert!(doc.clone().validated().is_err());
+            assert!(ImportDocument::parse(&serde_json::to_string(&doc).unwrap()).is_err());
+        }
+    }
+    #[test]
+    fn typed_validation_keeps_serialized_size_budget() {
+        let d = ImportDocument {
+            id: "original".into(),
+            title: "原创".into(),
+            author: String::new(),
+            chapters: vec![ImportChapter {
+                id: "1".into(),
+                title: "原创章".into(),
+                paragraphs: vec!["x".repeat(MAX_IMPORT_BYTES)],
+            }],
+        };
+        assert!(d.validated().is_err());
+    }
 }
 
 pub(crate) fn invalid_xml(value: &str) -> bool {

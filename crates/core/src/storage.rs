@@ -331,11 +331,10 @@ impl Library {
     }
 
     pub(crate) fn is_running(&self, job_id: &str) -> Result<bool> {
-        Ok(self.connection()?.query_row(
-            "SELECT state='running' FROM jobs WHERE id=?1",
-            [job_id],
-            |r| r.get(0),
-        )?)
+        Ok(self
+            .connection()?
+            .prepare_cached("SELECT state='running' FROM jobs WHERE id=?1")?
+            .query_row([job_id], |r| r.get(0))?)
     }
 
     pub fn record_worker_failure(&self, job_id: &str, message: &str) -> Result<()> {

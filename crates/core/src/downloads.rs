@@ -130,23 +130,23 @@ impl Library {
             "INSERT INTO jobs (id,book_id,state) VALUES (?1,?2,'queued')",
             params![job_id, book_id],
         )?;
+        let saved_ids = transaction
+            .prepare("SELECT chapter_id FROM chapters WHERE book_id=?1")?
+            .query_map([&book_id], |r| r.get::<_, String>(0))?
+            .collect::<std::result::Result<std::collections::HashSet<_>, _>>()?;
         for (position, chapter) in catalog
             .chapters
             .iter()
             .enumerate()
             .filter(|(position, _)| selected.contains(&(position + 1)))
         {
-            let saved: bool = transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM chapters WHERE book_id=?1 AND chapter_id=?2)",
-                params![book_id, chapter.id],
-                |row| row.get(0),
-            )?;
+            let saved = saved_ids.contains(&chapter.id);
             let state = if saved { "completed" } else { "queued" };
             let mut payload = serde_json::to_value(chapter)?;
             if session_authorized {
                 payload["automatic_session"] = serde_json::Value::Bool(true);
             }
-            transaction.execute("INSERT INTO job_items (job_id,chapter_id,position,payload,state) VALUES (?1,?2,?3,?4,?5)",params![job_id,chapter.id,position,serde_json::to_string(&payload)?,state])?;
+            transaction.prepare_cached("INSERT INTO job_items (job_id,chapter_id,position,payload,state) VALUES (?1,?2,?3,?4,?5)")?.execute(params![job_id,chapter.id,position,serde_json::to_string(&payload)?,state])?;
         }
         if let Some((batch_id, position, _)) = batch {
             transaction.execute("UPDATE batch_items SET job_id=?3,state='running',error=NULL WHERE batch_id=?1 AND position=?2",params![batch_id,position,job_id])?;
@@ -297,33 +297,45 @@ impl Library {
         selected: Option<&str>,
     ) -> Result<()> {
         let mut last_error = None::<String>;
-        loop {
+        // Reconcile cached bodies in one atomic operation. A resumed long book
+        // must not commit once per already saved chapter.
+        if !self.is_running(job_id)? {
+            return Ok(());
+        }
+        if cancelled.load(Ordering::Acquire) {
+            return self.finish_cancel(job_id);
+        }
+        let pending = {
+            let mut connection = self.connection()?;
+            let transaction = connection.transaction()?;
+            let running: bool = transaction.query_row(
+                "SELECT state='running' FROM jobs WHERE id=?1",
+                [job_id],
+                |r| r.get(0),
+            )?;
+            if !running {
+                return Ok(());
+            }
+            if cancelled.load(Ordering::Acquire) {
+                drop(transaction);
+                drop(connection);
+                return self.finish_cancel(job_id);
+            }
+            transaction.execute("UPDATE job_items SET state='completed',error=NULL,error_kind=NULL WHERE job_id=?1 AND state='queued' AND (?2 IS NULL OR chapter_id IN (SELECT value FROM json_each(?2))) AND EXISTS(SELECT 1 FROM chapters c JOIN jobs j ON j.book_id=c.book_id WHERE j.id=?1 AND c.chapter_id=job_items.chapter_id)",params![job_id,selected])?;
+            let pending=transaction.prepare("SELECT i.payload,i.position,j.book_id,b.remote_id FROM job_items i JOIN jobs j ON i.job_id=j.id JOIN books b ON j.book_id=b.id WHERE i.job_id=?1 AND i.state='queued' AND (?2 IS NULL OR i.chapter_id IN (SELECT value FROM json_each(?2))) ORDER BY i.position")?.query_map(params![job_id,selected],|row|Ok((row.get::<_,String>(0)?,row.get::<_,u32>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
+            transaction.commit()?;
+            pending
+        };
+        // At most MAX_CHAPTERS metadata entries, never chapter bodies. The
+        // running job owns this queue; cancellation is still checked per item.
+        for (metadata, position, book_id, remote_id) in pending {
             if !self.is_running(job_id)? {
                 return Ok(());
             }
             if cancelled.load(Ordering::Acquire) {
                 return self.finish_cancel(job_id);
             }
-            let next = {
-                let connection = self.connection()?;
-                connection.query_row("SELECT i.payload,i.position,j.book_id,b.remote_id FROM job_items i JOIN jobs j ON i.job_id=j.id JOIN books b ON j.book_id=b.id WHERE i.job_id=?1 AND i.state='queued' AND (?2 IS NULL OR i.chapter_id IN (SELECT value FROM json_each(?2))) ORDER BY i.position LIMIT 1",params![job_id,selected],|row|Ok((row.get::<_,String>(0)?,row.get::<_,u32>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?))).optional()?
-            };
-            let Some((metadata, position, book_id, remote_id)) = next else {
-                break;
-            };
             let chapter: ChapterRef = serde_json::from_str(&metadata)?;
-            let cached: bool = self.connection()?.query_row(
-                "SELECT EXISTS(SELECT 1 FROM chapters WHERE book_id=?1 AND chapter_id=?2)",
-                params![book_id, chapter.id],
-                |row| row.get(0),
-            )?;
-            if cached {
-                self.connection()?.execute(
-                    "UPDATE job_items SET state='completed',error=NULL,error_kind=NULL WHERE job_id=?1 AND chapter_id=?2",
-                    params![job_id, chapter.id],
-                )?;
-                continue;
-            }
             let fetched = if chapter.restricted {
                 Err(Error::Restricted(
                     "官网目录标记网页受限，不保存截断预览".into(),
@@ -348,13 +360,12 @@ impl Library {
             }
             match fetched {
                 Ok(content) => {
+                    let paragraphs = serde_json::to_string(&content.paragraphs)?;
                     let mut connection = self.connection()?;
                     let transaction = connection.transaction()?;
-                    let state: String = transaction.query_row(
-                        "SELECT state FROM jobs WHERE id=?1",
-                        [job_id],
-                        |r| r.get(0),
-                    )?;
+                    let state: String = transaction
+                        .prepare_cached("SELECT state FROM jobs WHERE id=?1")?
+                        .query_row([job_id], |r| r.get(0))?;
                     if state != "running" {
                         return Ok(());
                     }
@@ -363,11 +374,8 @@ impl Library {
                         drop(connection);
                         return self.finish_cancel(job_id);
                     }
-                    transaction.execute("INSERT INTO chapters (book_id,chapter_id,position,title,paragraphs) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(book_id,chapter_id) DO NOTHING",params![book_id,chapter.id,position,content.title,serde_json::to_string(&content.paragraphs)?])?;
-                    transaction.execute(
-                        "UPDATE job_items SET state='completed',error=NULL,error_kind=NULL WHERE job_id=?1 AND chapter_id=?2",
-                        params![job_id, chapter.id],
-                    )?;
+                    transaction.prepare_cached("INSERT INTO chapters (book_id,chapter_id,position,title,paragraphs) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(book_id,chapter_id) DO NOTHING")?.execute(params![book_id,chapter.id,position,content.title,paragraphs])?;
+                    transaction.prepare_cached("UPDATE job_items SET state='completed',error=NULL,error_kind=NULL WHERE job_id=?1 AND chapter_id=?2")?.execute(params![job_id,chapter.id])?;
                     transaction.commit()?;
                 }
                 Err(error) => {
@@ -445,7 +453,5 @@ fn validate_content(book_id: &str, chapter: ImportChapter) -> Result<ImportChapt
         author: String::new(),
         chapters: vec![chapter],
     };
-    Ok(ImportDocument::parse(&serde_json::to_string(&input)?)?
-        .chapters
-        .remove(0))
+    Ok(input.validated()?.chapters.remove(0))
 }
