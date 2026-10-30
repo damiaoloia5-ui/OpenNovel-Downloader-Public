@@ -1,7 +1,7 @@
 //! User-confirmed snapshots of the normally rendered official reading page.
 //! This module has no HTTP client, credentials, decryption, or automatic navigation.
 use crate::{
-    Error, ImportDocument, Library, Result,
+    Error, Library, Result,
     sources::{Catalog, ChapterRef},
 };
 use reqwest::Url;
@@ -190,7 +190,7 @@ impl SessionChapter {
                 "检测到订阅提示或受保护字形，未保存；请使用官网正常阅读方式".into(),
             ));
         }
-        let document = ImportDocument::parse(&serde_json::to_string(&crate::ImportDocument {
+        let document = crate::ImportDocument {
             id: book.clone(),
             title: "当前章".into(),
             author: String::new(),
@@ -199,7 +199,8 @@ impl SessionChapter {
                 title: page.title,
                 paragraphs: page.paragraphs,
             }],
-        })?)?;
+        }
+        .validated()?;
         Ok(Self {
             remote_book_id: book,
             chapter: document

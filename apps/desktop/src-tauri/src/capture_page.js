@@ -7,13 +7,20 @@
     if (location.origin !== 'https://www.qidian.com' || !match) return { error: 'page' };
     const book = match[2];
     if (document.readyState !== 'complete') return { error: 'loading' };
-    const shown = element => {
-      for (let node = element; node; node = node.parentElement) {
-        const style = getComputedStyle(node);
-        if (node.hidden || node.getAttribute('aria-hidden') === 'true' || style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0' || /blur\(/.test(style.filter)) return false;
-      }
-      return element.getClientRects().length > 0;
+    // Cache only within this synchronous extraction. Never reuse visibility
+    // across polls: a subscription/verification overlay can appear later.
+    const styleVisibility = new WeakMap();
+    const stylesShown = node => {
+      if (!node) return true;
+      const cached = styleVisibility.get(node);
+      if (cached !== undefined) return cached;
+      const style = getComputedStyle(node);
+      const own = !(node.hidden || node.getAttribute('aria-hidden') === 'true' || style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0' || /blur\(/.test(style.filter));
+      const value = own && stylesShown(node.parentElement);
+      styleVisibility.set(node, value);
+      return value;
     };
+    const shown = element => stylesShown(element) && element.getClientRects().length > 0;
     const text = node => {
       if (node.nodeType === Node.TEXT_NODE) return node.textContent || '';
       if (node.nodeType !== Node.ELEMENT_NODE || !shown(node)) return '';

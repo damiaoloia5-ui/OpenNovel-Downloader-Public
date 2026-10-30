@@ -16,8 +16,8 @@ use tauri::{Manager, State};
 
 fn navigation_interval(value: Option<u64>) -> std::result::Result<Duration, String> {
     match value.unwrap_or(3000) {
-        ms @ (1000 | 3000 | 6000) => Ok(Duration::from_millis(ms)),
-        _ => Err("保存节奏只支持 1000、3000 或 6000 毫秒".into()),
+        ms @ (500 | 1000 | 3000 | 6000) => Ok(Duration::from_millis(ms)),
+        _ => Err("保存节奏只支持 500、1000、3000 或 6000 毫秒".into()),
     }
 }
 const PAGE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -104,6 +104,37 @@ fn decode_page(raw: &str, expected: &str, chapter: &ChapterRef) -> Result<Option
     Ok(Some(captured.chapter))
 }
 
+struct StableCapture<'a> {
+    expected: &'a str,
+    chapter: &'a ChapterRef,
+    previous: Option<(String, ImportChapter)>,
+}
+impl<'a> StableCapture<'a> {
+    fn new(expected: &'a str, chapter: &'a ChapterRef) -> Self {
+        Self {
+            expected,
+            chapter,
+            previous: None,
+        }
+    }
+    fn observe(&mut self, raw: String) -> Result<Option<ImportChapter>> {
+        // The caller rechecks URL and navigation epoch on every observation.
+        // Equal bytes have already passed full validation for this exact target.
+        if self
+            .previous
+            .as_ref()
+            .is_some_and(|(prior, _)| prior == &raw)
+        {
+            return Ok(self.previous.take().map(|(_, content)| content));
+        }
+        self.previous = None;
+        if let Some(content) = decode_page(&raw, self.expected, self.chapter)? {
+            self.previous = Some((raw, content));
+        }
+        Ok(None)
+    }
+}
+
 impl AccountReader {
     fn window(&self, cancelled: &AtomicBool) -> Result<tauri::WebviewWindow> {
         if cancelled.load(Ordering::Acquire) {
@@ -179,7 +210,7 @@ impl SourceAdapter for AccountReader {
             .map_err(|_| Error::Conflict("页面调度不可用".into()))? = Some(Instant::now());
         let deadline = Instant::now() + PAGE_TIMEOUT;
         let mut arrived = false;
-        let mut stable = None::<String>;
+        let mut stable = StableCapture::new(&expected, chapter);
         let script = include_str!("capture_page.js").replace("__MODE__", "chapter");
         while Instant::now() < deadline {
             let window = self.window(cancelled)?;
@@ -221,13 +252,8 @@ impl SourceAdapter for AccountReader {
                     "读取期间页面导航发生变化，自动保存已停止".into(),
                 ));
             }
-            if let Some(content) = decode_page(&raw, &expected, chapter)? {
-                if stable.as_ref() == Some(&raw) {
-                    return Ok(content);
-                }
-                stable = Some(raw);
-            } else {
-                stable = None;
+            if let Some(content) = stable.observe(raw)? {
+                return Ok(content);
             }
             wait(Duration::from_millis(400), cancelled)?;
         }
@@ -394,6 +420,89 @@ fn launch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn original_page() -> (String, ChapterRef) {
+        let paragraph = "原创稳定正文".repeat(1000);
+        let raw=serde_json::json!({"url":"https://www.qidian.com/chapter/1/2/","title":"原创章节","declared_words":paragraph.chars().count(),"paragraphs":[paragraph]}).to_string();
+        (
+            raw,
+            ChapterRef {
+                id: "2".into(),
+                title: "原创章节".into(),
+                restricted: false,
+            },
+        )
+    }
+    #[test]
+    fn stable_capture_needs_two_equal_complete_reads_and_resets_on_loading_or_gate() {
+        let (raw, chapter) = original_page();
+        let url = "https://www.qidian.com/chapter/1/2/";
+        let mut stable = StableCapture::new(url, &chapter);
+        assert!(stable.observe(raw.clone()).unwrap().is_none());
+        assert!(
+            stable
+                .observe(r#"{"error":"loading"}"#.into())
+                .unwrap()
+                .is_none()
+        );
+        assert!(stable.observe(raw.clone()).unwrap().is_none());
+        assert!(stable.observe(raw.clone()).unwrap().is_some());
+        assert!(stable.observe(raw.clone()).unwrap().is_none());
+        assert!(matches!(
+            stable.observe(r#"{"error":"restricted"}"#.into()),
+            Err(Error::Restricted(_))
+        ));
+        assert!(stable.observe(raw.clone()).unwrap().is_none());
+        let changed = raw.replace("原创稳定正文", "原创变化正文");
+        assert!(stable.observe(changed.clone()).unwrap().is_none());
+        assert!(stable.observe(changed).unwrap().is_some());
+        assert!(
+            StableCapture::new("https://www.qidian.com/chapter/1/3/", &chapter)
+                .observe(raw)
+                .is_err()
+        );
+    }
+    #[test]
+    fn stable_capture_never_reuses_prior_body_after_verification_or_oversized_input() {
+        let (raw, chapter) = original_page();
+        let mut stable = StableCapture::new("https://www.qidian.com/chapter/1/2/", &chapter);
+        stable.observe(raw.clone()).unwrap();
+        assert!(
+            stable
+                .observe("x".repeat(opennovel_core::MAX_CAPTURE_BYTES + 1))
+                .is_err()
+        );
+        assert!(stable.observe(raw.clone()).unwrap().is_none());
+        assert!(matches!(
+            stable.observe(r#"{"error":"verification"}"#.into()),
+            Err(Error::Restricted(_))
+        ));
+        assert!(stable.observe(raw).unwrap().is_none());
+    }
+    #[test]
+    #[ignore = "explicit controlled decoder CPU measurement"]
+    fn stable_decode_benchmark() {
+        let (raw, chapter) = original_page();
+        let url = "https://www.qidian.com/chapter/1/2/";
+        let start = Instant::now();
+        for _ in 0..500 {
+            let a = raw.clone();
+            std::hint::black_box(decode_page(&a, url, &chapter).unwrap());
+            let b = raw.clone();
+            std::hint::black_box(decode_page(&b, url, &chapter).unwrap());
+        }
+        let duplicate = start.elapsed();
+        let start = Instant::now();
+        for _ in 0..500 {
+            let mut stable = StableCapture::new(url, &chapter);
+            assert!(stable.observe(raw.clone()).unwrap().is_none());
+            std::hint::black_box(stable.observe(raw.clone()).unwrap());
+        }
+        println!(
+            "500 original chapters x 2 reads: duplicate_decode_ms={:.3}; reuse_validated_ms={:.3}",
+            duplicate.as_secs_f64() * 1000.,
+            start.elapsed().as_secs_f64() * 1000.
+        );
+    }
     #[test]
     fn bounded_speed_modes_keep_legacy_default() {
         assert_eq!(navigation_interval(None).unwrap(), Duration::from_secs(3));
@@ -402,10 +511,14 @@ mod tests {
             Duration::from_secs(1)
         );
         assert_eq!(
+            navigation_interval(Some(500)).unwrap(),
+            Duration::from_millis(500)
+        );
+        assert_eq!(
             navigation_interval(Some(6000)).unwrap(),
             Duration::from_secs(6)
         );
-        for value in [0, 1, 500, 1001, u64::MAX] {
+        for value in [0, 1, 499, 501, 1001, u64::MAX] {
             assert!(navigation_interval(Some(value)).is_err());
         }
     }
