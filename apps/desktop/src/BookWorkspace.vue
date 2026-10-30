@@ -8,10 +8,11 @@ import AutomaticTxtPanel from './AutomaticTxtPanel.vue';
 import type {AutoTxtStatus} from './api';
 import {bookDetails,readChapter,jobDetails,pauseJob,resumeJob,cancelJob,updateBook,retryChapters,revealExport,organizeBook,type Book,type BookDetails,type BookPreferences,type ChapterContent,type Job,type JobDetails,type SourceInfo} from './api';
 import {saveMode,workbenchStatus,type WorkbenchTab} from './workbenchModel';
+import {saveRecovery} from './workflow';
 
 const props=defineProps<{bookId:string;initialTab?:WorkbenchTab;accountId?:string;sources:SourceInfo[];jobs:Job[];summary?:Book;preference?:BookPreferences;automatic?:AutoTxtStatus}>();
 const emit=defineEmits<{changed:[];back:[];tasks:[];help:[]}>();
-const tab=ref<WorkbenchTab>(props.initialTab||'overview');
+const tab=ref<WorkbenchTab>(props.initialTab||'save');
 const selectedAccount=ref(props.accountId||'');
 const detail=ref<BookDetails|null>(null);const busy=ref(false);const error=ref('');const notice=ref('');
 const heading=ref<HTMLElement|null>(null);const panel=ref<HTMLElement|null>(null);
@@ -27,6 +28,7 @@ const status=computed(()=>book.value?workbenchStatus(book.value,ownJobs.value,mo
 const currentJob=computed(()=>status.value?.job||ownJobs.value[0]);
 const active=computed(()=>ownJobs.value.some(j=>['running','queued'].includes(j.state)));
 const pending=computed(()=>ownJobs.value.some(j=>['running','queued','paused'].includes(j.state)));
+const recoverable=computed(()=>!!currentJob.value&&['paused','cancelled','failed','partial'].includes(currentJob.value.state));
 const chapters=computed(()=>detail.value?.chapters.filter(c=>(!onlySaved.value||c.saved)&&`${c.position} ${c.title}`.includes(search.value))||[]);
 const readerPages=computed(()=>Math.max(1,Math.ceil(chapters.value.length/100)));
 const visibleChapters=computed(()=>chapters.value.slice((readerPage.value-1)*100,readerPage.value*100));
@@ -37,7 +39,7 @@ const itemPages=computed(()=>Math.max(1,Math.ceil(items.value.length/100)));
 const visibleItems=computed(()=>items.value.slice((itemPage.value-1)*100,itemPage.value*100));
 const labels:Record<string,string>={queued:'等待执行',running:'正在保存',paused:'已暂停',cancelled:'已取消',failed:'失败',partial:'部分保存',blocked:'访问受限',completed:'本次范围完成'};
 const itemLabels:Record<string,string>={queued:'待保存',completed:'已保存',failed:'失败',blocked:'受限'};
-const tabs:{id:WorkbenchTab;label:string}[]=[{id:'overview',label:'概览'},{id:'save',label:'保存正文'},{id:'read',label:'阅读'},{id:'export',label:'导出文件'}];
+const tabs:{id:WorkbenchTab;label:string}[]=[{id:'save',label:'保存进度'},{id:'read',label:'阅读正文'},{id:'export',label:'其他格式与文件记录'},{id:'overview',label:'书籍详情'}];
 
 async function reload(){
   const id=props.bookId;const sequence=++loadSequence;
@@ -99,7 +101,7 @@ onUnmounted(()=>{disposed=true;loadSequence++;readSequence++;jobSequence++;});
     <p v-if="!detail&&!error" role="status">正在读取作品和保存进度…</p>
     <template v-if="book&&detail&&status">
       <header class="workspace-heading"><h1 ref="heading" tabindex="-1">{{ book.title }}</h1><p>{{ book.author||'未标注作者' }} · {{ mode==='local'?'本地 JSON':source?.name||book.source }}</p></header>
-      <section class="book-status" :data-state="status.kind" aria-label="本书保存状态"><div><strong>{{ status.title }}</strong><p>{{ status.message }}</p><p>全书正文已保存 <b>{{ book.saved_chapters }}/{{ book.total_chapters }}</b> 章 · 尚缺 {{ Math.max(0,book.total_chapters-book.saved_chapters) }} 章</p></div><button v-if="tab!==status.tab" class="primary" :disabled="busy" @click="selectTab(status.tab)">{{ status.action }}</button></section>
+      <section class="book-status" :data-state="status.kind" aria-label="本书保存状态"><div><strong>{{ status.title }}</strong><p>{{ status.kind==='attention'?saveRecovery(currentJob?.error||''):status.message }}</p><p>全书正文已保存 <b>{{ book.saved_chapters }}/{{ book.total_chapters }}</b> 章 · 尚缺 {{ Math.max(0,book.total_chapters-book.saved_chapters) }} 章</p></div><button v-if="tab!==status.tab&&status.kind!=='complete'" class="primary" :disabled="busy" @click="selectTab(status.tab)">{{ status.action }}</button></section>
       <AutomaticTxtPanel :book-id="book.id" :saved="book.saved_chapters" :active="active" :status="automatic" />
       <div class="workspace-tabs" role="tablist" aria-label="作品功能" @keydown="tabKeys"><button v-for="entry in tabs" :id="`book-tab-${entry.id}`" :key="entry.id" role="tab" :aria-selected="tab===entry.id" :aria-controls="`book-panel-${entry.id}`" :tabindex="tab===entry.id?0:-1" @click="selectTab(entry.id)">{{ entry.label }}</button></div>
       <section :id="`book-panel-${tab}`" ref="panel" role="tabpanel" :aria-labelledby="`book-tab-${tab}`" tabindex="-1" class="workspace-panel">
@@ -115,20 +117,20 @@ onUnmounted(()=>{disposed=true;loadSequence++;readSequence++;jobSequence++;});
           <AccountPanel v-if="mode==='account'" :book-id="book.id" :account-id="selectedAccount" embedded @selected="selectedAccount=$event" @saved="accountSaved" @ready="accountSaved" @read="readSaved" />
           <template v-else>
             <h2>{{ mode==='local'?'本地导入进度':'保存本书正文' }}</h2>
-            <p v-if="mode==='public'">检查官网目录并补齐缺章，已有正文会复用。若有暂停任务，请先继续或取消原任务。</p>
+            <p v-if="mode==='public'">{{ active?'保存正在进行，完成后会自动生成 TXT。':book.saved_chapters===book.total_chapters?'正文已保存，不需要再次下载。上方可以打开 TXT 文件夹。':'点击下方按钮继续保存，已有正文会自动跳过。' }}</p>
             <p v-else-if="mode==='unavailable'">{{ source?.note||'这个来源尚未开放正文保存。已有文字仍可离线阅读和导出。' }}</p>
             <p v-else>原始 JSON 中的章节通过持久任务导入。本地作品不能从官网补齐。</p>
-            <button v-if="mode==='public'" class="primary" :disabled="busy||pending" @click="fillMissing">检查目录并保存缺章</button>
-            <article v-if="currentJob" class="workspace-task"><h3>{{ labels[currentJob.state]||currentJob.state }}</h3><p>本次任务范围已保存 {{ currentJob.saved }}/{{ currentJob.total }} 章，受限 {{ currentJob.blocked }}，失败 {{ currentJob.failed }}。</p><progress :value="currentJob.saved" :max="currentJob.total" aria-label="当前任务范围进度"></progress><p v-if="currentJob.error" class="message failure">{{ currentJob.error }}</p><div class="actions"><button v-if="['queued','running'].includes(currentJob.state)" :disabled="busy" @click="control(currentJob,'pause')">暂停本书任务</button><button v-if="['paused','cancelled','failed','partial'].includes(currentJob.state)&&mode!=='unavailable'" :disabled="busy||active" @click="control(currentJob,'resume')">继续原任务</button><button v-if="['queued','running','paused'].includes(currentJob.state)" :disabled="busy" @click="control(currentJob,'cancel')">取消本书任务</button></div></article>
+            <button v-if="mode==='public'&&!pending&&!recoverable&&book.saved_chapters<book.total_chapters" class="primary" :disabled="busy||pending" @click="fillMissing">检查目录并保存缺章</button>
+            <article v-if="currentJob&&(active||book.saved_chapters<book.total_chapters)" class="workspace-task"><h3>{{ labels[currentJob.state]||currentJob.state }}</h3><p>本次任务范围已保存 {{ currentJob.saved }}/{{ currentJob.total }} 章，受限 {{ currentJob.blocked }}，失败 {{ currentJob.failed }}。</p><progress :value="currentJob.saved" :max="currentJob.total" aria-label="当前任务范围进度"></progress><p v-if="currentJob.error" class="recovery">下一步：{{ saveRecovery(currentJob.error) }}</p><div class="actions"><button v-if="['queued','running'].includes(currentJob.state)" :disabled="busy" @click="control(currentJob,'pause')">暂停本书任务</button><button v-if="recoverable&&mode!=='unavailable'" class="primary" :disabled="busy||active" @click="control(currentJob,'resume')">继续保存</button></div></article>
           </template>
-          <AvailabilityPanel :chapters="detail.chapters" :busy="busy" @save="selectTab('save')" @read="readSaved" @job="relatedJob" />
+          <details class="workspace-advanced"><summary>为什么有些章节没保存？</summary><AvailabilityPanel :chapters="detail.chapters" :busy="busy" @save="selectTab('save')" @read="readSaved" @job="relatedJob" /></details>
           <details class="workspace-advanced" :open="!!openedJob">
-<summary>本书任务记录与逐章原因</summary><p>批次任务需到全局任务面板统一控制。受限内容需要重新核对官网，不能强行重试。</p><ol class="workspace-jobs"><li v-for="job in ownJobs.slice(0,20)" :key="job.id"><span>{{ labels[job.state]||job.state }} · {{ job.saved }}/{{ job.total }} 章</span><button :disabled="busy" @click="showJob(job.id)">查看这次任务明细</button></li></ol><p v-if="!ownJobs.length">本书还没有保存任务。</p>
+<summary>更多管理：检查更新、取消任务、详细记录</summary><button v-if="mode==='public'" :disabled="busy||pending" @click="fillMissing">检查更新并保存缺章</button><button v-if="currentJob&&mode!=='account'&&['queued','running','paused'].includes(currentJob.state)" :disabled="busy" @click="control(currentJob,'cancel')">取消本书任务（正文保留）</button><p>批次任务需到全局任务面板统一控制。受限内容需要重新核对官网，不能强行重试。</p><ol class="workspace-jobs"><li v-for="job in ownJobs.slice(0,20)" :key="job.id"><span>{{ labels[job.state]||job.state }} · {{ job.saved }}/{{ job.total }} 章</span><button :disabled="busy" @click="showJob(job.id)">查看这次任务明细</button></li></ol><p v-if="!ownJobs.length">本书还没有保存任务。</p>
             <template v-if="jobView"><label>章节状态<select v-model="itemFilter"><option value="missing">未保存</option><option value="all">全部</option><option value="failed">失败</option><option value="blocked">受限</option></select></label><ol class="job-reasons"><li v-for="item in visibleItems" :key="item.chapter_id"><strong>{{ item.position }} · {{ item.title }}</strong><span>{{ itemLabels[item.state]||item.state }}{{ item.error?'：'+item.error:'' }}</span><button v-if="item.retryable&&mode==='public'" :disabled="busy||active" @click="retry(item.chapter_id)">重试此失败章</button></li></ol><p v-if="!items.length">当前筛选下没有章节。</p><div v-if="itemPages>1" class="detail-pagination"><button :disabled="itemPage<=1" @click="itemPage--">上一页</button><span>{{ itemPage }}/{{ itemPages }}</span><button :disabled="itemPage>=itemPages" @click="itemPage++">下一页</button></div></template>
           </details><button class="global-task-link" @click="emit('tasks')">查看全局任务与批次</button>
         </template>
         <template v-else-if="tab==='read'">
-          <h2>离线阅读</h2><p v-if="!book.saved_chapters">还没有正文。请先在“保存正文”中保存章节。</p><div v-if="!book.saved_chapters" class="actions"><button @click="selectTab('save')">去保存正文</button></div>
+          <h2>离线阅读</h2><p v-if="!book.saved_chapters">还没有正文。请先在“保存进度”中保存章节。</p><div v-if="!book.saved_chapters" class="actions"><button @click="selectTab('save')">去保存正文</button></div>
           <div v-else class="reader-layout"><div class="reader-directory"><label>查找章节<input v-model="search" type="search" placeholder="序号或章节标题" /></label><label class="saved-filter"><input v-model="onlySaved" type="checkbox" />只看已保存章节</label><ol><li v-for="chapter in visibleChapters" :key="chapter.id"><button :disabled="busy||!chapter.saved" :aria-current="reader?.id===chapter.id?'true':undefined" @click="openChapter(chapter.id)">{{ chapter.position }} · {{ chapter.title }}{{ chapter.saved?'':'（未保存）' }}</button></li></ol><p v-if="!chapters.length">没有符合条件的章节。</p><div class="detail-pagination"><button :disabled="readerPage<=1" @click="readerPage--">上一页</button><span>{{ readerPage }}/{{ readerPages }}</span><button :disabled="readerPage>=readerPages" @click="readerPage++">下一页</button></div></div><article class="reader-text" aria-label="已保存正文"><template v-if="reader"><h3>{{ reader.title }}</h3><p v-for="(paragraph,index) in reader.paragraphs" :key="index">{{ paragraph }}</p><div class="detail-pagination"><button :disabled="busy||readIndex<=0" @click="openChapter(savedChapters[readIndex-1]!.id)">上一章</button><button :disabled="busy||readIndex<0||readIndex>=savedChapters.length-1" @click="openChapter(savedChapters[readIndex+1]!.id)">下一章</button></div></template><p v-else>从左侧选择已保存章节。切换工作台页签会保留当前阅读章节。</p></article></div>
         </template>
         <template v-else>

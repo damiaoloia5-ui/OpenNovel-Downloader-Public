@@ -2,13 +2,15 @@
 import {onMounted,onUnmounted,ref,watch,computed} from 'vue';
 import ExportActions from './ExportActions.vue';
 import {snapshot,accountDownloadJobs,startAccountDownload,resumeAccountDownload,pauseJob,cancelJob,type Book,type Job} from './api';
+import {saveRecovery} from './workflow';
 const props=defineProps<{accountId:string;opened:boolean;preferredBook:string;revision:number;guided?:boolean;hideExport?:boolean}>();
 const emit=defineEmits<{saved:[bookId:string];read:[bookId:string]}>();
 const books=ref<Book[]>([]);const bookId=ref('');const selection=ref('');const acknowledged=ref(false);const jobs=ref<Job[]>([]);const busy=ref(false);const error=ref('');const notice=ref('');const polling=ref(false);
 const active=computed(()=>jobs.value.some(j=>['queued','running'].includes(j.state)));
 const pending=computed(()=>jobs.value.some(j=>['queued','running','paused'].includes(j.state)));
 const book=computed(()=>books.value.find(b=>b.id===bookId.value));
-const resumable=computed(()=>{const job=jobs.value[0];return job&&['paused','failed','partial','blocked'].includes(job.state)&&job.saved<job.total?job:null;});
+const resumable=computed(()=>{const job=jobs.value[0];return job&&['paused','cancelled','failed','partial','blocked'].includes(job.state)&&job.saved<job.total?job:null;});
+const complete=computed(()=>!!book.value&&book.value.total_chapters>0&&book.value.saved_chapters===book.value.total_chapters);
 const newTask=ref(false);const intervalMs=ref(500);
 const labels:Record<string,string>={queued:'等待开始',running:'自动保存中',paused:'已暂停',cancelled:'已取消',failed:'已停止，需要处理',partial:'部分保存，已停止',blocked:'阅读受限，已停止',completed:'本次范围完成'};
 let timer:ReturnType<typeof setTimeout>|undefined;let disposed=false;
@@ -26,20 +28,24 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);});
 </script>
 <template>
   <section class="automatic-panel" aria-label="起点自动保存正文">
-    <h3>{{ guided?'3. 保存正文':'自动保存全书正文 · 实验性' }}</h3>
-    <p class="footnote">{{ book?`《${book.title}》已保存 ${book.saved_chapters}/${book.total_chapters} 章。`:'' }} 自动保存缺失正文，已有内容跳过。遇到登录、订阅或验证会停止并保留进度。</p>
-    <p v-if="!books.length" class="footnote">请先在下方“保存当前可读章节”中读取并确认完整目录，随后作品会出现在这里。</p>
-    <label v-if="!guided">要自动保存的作品<select v-model="bookId" :disabled="busy||active||!books.length"><option v-if="!books.length" value="">尚无已确认目录</option><option v-for="b in books" :key="b.id" :value="b.id">{{ b.title }}</option></select></label>
-    <details><summary>限定章节范围（可选）</summary><label v-if="resumable" class="ack"><input v-model="newTask" type="checkbox" :disabled="busy||pending">另建任务并保留旧记录（高级，不会改变原任务范围）</label><label>留空保存全书缺章<input v-model="selection" :disabled="busy||pending||!!resumable&&!newTask" placeholder="例如 1-3 或 1,3,5-8；序号按目录"></label></details>
-    <label>保存节奏<select v-model.number="intervalMs" :disabled="busy||active"><option :value="500">极速 · 最小翻页间隔 0.5 秒（实验）</option><option :value="1000">快速 · 最小翻页间隔 1 秒（实验）</option><option :value="3000">标准 · 最小翻页间隔 3 秒</option><option :value="6000">缓慢 · 最小翻页间隔 6 秒</option></select></label><p class="footnote">实际速度还取决于网页加载与完整性确认。遇到限流或验证仍会停止；可暂停后改用标准或缓慢节奏继续。</p>
-    <label class="ack"><input v-model="acknowledged" type="checkbox" :disabled="busy||active">我已在官网关闭自动订阅，确认只保存已有阅读权限的内容</label>
-    <p class="footnote">本软件不会点击订阅或购买按钮。官网自身的自动订阅设置需由你本人确认；自动任务期间保持官网窗口打开。</p>
-    <p v-if="!acknowledged" class="footnote">下一步：本人先关闭官网自动订阅，再勾选上面的确认项，即可开始保存。</p>
-    <div class="actions"><button v-if="!pending&&(!resumable||newTask)" class="primary" :disabled="busy||!opened||!bookId||!acknowledged" @click="start">{{ selection.trim()?'自动保存所选章节':'自动保存全书' }}</button><button v-if="book?.saved_chapters" :disabled="busy" @click="emit('read',bookId)">阅读已保存正文</button></div>
-    <p v-if="resumable&&!newTask" class="footnote">优先继续下方原任务，保留原范围及进度；不需要重新创建任务。</p>
-    <p v-if="!opened" class="footnote">请先点击本账户的“打开官网登录”。</p>
-    <p v-if="error" class="message failure" role="alert">{{ error }}</p><p v-if="notice" class="message success" role="status">{{ notice }}</p>
-    <ol class="auto-jobs"><li v-for="job in jobs.slice(0,hideExport?1:5)" :key="job.id"><strong>{{ labels[job.state]||job.state }} · 本次已保存 {{ job.saved }}/{{ job.total }} 章</strong><progress :value="job.saved" :max="job.total" :aria-label="`${job.title} 自动保存进度`"></progress><p v-if="job.error" class="message failure">{{ job.error }}</p><p v-if="job.blocked||job.failed" class="footnote">受限 {{ job.blocked }} 章，失败 {{ job.failed }} 章；后续尚未保存。请先在官网处理原因，再继续原任务。</p><div class="actions"><button v-if="['running','queued'].includes(job.state)" :disabled="busy" @click="action(()=>pauseJob(job.id))">暂停自动保存</button><button v-if="!['running','queued','completed'].includes(job.state)" :class="resumable?.id===job.id&&!newTask?'primary':''" :disabled="busy||active||!opened||!acknowledged" @click="resume(job)">继续此任务</button><button v-if="['running','queued','paused'].includes(job.state)" :disabled="busy" @click="action(()=>cancelJob(job.id))">取消此任务</button></div></li></ol>
+    <h3>{{ complete?'本书正文已保存完成':active?'正在自动保存，请保持官网窗口打开':resumable?'进度已保留，可以接着保存':'开始保存这本书' }}</h3>
+    <p v-if="complete" role="status">不需要再下载，TXT 会自动生成。生成后点上方的“打开 TXT 所在文件夹”。</p>
+    <template v-else>
+      <p class="footnote">{{ active?'保存时不要手动切换官网页面。想中途退出，先点“暂停保存”。':'默认保存全书缺章，已经保存的章节会自动跳过；保存结束后自动生成 TXT。' }}</p>
+      <p v-if="!books.length" class="footnote">还没有这本书的目录，请先按上方提示核对书名。</p>
+      <label v-if="!guided">要保存的小说<select v-model="bookId" :disabled="busy||active||!books.length"><option v-if="!books.length" value="">请先核对这本书</option><option v-for="b in books" :key="b.id" :value="b.id">{{ b.title }}</option></select></label>
+      <template v-if="!active"><label class="ack"><input v-model="acknowledged" type="checkbox" :disabled="busy">我已在官网关闭自动订阅，确认只保存已有阅读权限的内容</label><p v-if="!acknowledged" class="footnote">先勾选上面的确认项，再点下面的保存按钮。</p></template>
+      <div class="actions"><button v-if="!pending&&(!resumable||newTask)" class="primary" :disabled="busy||!opened||!bookId||!acknowledged" @click="start">{{ selection.trim()?'保存所选章节为 TXT':'开始保存为 TXT' }}</button><button v-if="resumable&&!newTask" class="primary" :disabled="busy||active||!opened||!acknowledged" @click="resume(resumable)">继续保存</button><button v-if="book?.saved_chapters&&!hideExport" :disabled="busy" @click="emit('read',bookId)">阅读已保存正文</button></div>
+      <p v-if="!opened" class="footnote">先打开起点官网并登录，再回来保存。</p>
+      <ol class="auto-jobs"><li v-for="job in jobs.slice(0,1)" :key="job.id"><strong>{{ labels[job.state]||job.state }} · 本次已保存 {{ job.saved }}/{{ job.total }} 章</strong><progress :value="job.saved" :max="job.total" :aria-label="`${job.title} 自动保存进度`"></progress><p v-if="job.error" class="recovery" role="status">下一步：{{ saveRecovery(job.error) }}</p><details v-if="job.error||job.blocked||job.failed"><summary>查看停止原因</summary><p>{{ job.error }}</p><p>受限 {{ job.blocked }} 章，失败 {{ job.failed }} 章；未保存正文不会填造。</p></details><div class="actions"><button v-if="['running','queued'].includes(job.state)" :disabled="busy" @click="action(()=>pauseJob(job.id))">暂停保存</button></div></li></ol>
+    </template>
+    <p v-if="error" class="message failure" role="alert">{{ error }}<br>下一步：{{ saveRecovery(error) }}</p><p v-if="notice" class="message success" role="status">{{ notice }}</p>
+    <details class="save-settings">
+<summary>更多设置：速度、选章、取消任务</summary>
+      <label>保存节奏<select v-model.number="intervalMs" :disabled="busy||active"><option :value="500">极速 · 最小翻页间隔 0.5 秒（实验）</option><option :value="1000">快速 · 最小翻页间隔 1 秒（实验）</option><option :value="3000">标准 · 最小翻页间隔 3 秒</option><option :value="6000">缓慢 · 最小翻页间隔 6 秒</option></select></label><p class="footnote">默认极速。实际速度还取决于网页加载与完整性确认。遇到限流或验证仍会停止；可暂停后改用标准或缓慢节奏继续。</p>
+      <label v-if="resumable" class="ack"><input v-model="newTask" type="checkbox" :disabled="busy||pending">另建任务并保留旧记录（高级，不会改变原任务范围）</label><label>只保存部分章节（留空就是全书缺章）<input v-model="selection" :disabled="busy||pending||!!resumable&&!newTask" placeholder="例如 1-3 或 1,3,5-8" /></label>
+      <div v-for="job in jobs.filter(j=>['running','queued','paused'].includes(j.state))" :key="job.id" class="actions"><button :disabled="busy" @click="action(()=>cancelJob(job.id))">取消此任务（已保存正文保留）</button></div>
+    </details>
     <ExportActions v-if="book&&!hideExport" :key="book.id" :book-id="book.id" :saved="book.saved_chapters" :total="book.total_chapters" :title="guided?'4. 导出文件':undefined" />
   </section>
 </template>

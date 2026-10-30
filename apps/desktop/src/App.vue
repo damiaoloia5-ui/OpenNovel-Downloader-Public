@@ -9,9 +9,9 @@ import HelpGuide from './HelpGuide.vue';
 import BookWorkspace from './BookWorkspace.vue';
 import {automaticTxtSnapshot,type AutoTxtStatus} from './api';
 import {catalogAvailability} from './availabilityModel';
-import {qidianBookLink} from './workflow';
+import {qidianBookLink,qidianBookId} from './workflow';
 import type {WorkbenchTab} from './workbenchModel';
-import {preferences,sourceCapabilities,cancelJob,desktopAvailable,downloadBook,exportJob,importBook,inspectBook,jobDetails,pauseJob,resumeJob,retryChapters,snapshot,type BookPreferences,type SourceInfo,type JobDetails,type Snapshot,type Catalog} from './api';
+import {preferences,sourceCapabilities,cancelJob,desktopAvailable,downloadBook,exportJob,importBook,inspectBook,jobDetails,pauseJob,resumeJob,retryChapters,revealExport,snapshot,type BookPreferences,type SourceInfo,type JobDetails,type Snapshot,type Catalog} from './api';
 
 const page=ref<'download'|'library'|'tasks'|'sources'|'tools'|'accounts'|'help'|'book'>('download');
 const pageHeading=ref<HTMLElement|null>(null);
@@ -44,7 +44,8 @@ watch(page,async value=>{navigationEpoch++;if(value==='help'){notice.value='';er
 watch([filter,archiveFilter],()=>{bookPage.value=1;});watch(bookPages,n=>{bookPage.value=Math.min(bookPage.value,n);});
 watch(taskFilter,()=>{taskPage.value=1;});watch(taskPages,n=>{taskPage.value=Math.min(taskPage.value,n);});
 function openWorkspace(id:string,tab:WorkbenchTab='overview',account=''){workspaceBook.value=id;workspaceTab.value=tab;workspaceAccount.value=account;error.value='';notice.value='';page.value='book';}
-function showBook(id:string){openWorkspace(id);}
+function showBook(id:string){openWorkspace(id,'save');}
+function openTxt(id:string){const exportId=automaticFiles.value.find(f=>f.book_id===id&&f.state==='ready')?.export_id;if(exportId)void action(()=>revealExport(exportId));}
 function openAccountBook(id:string){openWorkspace(id,'save');}
 async function refresh(){
   if(!desktopAvailable||refreshing)return;refreshing=true;
@@ -62,11 +63,14 @@ async function action(work:()=>Promise<void>){if(working.value)return;working.va
 async function openCreatedJob(id:string,epoch:number){try{const result=await jobDetails(id);if(disposed||epoch!==navigationEpoch)return;openWorkspace(result.job.book_id,'save');notice.value='任务已创建，保存结束后会自动生成 TXT；请在本书工作台查看。';}catch{if(disposed||epoch!==navigationEpoch)return;page.value='tasks';notice.value='任务已创建，暂时无法读取作品信息，请在任务进度中查看。';}}
 async function chooseFile(event:Event){const input=event.target as HTMLInputElement;const file=input.files?.[0];if(!file)return;await action(async()=>{if(file.size>16*1024*1024)throw new Error('文件超过 16 MiB，请拆分后导入。');const epoch=navigationEpoch;const id=await importBook(await file.text());await openCreatedJob(id,epoch);});input.value='';}
 async function inspect(autoSave=false){
-  const link=qidianBookLink(bookInput.value);if(link){accountUrl.value=link;page.value='accounts';error.value='';notice.value='起点需要本人核对官网登录与目录，保存结束后会自动生成 TXT。';return;}
+  const link=qidianBookLink(bookInput.value);if(link){const stored=data.value.books.find(b=>b.source==='qidian-session'&&b.remote_id===qidianBookId(link));if(stored){openWorkspace(stored.id,'save');return;}accountUrl.value=link;page.value='accounts';error.value='';notice.value='按提示完成登录和书名确认，之后会自动保存并生成 TXT。';return;}
   await action(async()=>{
     const epoch=navigationEpoch;catalog.value=null;const input=bookInput.value.trim();
     const result=await inspectBook(input);if(disposed||epoch!==navigationEpoch)return;
     if(!sourceInfos.value.length)sourceInfos.value=await sourceCapabilities();
+    if(disposed||epoch!==navigationEpoch)return;
+    const stored=data.value.books.find(b=>b.source===result.source&&b.remote_id===result.remote_id);
+    if(autoSave&&stored){openWorkspace(stored.id,'save');return;}
     catalog.value=result;inspectedInput.value=input;firstChapter.value=1;lastChapter.value=result.chapters.length;selection.value='';
     if(autoSave){const range=catalogAvailability(result,sourceInfos.value);if(!range.supported||!range.open){notice.value='已识别目录，当前没有可自动保存的开放章，请查看下方范围说明。';return;}
       if(disposed||epoch!==navigationEpoch)return;const id=await downloadBook(input,1,result.chapters.length,range.selection);await openCreatedJob(id,epoch);}
@@ -86,15 +90,18 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         <span class="brand-mark" aria-hidden="true">O<span>N</span></span>
         <span>OpenNovel<small>属于你的本地书库</small></span>
       </a>
-      <div class="nav-label">工作空间</div>
+      <div class="nav-label">开始使用</div>
       <nav aria-label="主导航">
         <button :class="{ selected: page === 'download' }" @click="page = 'download'"><span aria-hidden="true">＋</span>添加小说</button>
         <button :class="{ selected: page === 'library' || page === 'book' }" @click="page = 'library'"><span aria-hidden="true">▤</span>我的书库<b>{{ data.books.length }}</b></button>
-        <button :class="{ selected: page === 'tasks' }" @click="page = 'tasks'"><span aria-hidden="true">↓</span>任务进度<b v-if="active">{{ active }}</b></button>
+        <button :class="{ selected: page === 'tasks' }" @click="page = 'tasks'"><span aria-hidden="true">↓</span>保存进度<b v-if="active">{{ active }}</b></button>
+        <button :class="{ selected: page === 'help' }" @click="page='help'"><span aria-hidden="true">?</span>使用指引</button>
+        <details class="nav-more" :open="['sources','accounts','tools'].includes(page)">
+<summary>更多功能</summary>
         <button :class="{ selected: page === 'sources' }" @click="page = 'sources'"><span aria-hidden="true">◎</span>小说来源</button>
         <button :class="{ selected: page === 'accounts' }" @click="page='accounts'"><span aria-hidden="true">◉</span>平台账户</button>
         <button :class="{ selected: page === 'tools' }" @click="page = 'tools'"><span aria-hidden="true">▣</span>备份与诊断</button>
-        <button :class="{ selected: page === 'help' }" @click="page='help'"><span aria-hidden="true">?</span>使用指引</button>
+        </details>
       </nav>
       <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>综合功能候选版 · 0.3.0</p></div>
     </aside>
@@ -106,17 +113,18 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         <div v-if="error" class="message failure" role="alert">{{ error }}<button aria-label="关闭错误提示" @click="error = ''">×</button></div>
         <div v-if="notice" class="message success" role="status">{{ notice }}<button aria-label="关闭提示" @click="notice = ''">×</button></div>
         <div v-if="page!=='book'" class="page-heading">
-          <div><h1 ref="pageHeading" tabindex="-1">{{ page==='help'?'使用指引':page === 'download' ? '添加小说' : page === 'library' ? '我的书库' : page === 'tasks' ? '任务进度' : page==='accounts'?'登录与保存正文':page==='tools'?'备份与诊断':'小说来源' }}</h1><p class="intro">{{ page==='help'?'从添加到导出，按步骤完成。':page === 'download' ? '粘贴官网作品链接，接着保存正文，再导出文件。' : page === 'library' ? '选择作品，阅读或导出已经保存的正文。' : page === 'tasks' ? '查看保存进度，继续中断的任务。' : page==='accounts'?'起点按步骤引导；书旗入口在高级操作中。':page==='tools'?'创建书库备份、恢复副本，查看诊断信息。':'查看各个平台已验证的支持范围。' }}</p></div>
-          <button v-if="page==='library'" :disabled="!desktopAvailable || working" @click="fileInput?.click()">导入本地 JSON</button>
+          <div><h1 ref="pageHeading" tabindex="-1">{{ page==='help'?'使用指引':page === 'download' ? '添加小说' : page === 'library' ? '我的书库' : page === 'tasks' ? '保存进度' : page==='accounts'?'登录与保存正文':page==='tools'?'备份与诊断':'小说来源' }}</h1><p class="intro">{{ page==='help'?'从添加到导出，按步骤完成。':page === 'download' ? '只需粘贴小说链接，软件会带你完成，最后得到 TXT。' : page === 'library' ? '选择作品，阅读或导出已经保存的正文。' : page === 'tasks' ? '查看保存进度，继续中断的任务。' : page==='accounts'?'起点按步骤引导；书旗入口在高级操作中。':page==='tools'?'创建书库备份、恢复副本，查看诊断信息。':'查看各个平台已验证的支持范围。' }}</p></div>
+          <button v-if="page==='library'" class="primary" @click="page='download'">添加一本小说</button>
           <input ref="fileInput" type="file" accept=".json,application/json" class="file-input" aria-label="选择 JSON 书籍文件" @change="chooseFile" />
         </div>
 
         <template v-if="page === 'download'">
-          <ol class="quick-path" aria-label="基本操作步骤"><li><b>1</b> 添加作品链接</li><li><b>2</b> 保存正文到书库</li><li><b>3</b> 自动生成 TXT</li></ol>
+          <ol class="quick-path" aria-label="基本操作步骤"><li><b>1</b> 粘贴链接</li><li><b>2</b> 按提示操作</li><li><b>3</b> 拿到 TXT</li></ol>
           <form class="download-panel" @submit.prevent="inspect(true)">
             <label for="novel-link">粘贴小说的官网作品链接</label>
-            <div class="link-row"><input id="novel-link" v-model="bookInput" type="text" placeholder="支持番茄、七猫、晋江、起点、书旗官网作品链接" :disabled="working" required /><button class="primary" :disabled="!desktopAvailable || working">{{ working ? '处理中…' : '识别并保存为 TXT' }}</button></div>
-            <button type="button" :disabled="!desktopAvailable||working||!bookInput.trim()" @click="inspect()">只看获取范围</button><p class="footnote">自动识别来源并保存目录标记开放章，结束后生成 TXT；有缺章时文件明确标注。起点仍需本人登录并确认保存；书旗目前只有目录。</p>
+            <div class="link-row"><input id="novel-link" v-model="bookInput" type="text" placeholder="支持番茄、七猫、晋江、起点、书旗官网作品链接" :disabled="working" required /><button class="primary" :disabled="!desktopAvailable || working || !bookInput.trim()">{{ working ? '正在识别，请稍等…' : '开始保存为 TXT' }}</button></div>
+            <p class="footnote">免费网页会直接开始保存；起点会提示你登录。完成后自动生成 TXT，不需要手动选格式。</p><p class="footnote">不知道复制哪个链接？打开小说的作品介绍页，复制浏览器顶部地址，粘贴到这里。书旗目前只能读取目录。</p>
+            <details class="optional-options"><summary>只想先看看能保存多少？</summary><button type="button" :disabled="!desktopAvailable||working||!bookInput.trim()" @click="inspect()">只看获取范围</button></details>
           </form>
           <section v-if="catalog" class="download-panel" aria-label="作品目录">
             <h2>{{ catalog.title }}</h2><p class="footnote">{{ catalogSource?.name || catalog.source }} · {{ catalog.author || '未标注作者' }} · 全目录 {{ catalog.chapters.length }} 章</p>
@@ -142,23 +150,23 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
               <div class="book-info">
 <span class="source-tag">{{ sourceLabel(book.source) }}</span><h3>{{ book.title }}</h3><p>{{ book.saved_chapters }} / {{ book.total_chapters }} 章<span>{{ book.saved_chapters === book.total_chapters ? '完整保存' : '部分保存' }}</span></p>
                 <p v-if="preferencesByBook.get(book.id)?.tags.length" class="footnote">{{ preferencesByBook.get(book.id)?.tags.join(' · ') }}</p>
-                <div class="book-actions"><button :disabled="working" @click="showBook(book.id)">打开作品工作台</button></div>
+                <div class="book-actions"><button :disabled="working" @click="showBook(book.id)">查看进度与正文</button><button v-if="automaticFiles.some(f=>f.book_id===book.id&&f.state==='ready'&&f.export_id)" class="primary" :disabled="working" @click="openTxt(book.id)">打开 TXT 文件夹</button></div>
 </div>
             </article>
           </section>
-          <div v-else class="empty-state"><span class="empty-icon" aria-hidden="true">▤</span><h2>{{ filter ? '没有找到这本书' : archiveFilter === 'archived' ? '还没有归档作品' : '从第一本书开始' }}</h2><p>{{ filter ? '试试其他书名、作者或标签。' : archiveFilter === 'archived' ? '在作品详情中归档后，会显示在这里。' : '先在“添加小说”粘贴作品链接并保存正文，也可导入已有本地 JSON。' }}</p><p v-if="!filter && archiveFilter !== 'archived'" class="muted">首次操作可打开右上角“查看指引”，了解保存正文与导出文件的区别。</p></div>
+          <div v-else class="empty-state"><span class="empty-icon" aria-hidden="true">▤</span><h2>{{ filter ? '没有找到这本书' : archiveFilter === 'archived' ? '还没有归档作品' : '从第一本书开始' }}</h2><p>{{ filter ? '试试其他书名、作者或标签。' : archiveFilter === 'archived' ? '在作品详情中归档后，会显示在这里。' : '点“添加一本小说”，粘贴官网链接，按提示保存即可。' }}</p><p v-if="!filter && archiveFilter !== 'archived'" class="muted">保存完成后会自动生成 TXT，点“打开 TXT 文件夹”即可找到。</p></div>
           <nav v-if="books.length" class="list-pagination" aria-label="书库分页"><span>共 {{ books.length }} 本 · 第 {{ bookPage }} / {{ bookPages }} 页</span><button :disabled="bookPage <= 1" @click="bookPage = 1">首页</button><button :disabled="bookPage <= 1" @click="bookPage--">上一页</button><button :disabled="bookPage >= bookPages" @click="bookPage++">下一页</button><button :disabled="bookPage >= bookPages" @click="bookPage = bookPages">末页</button></nav>
         </template>
 
         <template v-if="page === 'tasks'">
           <details class="optional-options"><summary>批量添加多部作品（高级）</summary><BatchPanel /></details>
-          <div class="section-heading"><h2>持久任务 <span>{{ data.jobs.length }}</span></h2><select v-model="taskFilter" aria-label="任务筛选"><option value="all">全部任务</option><option value="active">进行中与暂停</option><option value="attention">失败、部分或受限</option><option value="completed">已完成</option></select><button class="subtle" :disabled="!desktopAvailable" @click="refresh">刷新状态</button></div>
+          <div class="section-heading"><h2>保存记录 <span>{{ data.jobs.length }}</span></h2><select v-model="taskFilter" aria-label="任务筛选"><option value="all">全部任务</option><option value="active">进行中与暂停</option><option value="attention">失败、部分或受限</option><option value="completed">已完成</option></select><button class="subtle" :disabled="!desktopAvailable" @click="refresh">刷新状态</button></div>
           <div v-if="!data.jobs.length" class="empty-state"><span class="empty-icon" aria-hidden="true">↓</span><h2>还没有任务</h2><p>添加小说链接或导入本地内容，任务进度会保存在书库中。</p></div>
           <p v-else-if="!filteredJobs.length" class="footnote">当前筛选下没有任务。</p>
           <article v-for="job in visibleJobs" :key="job.id" class="task-card">
             <div class="task-heading"><h3>{{ job.title }}</h3><span class="state-tag">{{ labels[job.state] || job.state }}</span></div>
             <progress :value="job.saved" :max="job.total" :aria-label="`${job.title}保存进度`"></progress>
-            <div class="task-bottom"><span>本次范围已保存 {{ job.saved }} / {{ job.total }} 章 · 受限 {{ job.blocked }} · 失败 {{ job.failed }}</span><div class="task-controls"><button v-if="job.state === 'running' || job.state === 'queued'" :disabled="working" @click="action(() => pauseJob(job.id))">暂停</button><button v-if="['running','queued','paused'].includes(job.state)" :disabled="working" @click="action(() => cancelJob(job.id))">取消任务</button><button v-if="job.source==='qidian-session' && !['running','queued','completed'].includes(job.state)" :disabled="working" @click="openAccountBook(job.book_id)">选择账户继续</button><button v-if="job.source!=='qidian-session' && !['running','queued','completed','blocked'].includes(job.state) && (job.state !== 'partial' || job.failed || job.saved + job.blocked < job.total)" :disabled="working" @click="action(() => resumeJob(job.id))">继续 / 重试</button></div></div>
+            <div class="task-bottom"><span>本次范围已保存 {{ job.saved }} / {{ job.total }} 章 · 受限 {{ job.blocked }} · 失败 {{ job.failed }}</span><div class="task-controls"><button v-if="job.state === 'running' || job.state === 'queued'" :disabled="working" @click="action(() => pauseJob(job.id))">暂停</button><button v-if="['running','queued','paused'].includes(job.state)" :disabled="working" @click="action(() => cancelJob(job.id))">取消任务</button><button v-if="job.source==='qidian-session' && !['running','queued','completed'].includes(job.state)" :disabled="working" @click="openAccountBook(job.book_id)">继续保存</button><button v-if="job.source!=='qidian-session' && !['running','queued','completed','blocked'].includes(job.state) && (job.state !== 'partial' || job.failed || job.saved + job.blocked < job.total)" :disabled="working" @click="action(() => resumeJob(job.id))">继续 / 重试</button></div></div>
             <div v-if="job.saved" class="task-controls task-export"><button :disabled="working" @click="showBook(job.book_id)">阅读与导出本书</button><details><summary>仅导出本次任务选章（高级）</summary><button :disabled="working" @click="saveJob(job.id,'txt')">导出本次选章 TXT</button><button :disabled="working" @click="saveJob(job.id,'epub')">导出本次选章 EPUB</button></details></div>
             <p v-if="job.error" class="task-error">{{ job.error }}</p>
             <button class="detail-toggle" :aria-expanded="openedJob === job.id" :disabled="working" @click="showDetails(job.id)">{{ openedJob === job.id ? '收起章节明细' : '查看章节明细' }}</button>

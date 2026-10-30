@@ -8,13 +8,13 @@ async function act(retry=false){if(busy.value)return;busy.value=true;error.value
 <template>
   <section class="automatic-txt" aria-label="自动 TXT 文件" aria-live="polite">
     <h2>自动 TXT 文件</h2>
-    <template v-if="status?.state==='ready'&&status.receipt"><p><strong>TXT 已生成</strong> · {{ status.receipt.saved_chapters }}/{{ status.receipt.total_chapters }} 章{{ status.receipt.partial?'（部分内容，标明保存章数）':'' }}</p><code>{{ status.receipt.path }}</code><p v-if="active">这是上次生成的文件，当前任务结束后会自动更新版本。</p><button :disabled="busy||!status.export_id" @click="act()">打开 TXT 所在文件夹</button></template>
+    <template v-if="status?.state==='ready'&&status.receipt"><p><strong>TXT 已生成</strong> · {{ status.receipt.saved_chapters }}/{{ status.receipt.total_chapters }} 章{{ status.receipt.partial?'（部分内容，标明保存章数）':'' }}</p><details><summary>查看 TXT 文件完整路径</summary><code>{{ status.receipt.path }}</code></details><p v-if="active">这是上次生成的文件，当前任务结束后会自动更新版本。</p><button :disabled="busy||!status.export_id" @click="act()">打开 TXT 所在文件夹</button></template>
     <template v-else-if="status?.state==='failed'"><p role="alert">TXT 生成失败，正文仍在书库：{{ status.error }}</p><button :disabled="busy||active||!saved" @click="act(true)">重试生成 TXT</button></template>
     <p v-else-if="!saved">保存到正文后会自动生成 TXT，无需选格式或手动导出。</p>
     <p v-else-if="active">正在保存正文，任务结束后自动生成 TXT。</p>
     <p v-else role="status">{{ status?.state==='generating'?'正在生成 TXT…':'正文已保存，后台正在准备 TXT…' }}</p>
     <p v-if="error" role="alert">{{ error }}</p>
-    <p class="automatic-note">文件放在本书库 exports/automatic-txt。补齐或修订后生成新版本，旧文件保留；EPUB 和手动导出仍在“导出文件”页。</p>
+    <details class="automatic-note"><summary>想要 EPUB 或查看旧文件？</summary><p>在“其他格式与文件记录”中选择。TXT 会自动生成，补齐或修订后保留新旧版本。</p></details>
   </section>
 </template>
 <style scoped>
