@@ -1,5 +1,6 @@
 {
   "bundle": {
+    "useLocalToolsDir": true,
     "resources": {
       "../../../LICENSE": "LICENSE",
       "../../../.artifacts/release/THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt"
