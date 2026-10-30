@@ -28,6 +28,26 @@ pub(crate) fn window_label(id: &str) -> String {
     format!("account-{id}")
 }
 
+pub(crate) fn show_existing(window: &tauri::WebviewWindow) -> Result<(), String> {
+    window.show().map_err(|_| "无法显示官网窗口")?;
+    window.unminimize().map_err(|_| "无法恢复官网窗口")?;
+    window.set_focus().map_err(|_| "无法聚焦官网窗口".into())
+}
+
+/// Reveal the user's current page without navigating, reloading or reading it.
+#[tauri::command]
+pub async fn focus_account(
+    id: String,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.library.account(&id).map_err(|e| e.to_string())?;
+    let window = app
+        .get_webview_window(&window_label(&id))
+        .ok_or("官网窗口已关闭，请重新登录后继续；保存进度保留")?;
+    show_existing(&window)
+}
+
 #[tauri::command]
 pub async fn account_list(
     app: tauri::AppHandle,

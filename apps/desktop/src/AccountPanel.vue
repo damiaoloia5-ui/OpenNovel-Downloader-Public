@@ -59,7 +59,7 @@ onUnmounted(()=>{disposed=true;readEpoch++;window.removeEventListener('focus',re
       </template>
       <template v-else><h3>{{ busy?'正在识别这本书，请稍等…':'还没读到完整目录' }}</h3><p>{{ busy?'软件正在打开作品目录并尝试读取，不需要你来回点击。':'如果官网要求登录或验证，请先完成；如果目录没有全部显示，请在官网点“展开全部”，再点下面的按钮。' }}</p><div v-if="!busy" class="actions"><button class="primary" @click="collectCatalog(false)">我已处理，重新读取</button><button @click="collectCatalog()">重新打开这本书</button></div></template>
     </section>
-    <AutoSavePanel v-else-if="current&&selectedBook" :key="`${chosen}:${selectedBook.id}`" :account-id="chosen" :opened="!!opened" :preferred-book="selectedBook.id" :revision="catalogRevision" guided hide-export @saved="emit('saved',$event)" @read="emit('read',$event)" />
+    <AutoSavePanel v-else-if="current&&selectedBook" :key="`${chosen}:${selectedBook.id}`" :account-id="chosen" :opened="!!opened" :preferred-book="selectedBook.id" :revision="catalogRevision" guided hide-export @check-session="refocus" @saved="emit('saved',$event)" @read="emit('read',$event)" />
     <p v-if="current?.blocked_navigation" class="message failure">官网有一个跳转未能打开。可在下方“更多设置”中关闭官网窗口，再重新登录。</p>
     <p v-if="error" class="message failure" role="alert">{{ error }}<br>下一步：先核对官网窗口的提示，再重试当前步骤。已保存的正文会保留。</p><p v-if="notice" class="message success" role="status">{{ notice }}</p>
     <button v-if="loginAcknowledged&&!selectedBook&&!busy" class="back-login" @click="loginAcknowledged=false;preview=null;acknowledged=false">返回登录步骤</button>

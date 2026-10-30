@@ -35,9 +35,10 @@
       }
       return '';
     };
+    if (Array.from(document.querySelectorAll('#tcaptcha_transform_dy,.tcaptcha-transform,.geetest_panel,.geetest_panel_box,.yidun_panel,#captcha-container,[role="dialog"]')).some(e => shown(e) && (e.getAttribute('role') !== 'dialog' || /滑块|拖动.{0,20}验证|安全验证|人机验证|验证码/.test(e.innerText || '')))) return { error: 'verification' };
     if (Array.from(document.querySelectorAll('iframe')).some(e => {
       const r = e.getBoundingClientRect();
-      return shown(e) && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth && (e.title.includes('验证码') || /captcha/i.test(e.src));
+      return shown(e) && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth && /captcha|turing|验证码|人机验证|安全验证|滑块/i.test(`${e.title || ''} ${e.src || ''}`);
     })) return { error: 'verification' };
     if (mode === 'catalog') {
       if (match[1] !== 'book') return { error: 'catalog_page' };

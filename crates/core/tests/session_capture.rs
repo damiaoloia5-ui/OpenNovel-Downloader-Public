@@ -14,6 +14,7 @@ use tempfile::tempdir;
 struct BrowserReader {
     calls: Mutex<Vec<String>>,
     blocked: AtomicBool,
+    navigation_error: AtomicBool,
     wrong_title: bool,
 }
 impl SourceAdapter for BrowserReader {
@@ -27,6 +28,11 @@ impl SourceAdapter for BrowserReader {
         _stop: &AtomicBool,
     ) -> Result<ImportChapter> {
         self.calls.lock().unwrap().push(c.id.clone());
+        if c.id == "30" && self.navigation_error.load(Ordering::Acquire) {
+            return Err(Error::Network(
+                "读取期间页面导航发生变化，自动保存已停止".into(),
+            ));
+        }
         if c.id == "30" && self.blocked.load(Ordering::Acquire) {
             return Err(Error::Restricted("原创未购页面".into()));
         }
@@ -100,6 +106,31 @@ fn restricted_page_stops_before_next_chapter_and_only_explicit_resume_retries() 
         "completed"
     );
     assert_eq!(*source.calls.lock().unwrap(), ["10", "30", "30", "20"]);
+}
+
+#[test]
+fn navigation_interruption_and_failed_resume_preserve_progress_until_manual_recovery() {
+    let d = tempdir().unwrap();
+    let l = Library::open(d.path().join("library.db")).unwrap();
+    let book = l.register_session_catalog(&catalog()).unwrap();
+    let job = l.create_session_download(&book, None).unwrap();
+    let source = BrowserReader::default();
+    source.navigation_error.store(true, Ordering::Release);
+    for _ in 0..2 {
+        let result = l.run_job(&job, &source, &AtomicBool::new(false)).unwrap();
+        assert_eq!((result.saved, result.failed, result.total), (1, 1, 3));
+        assert_eq!(result.state, "partial");
+        assert_eq!(l.job_details(&job).unwrap().items[2].state, "queued");
+    }
+    source.navigation_error.store(false, Ordering::Release);
+    let done = l.run_job(&job, &source, &AtomicBool::new(false)).unwrap();
+    assert_eq!(done.state, "completed");
+    assert_eq!(done.saved, 3);
+    assert_eq!(
+        *source.calls.lock().unwrap(),
+        ["10", "30", "30", "30", "20"]
+    );
+    assert_eq!(l.session_download_jobs(&book).unwrap().len(), 1);
 }
 
 #[test]

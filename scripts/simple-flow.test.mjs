@@ -79,7 +79,7 @@ const renderer=createRenderer({
 });
 function walk(node,visible=false){return [node,...node.children.filter(c=>!visible||node.tag!=='details'||node.props.open||c.tag==='summary').flatMap(c=>walk(c,visible))];}
 function fixture(){
-  const state={accounts:[],books:[],jobs:[],automatic:[],calls:[],probe:async()=>structuredClone(preview),startError:null};
+  const state={accounts:[],books:[],jobs:[],automatic:[],calls:[],probe:async()=>structuredClone(preview),startError:null,resumeError:null};
   const api={
     accountList:async()=>structuredClone(state.accounts),snapshot:async()=>structuredClone({books:state.books,jobs:state.jobs}),
     createAccount:async()=>{const account={id:'original-account',platform:'qidian',label:'我的起点账户'};state.accounts.push({account,session:'closed',blocked_navigation:false});return account;},
@@ -87,7 +87,8 @@ function fixture(){
     previewAccountPage:async()=>{state.calls.push(['preview']);return state.probe();},
     confirmAccountPage:async(...args)=>{state.calls.push(['confirm',...args]);state.books=[structuredClone(stored)];return {kind:'catalog',book_id:stored.id,save:null};},
     startAccountDownload:async(...args)=>{state.calls.push(['start',...args]);if(state.startError)throw state.startError;state.jobs=[{id:'original-job',book_id:stored.id,source:'qidian-session',title:stored.title,state:'running',saved:0,total:2,blocked:0,failed:0,error:null}];return 'original-job';},
-    accountDownloadJobs:async()=>structuredClone(state.jobs),pauseJob:async()=>{state.jobs[0].state='paused';},resumeAccountDownload:async(...args)=>{state.calls.push(['resume',...args]);state.jobs[0].state='running';},
+    accountDownloadJobs:async()=>structuredClone(state.jobs),pauseJob:async()=>{state.jobs[0].state='paused';},resumeAccountDownload:async(...args)=>{state.calls.push(['resume',...args]);if(state.resumeError)throw state.resumeError;state.jobs[0].state='running';},
+    focusAccount:async(id)=>{state.calls.push(['focus',id]);},
     cancelJob:async()=>{},preferences:async()=>[],automaticTxtSnapshot:async()=>structuredClone(state.automatic),sourceCapabilities:async()=>[{id:'qimao-web',can_download:true}],
     inspectBook:async()=>{state.calls.push(['inspect']);return {...preview.catalog,source:'qimao-web'};},
     downloadBook:async(...args)=>{state.calls.push(['download',...args]);return 'public-job';},jobDetails:async()=>({job:{book_id:stored.id},items:[]}),
@@ -167,5 +168,15 @@ test('bookshelf opens the actual automatic TXT record without another export ste
   const f=await mount(App,{},({state})=>{state.books=[{...stored,saved_chapters:2}];state.automatic=[{book_id:stored.id,state:'ready',export_id:'original-txt',receipt:{path:'D:/original.txt'}}];});try{
     await click(walk(f.root,true).find(n=>n.tag==='button'&&n.textContent.includes('我的书库')));await click(f.button('打开 TXT 文件夹'));
     assert.deepEqual(f.state.calls,[['reveal','original-txt']]);
+  }finally{f.close();}
+});
+test('verification recovery preserves the page and job until manual completion then resumes the same task',async()=>{
+  const f=await mount(AutoSave,{accountId:'original-account',preferredBook:stored.id,opened:true,revision:0,guided:true,hideExport:true},({state})=>{
+    state.books=[{...stored,saved_chapters:1}];state.jobs=[{id:'original-job',book_id:stored.id,state:'partial',title:stored.title,saved:1,total:2,failed:1,blocked:0,error:'读取期间页面导航发生变化，自动保存已停止'}];state.resumeError='官网验证仍未完成，请本人完成后再继续';
+  });try{
+    await click(f.button('打开验证窗口'));assert.deepEqual(f.state.calls,[['focus','original-account']]);
+    await acknowledge(f);await click(f.button('我已完成验证，继续保存'));assert.equal(f.state.jobs[0].state,'partial');assert.equal(f.state.jobs[0].saved,1);assert.match(f.root.textContent,/验证仍未完成/);
+    f.state.resumeError=null;await click(f.button('我已完成验证，继续保存'));assert.equal(f.state.jobs[0].state,'running');assert.equal(f.state.jobs[0].saved,1);
+    assert.equal(f.state.calls.filter(c=>c[0]==='start'||c[0]==='open').length,0);const resumed=f.state.calls.filter(c=>c[0]==='resume');assert.ok(resumed.every(c=>c[2]==='original-job'&&c[4]===3000));
   }finally{f.close();}
 });

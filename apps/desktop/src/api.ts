@@ -94,6 +94,7 @@ export function accountList():Promise<AccountStatus[]> {return invoke('account_l
 export function createAccount(platform:string,label:string):Promise<AccountRecord> {return invoke('create_account',{platform,label});}
 export function openAccount(id:string,bookUrl:string,login=false):Promise<void> {return invoke('open_account',{id,bookUrl,login});}
 export function closeAccount(id:string,remove:boolean):Promise<void> {return invoke('close_account',{id,remove});}
+export function focusAccount(id:string):Promise<void> {return invoke('focus_account',{id});}
 export interface SessionChapter {remote_book_id:string;chapter:ChapterContent;declared_words:number}
 export interface CapturePreview {token:string;kind:'catalog'|'chapter';catalog:Catalog|null;chapter:SessionChapter|null}
 export interface CaptureReceipt {kind:'catalog'|'chapter';book_id:string;save:{book_id:string;title:string;chapter_title:string;position:number;saved:number;total:number;already_saved:boolean}|null}

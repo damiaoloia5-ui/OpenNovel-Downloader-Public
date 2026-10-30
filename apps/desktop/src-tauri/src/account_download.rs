@@ -22,6 +22,100 @@ fn navigation_interval(value: Option<u64>) -> std::result::Result<Duration, Stri
 }
 const PAGE_TIMEOUT: Duration = Duration::from_secs(30);
 
+struct ResumeTicket {
+    generation: String,
+    revision: u64,
+}
+
+fn check_resume_page(raw: &str) -> std::result::Result<(), String> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Page {
+        status: String,
+    }
+    if raw.len() > 1024 {
+        return Err("官网状态返回异常，未重新启动任务".into());
+    }
+    let page: Page = serde_json::from_str(raw).map_err(|_| "无法确认官网状态，未重新启动任务")?;
+    match page.status.as_str() {
+        "ready" => Ok(()),
+        "verification" => {
+            Err("官网验证仍未完成，请在原窗口手动完成滑块或验证码，再点继续；进度已保留".into())
+        }
+        "loading" => Err("官网页面仍在加载，请等待加载完成后再点继续；进度已保留".into()),
+        _ => Err("无法确认官网状态，请本人核对官网页面后重试；进度已保留".into()),
+    }
+}
+
+async fn prepare_resume(
+    id: &str,
+    app: &tauri::AppHandle,
+    state: &AppState,
+) -> std::result::Result<ResumeTicket, String> {
+    let account = state.library.account(id).map_err(|e| e.to_string())?;
+    if account.platform != "qidian" {
+        return Err("自动官网保存实验目前只支持起点".into());
+    }
+    let window = app
+        .get_webview_window(&window_label(id))
+        .ok_or("官网窗口已关闭，请重新登录后继续；保存进度保留")?;
+    let (generation, revision, reading) = {
+        let sessions = state.sessions.lock().map_err(|_| "账户会话不可用")?;
+        let session = sessions.get(id).ok_or("官网会话已关闭，请重新登录后继续")?;
+        (
+            session.generation.clone(),
+            Arc::clone(&session.revision),
+            Arc::clone(&session.reading),
+        )
+    };
+    if reading.swap(true, Ordering::AcqRel) {
+        return Err("原任务仍在执行或退出，请等待完全停止后再继续".into());
+    }
+    let _lease = PageLease(Some(reading));
+    let before = window.url().map_err(|_| "无法确认官网当前地址")?;
+    if !opennovel_core::account_navigation_allowed("qidian", &before) {
+        return Err("当前页面不是受支持的起点官网页面，请重新登录后继续".into());
+    }
+    if before.host_str() == Some("passport.qidian.com") {
+        let _ = crate::accounts::show_existing(&window);
+        return Err("官网要求重新登录，请在原官网窗口登录完成后继续；保存进度保留".into());
+    }
+    let epoch = revision.load(Ordering::Acquire);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    window
+        .eval_with_callback(include_str!("resume_page.js"), move |raw| {
+            let _ = sender.send(raw);
+        })
+        .map_err(|_| "无法检查官网状态，请稍后重试")?;
+    let raw =
+        tauri::async_runtime::spawn_blocking(move || receiver.recv_timeout(Duration::from_secs(8)))
+            .await
+            .map_err(|_| "官网状态检查中断，未重新启动任务")?
+            .map_err(|_| "官网状态检查超时，请核对原窗口后重试")?;
+    if state
+        .sessions
+        .lock()
+        .map_err(|_| "账户会话不可用")?
+        .get(id)
+        .is_none_or(|s| s.generation != generation)
+    {
+        return Err("官网会话已变化，请重新登录后继续；保存进度保留".into());
+    }
+    if revision.load(Ordering::Acquire) != epoch
+        || window.url().map_err(|_| "无法确认官网地址")? != before
+    {
+        return Err("官网页面仍在变化，请等登录或验证页面加载完成后再继续；进度已保留".into());
+    }
+    if let Err(error) = check_resume_page(&raw) {
+        let _ = crate::accounts::show_existing(&window);
+        return Err(error);
+    }
+    Ok(ResumeTicket {
+        generation,
+        revision: epoch,
+    })
+}
+
 struct AccountReader {
     interval: Duration,
     app: tauri::AppHandle,
@@ -196,18 +290,19 @@ impl SourceAdapter for AccountReader {
         wait(delay, cancelled)?;
         let window = self.window(cancelled)?;
         // Reading normal pages must never turn a login page into an unattended login flow.
-        Self::current_url(&window)?;
-        window
-            .navigate(
-                expected
-                    .parse()
-                    .map_err(|_| Error::Invalid("章节地址无效".into()))?,
-            )
-            .map_err(|_| Error::Network("官网章节导航失败".into()))?;
-        *self
-            .last_navigation
-            .lock()
-            .map_err(|_| Error::Conflict("页面调度不可用".into()))? = Some(Instant::now());
+        if Self::current_url(&window)? != expected {
+            window
+                .navigate(
+                    expected
+                        .parse()
+                        .map_err(|_| Error::Invalid("章节地址无效".into()))?,
+                )
+                .map_err(|_| Error::Network("官网章节导航失败".into()))?;
+            *self
+                .last_navigation
+                .lock()
+                .map_err(|_| Error::Conflict("页面调度不可用".into()))? = Some(Instant::now());
+        }
         let deadline = Instant::now() + PAGE_TIMEOUT;
         let mut arrived = false;
         let mut stable = StableCapture::new(&expected, chapter);
@@ -292,6 +387,7 @@ pub async fn start_account_download(
         Some((book_id, selection)),
         None,
         navigation_interval(interval_ms)?,
+        None,
         app,
         &state,
     )
@@ -308,20 +404,16 @@ pub async fn resume_account_download(
     if !no_auto_purchase {
         return Err("继续前请本人确认官网已关闭自动订阅".into());
     }
-    launch(
-        id,
-        None,
-        Some(job_id),
-        navigation_interval(interval_ms)?,
-        app,
-        &state,
-    )
+    let interval = navigation_interval(interval_ms)?;
+    let ticket = prepare_resume(&id, &app, &state).await?;
+    launch(id, None, Some(job_id), interval, Some(ticket), app, &state)
 }
 fn launch(
     id: String,
     new: Option<(String, Option<String>)>,
     resume: Option<String>,
     interval: Duration,
+    ticket: Option<ResumeTicket>,
     app: tauri::AppHandle,
     state: &AppState,
 ) -> std::result::Result<String, String> {
@@ -335,6 +427,11 @@ fn launch(
     let (generation, revision, reading, last_navigation) = {
         let sessions = state.sessions.lock().map_err(|_| "账户会话不可用")?;
         let s = sessions.get(&id).ok_or("官网会话已关闭")?;
+        if ticket.as_ref().is_some_and(|t| {
+            t.generation != s.generation || t.revision != s.revision.load(Ordering::Acquire)
+        }) {
+            return Err("官网会话或页面已变化，请完成登录或验证后再继续；进度已保留".into());
+        }
         (
             s.generation.clone(),
             Arc::clone(&s.revision),
@@ -420,6 +517,29 @@ fn launch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn resume_checks_only_accept_a_small_ready_status() {
+        assert!(check_resume_page(r#"{"status":"ready"}"#).is_ok());
+        assert!(
+            check_resume_page(r#"{"status":"verification"}"#)
+                .unwrap_err()
+                .contains("验证仍未完成")
+        );
+        assert!(
+            check_resume_page(r#"{"status":"loading"}"#)
+                .unwrap_err()
+                .contains("仍在加载")
+        );
+        for raw in [
+            r#"{"status":"unknown"}"#,
+            r#"{"status":"ready","cookie":"not accepted"}"#,
+            "null",
+            "bad json",
+        ] {
+            assert!(check_resume_page(raw).is_err());
+        }
+        assert!(check_resume_page(&" ".repeat(1025)).is_err());
+    }
     fn original_page() -> (String, ChapterRef) {
         let paragraph = "原创稳定正文".repeat(1000);
         let raw=serde_json::json!({"url":"https://www.qidian.com/chapter/1/2/","title":"原创章节","declared_words":paragraph.chars().count(),"paragraphs":[paragraph]}).to_string();

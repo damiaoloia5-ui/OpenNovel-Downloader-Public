@@ -50,3 +50,18 @@ test('old/new script controlled traversal comparison',{skip:!process.env.OPENNOV
   const a=fixture(1000),b=fixture(1000);const old=run(a,previous),current=run(b);assert.deepEqual(current,old);
   assert.ok(b.styleCalls<a.styleCalls);console.log(JSON.stringify({paragraphs:1000,oldStyleCalls:a.styleCalls,newStyleCalls:b.styleCalls,reduction:1-b.styleCalls/a.styleCalls}));
 });
+test('a visible inline slider widget stops extraction while a hidden widget does not',()=>{
+  const f=fixture();const widget=new Element('DIV').content('拖动滑块完成验证');widget.getBoundingClientRect=()=>({top:0,left:0,right:30,bottom:30});
+  const before=f.document.querySelectorAll;f.document.querySelectorAll=s=>s.includes('tcaptcha_transform_dy')?[widget]:before(s);
+  assert.equal(run(f).error,'verification');widget.style.display='none';assert.ok(run(f).paragraphs);
+});
+test('resume page observation returns status only and does not assume a loading or unknown page is ready',()=>{
+  const script=readFileSync('apps/desktop/src-tauri/src/resume_page.js','utf8');const f=fixture();
+  assert.deepEqual(run(f,script),{status:'ready'});f.document.readyState='loading';assert.deepEqual(run(f,script),{status:'loading'});
+  f.document.readyState='complete';f.verify();assert.deepEqual(run(f,script),{status:'verification'});
+  f.context.getComputedStyle=()=>{throw Error('controlled layout failure');};assert.deepEqual(run(f,script),{status:'unknown'});
+});
+test('security verification iframe titles are detected even without captcha in the URL',()=>{
+  const f=fixture();f.verify();const frame=f.document.querySelectorAll('iframe')[0];frame.title='安全验证';frame.src='https://example.invalid/widget';
+  assert.equal(run(f).error,'verification');assert.deepEqual(run(f,readFileSync('apps/desktop/src-tauri/src/resume_page.js','utf8')),{status:'verification'});
+});

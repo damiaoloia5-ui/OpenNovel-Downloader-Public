@@ -706,6 +706,7 @@ fn main() {
                     account_download_jobs,
                     create_account,
                     open_account,
+                    accounts::focus_account,
                     close_account,
                     preview_catalog_update,
                     accept_catalog_update,
