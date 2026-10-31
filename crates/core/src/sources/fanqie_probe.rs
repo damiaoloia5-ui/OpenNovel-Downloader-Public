@@ -63,6 +63,17 @@ pub fn probe_official_chapter(
     chapter: &str,
 ) -> Result<OfficialProbeReport> {
     let url = target(channel, book, chapter)?;
+    request_report(channel, book, chapter, url, Duration::from_secs(15))
+}
+
+// Private transport seam: production callers can only use target()'s fixed HTTPS endpoints.
+fn request_report(
+    channel: &str,
+    book: &str,
+    chapter: &str,
+    url: Url,
+    timeout: Duration,
+) -> Result<OfficialProbeReport> {
     let client = Client::builder()
         .user_agent(concat!(
             "OpenNovelDownloader/",
@@ -70,7 +81,7 @@ pub fn probe_official_chapter(
             " (single-chapter protocol research)"
         ))
         .connect_timeout(Duration::from_secs(8))
-        .timeout(Duration::from_secs(15))
+        .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())
         .retry(reqwest::retry::never())
         .build()
@@ -89,7 +100,10 @@ pub fn probe_official_chapter(
     // Do not download a verification page, denied body or redirect destination.
     let mut body = Vec::new();
     if !verification && (200..300).contains(&status) {
-        response.take(MAX_BYTES as u64 + 1).read_to_end(&mut body)?;
+        response
+            .take(MAX_BYTES as u64 + 1)
+            .read_to_end(&mut body)
+            .map_err(|_| Error::Network("单次官方探测响应读取失败或超时；未保存正文".into()))?;
     }
     let mut report = analyze(
         channel,
@@ -285,6 +299,7 @@ fn analyze_json(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::{io::Write, net::TcpListener, thread, time::Instant};
     const BOOK: &str = "10000000001";
     const CHAPTER: &str = "10000000002";
     fn response() -> Value {
@@ -300,6 +315,145 @@ mod tests {
             false,
             &serde_json::to_vec(v).unwrap(),
         )
+    }
+
+    // Original local HTTP fixture; no commercial server or account is involved.
+    fn exchange(
+        headers: &str,
+        body: Vec<u8>,
+        stall: Duration,
+        timeout: Duration,
+    ) -> (Result<OfficialProbeReport>, Vec<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = Url::parse(&format!(
+            "http://{}/probe?itemId={CHAPTER}",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
+        let headers = headers.to_owned();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let mut requests = Vec::new();
+            let mut stop = deadline;
+            while Instant::now() < stop {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(15)))
+                            .unwrap();
+                        stream
+                            .set_write_timeout(Some(Duration::from_secs(15)))
+                            .unwrap();
+                        let mut request = Vec::new();
+                        while !request.ends_with(b"\r\n\r\n") && request.len() < 8192 {
+                            let mut byte = [0];
+                            if stream.read(&mut byte).unwrap_or(0) == 0 {
+                                break;
+                            }
+                            request.push(byte[0]);
+                        }
+                        requests.push(String::from_utf8(request).unwrap());
+                        let _ = stream.write_all(headers.as_bytes());
+                        let _ = stream.flush();
+                        thread::sleep(stall);
+                        let _ = stream.write_all(&body);
+                        // Send FIN and let the client finish before dropping the Windows socket.
+                        let _ = stream.shutdown(std::net::Shutdown::Write);
+                        let _ = std::io::copy(&mut stream.take(8192), &mut std::io::sink());
+                        stop = Instant::now() + Duration::from_millis(200);
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(2));
+                    }
+                    Err(e) => panic!("local HTTP fixture: {e}"),
+                }
+            }
+            requests
+        });
+        let report = request_report("web-api", BOOK, CHAPTER, url, timeout);
+        (report, server.join().unwrap())
+    }
+
+    #[test]
+    fn transport_stops_on_redirect_verification_denial_and_server_errors_without_retry() {
+        for (status, extra, expected) in [
+            (302, "Location: /must-not-follow\r\n", "redirect_stopped"),
+            (200, "bdturing-verify: required\r\n", "access_challenge"),
+            (403, "", "access_challenge"),
+            (429, "Retry-After: 60\r\n", "rate_limited"),
+            (503, "", "http_error"),
+        ] {
+            // Deliberately no body: these responses must finish without trying to read it.
+            let (report, requests) = exchange(
+                &format!(
+                    "HTTP/1.1 {status} Test\r\n{extra}Content-Length: 999\r\nConnection: close\r\n\r\n"
+                ),
+                Vec::new(),
+                Duration::ZERO,
+                Duration::from_secs(15),
+            );
+            let report = report.unwrap_or_else(|error| {
+                panic!(
+                    "HTTP {status}: {error}; observed requests: {}",
+                    requests.len()
+                )
+            });
+            assert_eq!(report.outcome, expected);
+            assert_eq!(report.bytes, 0);
+            assert_eq!(requests.len(), 1, "no follow-up for {status}");
+            let request = requests[0].to_ascii_lowercase();
+            assert!(request.starts_with("get /probe?itemid="));
+            assert!(request.contains("\r\nismobile: 0\r\n"));
+            assert!(!request.contains("\r\ncookie:"));
+            assert!(!request.contains("\r\nauthorization:"));
+            assert!(!request.contains("\r\nproxy-authorization:"));
+        }
+    }
+
+    #[test]
+    fn transport_checks_actual_body_and_stops_reading_at_cap() {
+        for (body, expected) in [
+            (
+                serde_json::to_vec(&response()).unwrap(),
+                "readable_candidate",
+            ),
+            (vec![b'x'; MAX_BYTES + 512 * 1024], "oversized"),
+        ] {
+            let (report, requests) = exchange(
+                &format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                ),
+                body,
+                Duration::ZERO,
+                Duration::from_secs(15),
+            );
+            let report = report.unwrap();
+            assert_eq!(report.outcome, expected);
+            assert!(report.bytes <= MAX_BYTES + 1);
+            assert_eq!(requests.len(), 1);
+        }
+    }
+
+    #[test]
+    fn transport_timeout_and_truncated_body_do_not_return_a_candidate() {
+        for (stall, timeout) in [
+            (Duration::ZERO, Duration::from_secs(15)),
+            (Duration::from_secs(3), Duration::from_secs(1)),
+        ] {
+            let (report, requests) = exchange(
+                "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nConnection: close\r\n\r\n",
+                b"{\"code\":0".to_vec(),
+                stall,
+                timeout,
+            );
+            assert!(report.is_err());
+            let error = report.unwrap_err().to_string();
+            assert!(!error.contains(CHAPTER));
+            assert!(!error.contains("127.0.0.1"));
+            assert_eq!(requests.len(), 1);
+        }
     }
 
     #[test]
