@@ -1,4 +1,6 @@
 mod fanqie;
+mod fanqie_probe;
+pub use fanqie_probe::{OfficialProbeReport, probe_official_chapter};
 mod jinjiang;
 mod page;
 mod public_html;
