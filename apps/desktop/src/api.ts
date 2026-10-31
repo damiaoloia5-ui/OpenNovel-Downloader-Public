@@ -79,6 +79,9 @@ export function exportJob(jobId:string,format:'txt'|'epub'):Promise<Receipt> {re
 export function revealExport(id:string):Promise<void> {return invoke('reveal_export',{id});}
 export function pauseJob(jobId:string):Promise<void> {return invoke('pause_job',{jobId});}
 export function importBook(json: string): Promise<string> { return invoke('import_book', { json }); }
+export interface TxtSupplementPreview {fingerprint:string;title:string;total:number;already_saved:number;first_title:string;last_title:string}
+export function previewTxtSupplement(bookId:string,text:string):Promise<TxtSupplementPreview> {return invoke('preview_txt_supplement',{bookId,text});}
+export function confirmTxtSupplement(bookId:string,text:string,fingerprint:string):Promise<TxtSupplementPreview> {return invoke('confirm_txt_supplement',{bookId,text,fingerprint});}
 export function resumeJob(jobId: string): Promise<void> { return invoke('resume_job', { jobId }); }
 export function jobDetails(jobId:string):Promise<JobDetails> {return invoke('job_details',{jobId});}
 export function retryChapters(jobId:string,chapters:string[]):Promise<void> {return invoke('retry_chapters',{jobId,chapters});}

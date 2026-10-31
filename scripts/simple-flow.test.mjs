@@ -49,6 +49,8 @@ const entry=join(output,'entry.mjs');
 await writeFile(entry,`export {default as Account} from ${JSON.stringify(resolve('apps/desktop/src/AccountPanel.vue'))};\nexport {default as AutoSave} from ${JSON.stringify(resolve('apps/desktop/src/AutoSavePanel.vue'))};\nexport {default as App} from ${JSON.stringify(resolve('apps/desktop/src/App.vue'))};`);
 await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as Official} from '+JSON.stringify(resolve('apps/desktop/src/OfficialReaderPanel.vue'))+';\n');
 const real=new Set(['AccountPanel.vue','AutoSavePanel.vue','App.vue','OfficialReaderPanel.vue']);
+real.add('TxtSupplementPanel.vue');
+await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as Supplement} from '+JSON.stringify(resolve('apps/desktop/src/TxtSupplementPanel.vue'))+';\n');
 await build({configFile:false,logLevel:'error',plugins:[{
   name:'controlled-vue-host',enforce:'pre',
   resolveId(id){if(id==='./api')return mockFile;if(id==='@tauri-apps/api/window')return windowFile;},
@@ -58,7 +60,7 @@ await build({configFile:false,logLevel:'error',plugins:[{
     return transformWithOxc(compiled.content,`${id}.ts`,{lang:'ts'});
   },
 }],build:{ssr:entry,outDir:output,emptyOutDir:false,rollupOptions:{output:{entryFileNames:'components.mjs'}}}});
-const {Account,AutoSave,App,Official}=await import(pathToFileURL(join(output,'components.mjs')).href);
+const {Account,AutoSave,App,Official,Supplement}=await import(pathToFileURL(join(output,'components.mjs')).href);
 function element(tag,text=''){
   return {tag,tagName:tag.toUpperCase(),children:[],parent:null,props:{},text,listeners:{},value:'',checked:false,selected:false,
     get textContent(){return this.text+this.children.map(n=>n.textContent).join('');},
@@ -99,6 +101,8 @@ function fixture(){
     saveOfficialReader:async(...args)=>{state.calls.push(['official-save',...args]);return {id:'official-export',path:'D:/original-visible.txt'};},
     revealOfficialReader:async(id)=>{state.calls.push(['official-reveal',id]);},
     closeOfficialReader:async(p)=>{state.calls.push(['official-close',p]);},
+    previewTxtSupplement:async(...args)=>{state.calls.push(['txt-preview',...args]);if(state.txtError)throw state.txtError;return {fingerprint:'original-fingerprint',title:'原创样书',total:3,already_saved:1,first_title:'第一章 原创',last_title:'第三章 原创'};},
+    confirmTxtSupplement:async(...args)=>{state.calls.push(['txt-confirm',...args]);return {total:3,already_saved:1};},
   };
   return {state,api};
 }
@@ -115,6 +119,28 @@ async function click(button){assert.ok(button,'button exists');assert.ok(!button
 async function waitFor(predicate){const deadline=Date.now()+5000;while(!predicate()){if(Date.now()>deadline)throw Error('controlled component wait timed out');await new Promise(resolve=>setTimeout(resolve,20));await flush();}}
 async function loginAndRead(f){await click(f.button('打开起点，去登录'));await click(f.button('我已登录，下一步'));await waitFor(()=>f.button('是这本，开始保存为 TXT'));}
 async function acknowledge(f){const input=walk(f.root,true).find(n=>n.tag==='input'&&n.type==='checkbox');assert.ok(input);input.checked=true;input.dispatch('change');await flush();}
+
+test('TXT supplementation previews before explicit confirmation and retains the selected book identity',async()=>{
+  const f=await mount(Supplement,{bookId:'original-book',disabled:false});try{
+    const input=walk(f.root).find(n=>n.tag==='input');
+    input.props.onChange({target:{files:[{name:'original.txt',size:100,arrayBuffer:async()=>new TextEncoder().encode('原创文件').buffer}]}});await flush();await flush();
+    assert.equal(f.state.calls.filter(c=>c[0]==='txt-confirm').length,0);
+    assert.match(f.root.textContent,/匹配 3 章/);assert.match(f.root.textContent,/将补齐 2 章/);
+    await click(f.button('确认是同一本书，补齐并自动生成 TXT'));
+    assert.deepEqual(f.state.calls.find(c=>c[0]==='txt-confirm'),['txt-confirm','original-book','原创文件','original-fingerprint']);
+    assert.match(f.root.textContent,/已补齐 2 章/);
+  }finally{f.close();}
+});
+
+test('invalid TXT and oversized files cannot offer a confirm action',async()=>{
+  const f=await mount(Supplement,{bookId:'original-book',disabled:false},({state})=>{state.txtError='TXT 章节缺失';});try{
+    const input=walk(f.root).find(n=>n.tag==='input');
+    await input.props.onChange({target:{files:[{name:'large.txt',size:17*1024*1024}]}});await flush();
+    assert.equal(f.state.calls.length,0);assert.match(f.root.textContent,/16 MiB/);
+    await input.props.onChange({target:{files:[{name:'missing.txt',size:10,arrayBuffer:async()=>new TextEncoder().encode('原创文件').buffer}]}});await flush();
+    assert.match(f.root.textContent,/TXT 章节缺失/);assert.equal(f.button('确认是同一本书，补齐并自动生成 TXT'),undefined);
+  }finally{f.close();}
+});
 
 test('new-book guide logs in, reads automatically, and starts once only after explicit confirmation',async()=>{
   const f=await mount(Account,{initialUrl:link});try{

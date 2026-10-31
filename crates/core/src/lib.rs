@@ -11,6 +11,8 @@ mod revisions;
 mod session_capture;
 pub mod sources;
 mod storage;
+mod txt_supplement;
+pub use txt_supplement::TxtSupplementPreview;
 
 pub use accounts::{
     AccountRecord, account_entry_url, account_login_url, account_navigation_allowed,

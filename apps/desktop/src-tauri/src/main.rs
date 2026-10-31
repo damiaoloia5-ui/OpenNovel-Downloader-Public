@@ -522,6 +522,27 @@ async fn update_book(book_id: String, state: State<'_, AppState>) -> Result<Stri
 }
 
 #[tauri::command]
+async fn preview_txt_supplement(
+    book_id: String,
+    text: String,
+    state: State<'_, AppState>,
+) -> Result<opennovel_core::TxtSupplementPreview, String> {
+    let library = Arc::clone(&state.library);
+    blocking(move || library.preview_txt_supplement(&book_id, &text)).await
+}
+
+#[tauri::command]
+async fn confirm_txt_supplement(
+    book_id: String,
+    text: String,
+    fingerprint: String,
+    state: State<'_, AppState>,
+) -> Result<opennovel_core::TxtSupplementPreview, String> {
+    let library = Arc::clone(&state.library);
+    blocking(move || library.confirm_txt_supplement(&book_id, &text, &fingerprint)).await
+}
+
+#[tauri::command]
 async fn import_book(json: String, state: State<'_, AppState>) -> Result<String, String> {
     let library = Arc::clone(&state.library);
     let job = blocking(move || library.create_import(&json)).await?;
@@ -548,6 +569,13 @@ async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> 
     let snapshot = blocking(move || library.job(&requested)).await?;
     if snapshot.source == opennovel_core::QIDIAN_SESSION_SOURCE {
         return Err("起点自动任务请在平台账户选择官网会话后继续".into());
+    }
+    if matches!(snapshot.state.as_str(), "partial" | "blocked")
+        && snapshot.blocked > 0
+        && snapshot.failed == 0
+        && snapshot.saved + snapshot.blocked == snapshot.total
+    {
+        return Err("本次范围只剩网页受限章节，重复继续不会补齐。请检查官网目录更新；番茄作品也可在本书保存页导入已有完整 TXT。".into());
     }
     if let Some(chapters) = &selection {
         let library = Arc::clone(&state.library);
@@ -745,6 +773,8 @@ fn main() {
                     retry_chapters,
                     update_book,
                     import_book,
+                    preview_txt_supplement,
+                    confirm_txt_supplement,
                     inspect_book,
                     download_book,
                     resume_job,

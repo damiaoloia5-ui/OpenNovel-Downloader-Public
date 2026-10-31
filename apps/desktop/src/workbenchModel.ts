@@ -4,6 +4,10 @@ export type WorkbenchTab='overview'|'save'|'read'|'export';
 export type SaveMode='account'|'public'|'local'|'unavailable';
 export interface WorkbenchStatus {kind:string;title:string;message:string;action:string;tab:WorkbenchTab;job?:Job}
 
+export function publicAccessLimited(job:Job|undefined,mode:SaveMode):boolean {
+  return mode==='public'&&!!job&&['partial','blocked'].includes(job.state)&&job.blocked>0&&job.failed===0&&job.saved+job.blocked===job.total;
+}
+
 export function saveMode(source:string,sources:readonly SourceInfo[]):SaveMode {
   if(source==='local-json')return 'local';
   if(source==='qidian-session')return 'account';
@@ -20,6 +24,7 @@ export function workbenchStatus(book:Book,jobs:readonly Job[],mode:SaveMode):Wor
   if(book.total_chapters>0&&book.saved_chapters===book.total_chapters)return {kind:'complete',title:'正文已保存完整',message:'后台会自动生成 TXT，可在本页打开文件夹；也可离线阅读或手动导出其他格式。',action:'查看文件与其他导出',tab:'export'};
   if(mode==='unavailable')return {kind:'unavailable',title:'当前来源未开放正文保存',message:'目录不等于正文。已有内容仍可阅读或导出，来源权限和支持范围保持不变。',action:book.saved_chapters?'阅读已保存正文':'查看支持说明',tab:book.saved_chapters?'read':'save'};
   const latest=own[0];
+  if(publicAccessLimited(latest,mode))return {kind:'limited',title:'本次范围的网页可读章节已保存',message:'本次范围中其余章节在官网网页受限，反复继续不会补齐。'+(book.source==='fanqie-web'?'可以在下方导入你已有的同书完整 TXT。':'可先阅读或导出已保存正文，之后检查官网目录更新。'),action:'查看补齐方式',tab:'save',job:latest};
   if(latest&&['failed','partial','blocked','cancelled'].includes(latest.state))return {kind:'attention',title:latest.state==='cancelled'?'任务已取消，正文保留':'保存已停止，需要处理',message:latest.error||'查看任务原因后再继续。已保存内容不会丢失。',action:'查看原因与下一步',tab:'save',job:latest};
   if(mode==='local')return {kind:'local',title:'本地内容尚未收齐',message:'查看原导入任务，继续可恢复的任务，或检查原始 JSON 文件。',action:'查看导入进度',tab:'save',job:latest};
   return {kind:'missing',title:book.saved_chapters?'还有章节未保存':'目录已就绪，尚无正文',message:mode==='account'?'在本书的保存页打开官网并核对账户，然后保存缺章。':'保存缺章会复用已有正文；网页受限内容继续标注缺失。',action:book.saved_chapters?'保存缺章':'开始保存正文',tab:'save',job:latest};

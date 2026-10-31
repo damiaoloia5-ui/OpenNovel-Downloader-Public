@@ -1,8 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {saveMode,workbenchStatus,preferredExportFormat,rememberExportFormat,exportFormatKey} from '../apps/desktop/src/workbenchModel.ts';
+import {saveMode,workbenchStatus,publicAccessLimited,preferredExportFormat,rememberExportFormat,exportFormatKey} from '../apps/desktop/src/workbenchModel.ts';
 const book={id:'original',title:'原创工作台样书',author:'测试作者',source:'qimao-web',remote_id:'123',saved_chapters:1,total_chapters:3};
 const job=(state,rest={})=>({id:'job',source:book.source,book_id:book.id,title:book.title,state,saved:1,total:3,blocked:0,failed:0,error:null,...rest});
+
+test('public web restrictions lead to local supplementation, not a no-op resume or account login',()=>{
+  const restricted=job('partial',{blocked:2});
+  assert.equal(publicAccessLimited(restricted,'public'),true);
+  const status=workbenchStatus({...book,source:'fanqie-web'},[restricted],'public');
+  assert.equal(status.kind,'limited');assert.match(status.message,/TXT/);assert.doesNotMatch(status.message,/官网窗口|登录/);
+  assert.equal(publicAccessLimited(restricted,'account'),false);
+  assert.equal(publicAccessLimited(job('partial',{blocked:1,failed:1}),'public'),false);
+  assert.equal(publicAccessLimited(job('paused',{blocked:2}),'public'),false);
+});
 
 test('selected task completion cannot imply whole-book completion',()=>{
   const result=workbenchStatus(book,[job('completed',{total:1})],'public');

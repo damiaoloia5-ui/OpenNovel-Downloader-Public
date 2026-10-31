@@ -96,6 +96,13 @@ enum Command {
     },
     /// 导入用户提供的 JSON 书籍
     Import { file: PathBuf },
+    /// 按番茄已确认目录预览同书 UTF-8 TXT；确认需传入预览 fingerprint
+    SupplementTxt {
+        book_id: String,
+        file: PathBuf,
+        #[arg(long)]
+        confirm: Option<String>,
+    },
     /// 查看书库和持久任务
     List,
     /// 恢复中断、取消或失败的导入
@@ -157,6 +164,22 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let library = Library::open(args.database)?;
     let hub = SourceHub::new();
     let result = match args.command {
+        Command::SupplementTxt {
+            book_id,
+            file,
+            confirm,
+        } => {
+            let mut text = String::new();
+            std::fs::File::open(file)?
+                .take(MAX_IMPORT_BYTES as u64 + 1)
+                .read_to_string(&mut text)?;
+            let receipt = if let Some(fingerprint) = confirm {
+                library.confirm_txt_supplement(&book_id, &text, &fingerprint)?
+            } else {
+                library.preview_txt_supplement(&book_id, &text)?
+            };
+            serde_json::to_value(receipt)?
+        }
         Command::UpdatePreview { book_id } => {
             let book = library.book_details(&book_id)?.book;
             let catalog = hub.inspect(&book.source_url().ok_or("该来源没有在线目录")?)?;
