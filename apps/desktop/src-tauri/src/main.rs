@@ -4,6 +4,7 @@ mod account_download;
 mod accounts;
 mod auto_txt;
 mod capture;
+mod official_reader;
 use account_download::{account_download_jobs, resume_account_download, start_account_download};
 use accounts::{account_list, close_account, create_account, open_account};
 use capture::{confirm_account_page, preview_account_page};
@@ -673,6 +674,7 @@ fn main() {
                 Arc::clone(&library),
                 directory.join("exports").join("automatic-txt"),
             )?;
+            app.manage(official_reader::OfficialReaderState::default());
             app.manage(AppState {
                 library,
                 auto_txt,
@@ -696,6 +698,11 @@ fn main() {
         .invoke_handler({
             let dispatch: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
                 Box::new(tauri::generate_handler![
+                    official_reader::open_official_reader,
+                    official_reader::inspect_official_reader,
+                    official_reader::save_official_reader,
+                    official_reader::reveal_official_reader,
+                    official_reader::close_official_reader,
                     auto_txt::automatic_txt_snapshot,
                     auto_txt::retry_automatic_txt,
                     account_list,

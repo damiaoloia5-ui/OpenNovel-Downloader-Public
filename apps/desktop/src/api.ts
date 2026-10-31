@@ -95,6 +95,14 @@ export function createAccount(platform:string,label:string):Promise<AccountRecor
 export function openAccount(id:string,bookUrl:string,login=false):Promise<void> {return invoke('open_account',{id,bookUrl,login});}
 export function closeAccount(id:string,remove:boolean):Promise<void> {return invoke('close_account',{id,remove});}
 export function focusAccount(id:string):Promise<void> {return invoke('focus_account',{id});}
+export interface OfficialPage {platform:string;url:string;status:'text'|'book'|'restricted'|'protected'|'verification'|'unsupported'|'loading';book_id:string;chapter_id:string;book_title:string;chapter_title:string;paragraphs:string[];declared_words:number|null}
+export interface OfficialPreview {token:string;page:OfficialPage}
+export interface OfficialExport {id:string;path:string}
+export function openOfficialReader(platform:string,bookUrl:string,login:boolean):Promise<void>{return invoke('open_official_reader',{platform,bookUrl,login});}
+export function inspectOfficialReader(platform:string):Promise<OfficialPreview>{return invoke('inspect_official_reader',{platform});}
+export function saveOfficialReader(platform:string,token:string,acknowledged:boolean):Promise<OfficialExport>{return invoke('save_official_reader',{platform,token,acknowledged});}
+export function revealOfficialReader(id:string):Promise<void>{return invoke('reveal_official_reader',{id});}
+export function closeOfficialReader(platform:string):Promise<void>{return invoke('close_official_reader',{platform});}
 export interface SessionChapter {remote_book_id:string;chapter:ChapterContent;declared_words:number}
 export interface CapturePreview {token:string;kind:'catalog'|'chapter';catalog:Catalog|null;chapter:SessionChapter|null}
 export interface CaptureReceipt {kind:'catalog'|'chapter';book_id:string;save:{book_id:string;title:string;chapter_title:string;position:number;saved:number;total:number;already_saved:boolean}|null}

@@ -47,7 +47,8 @@ const windowFile=join(output,'window.mjs');
 await writeFile(windowFile,'export const getCurrentWindow=()=>({isMinimized:async()=>false,onResized:async()=>()=>{}});');
 const entry=join(output,'entry.mjs');
 await writeFile(entry,`export {default as Account} from ${JSON.stringify(resolve('apps/desktop/src/AccountPanel.vue'))};\nexport {default as AutoSave} from ${JSON.stringify(resolve('apps/desktop/src/AutoSavePanel.vue'))};\nexport {default as App} from ${JSON.stringify(resolve('apps/desktop/src/App.vue'))};`);
-const real=new Set(['AccountPanel.vue','AutoSavePanel.vue','App.vue']);
+await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as Official} from '+JSON.stringify(resolve('apps/desktop/src/OfficialReaderPanel.vue'))+';\n');
+const real=new Set(['AccountPanel.vue','AutoSavePanel.vue','App.vue','OfficialReaderPanel.vue']);
 await build({configFile:false,logLevel:'error',plugins:[{
   name:'controlled-vue-host',enforce:'pre',
   resolveId(id){if(id==='./api')return mockFile;if(id==='@tauri-apps/api/window')return windowFile;},
@@ -57,7 +58,7 @@ await build({configFile:false,logLevel:'error',plugins:[{
     return transformWithOxc(compiled.content,`${id}.ts`,{lang:'ts'});
   },
 }],build:{ssr:entry,outDir:output,emptyOutDir:false,rollupOptions:{output:{entryFileNames:'components.mjs'}}}});
-const {Account,AutoSave,App}=await import(pathToFileURL(join(output,'components.mjs')).href);
+const {Account,AutoSave,App,Official}=await import(pathToFileURL(join(output,'components.mjs')).href);
 function element(tag,text=''){
   return {tag,tagName:tag.toUpperCase(),children:[],parent:null,props:{},text,listeners:{},value:'',checked:false,selected:false,
     get textContent(){return this.text+this.children.map(n=>n.textContent).join('');},
@@ -93,6 +94,11 @@ function fixture(){
     inspectBook:async()=>{state.calls.push(['inspect']);return {...preview.catalog,source:'qimao-web'};},
     downloadBook:async(...args)=>{state.calls.push(['download',...args]);return 'public-job';},jobDetails:async()=>({job:{book_id:stored.id},items:[]}),
     revealExport:async(id)=>{state.calls.push(['reveal',id]);},
+    openOfficialReader:async(...args)=>{state.calls.push(['official-open',...args]);},
+    inspectOfficialReader:async(p)=>{state.calls.push(['official-inspect',p]);return {token:'official-token',page:state.officialPage||{platform:p,status:'text',book_title:'原创旅行',chapter_title:'原创第一章',paragraphs:['原创页面内容。'],declared_words:null}};},
+    saveOfficialReader:async(...args)=>{state.calls.push(['official-save',...args]);return {id:'official-export',path:'D:/original-visible.txt'};},
+    revealOfficialReader:async(id)=>{state.calls.push(['official-reveal',id]);},
+    closeOfficialReader:async(p)=>{state.calls.push(['official-close',p]);},
   };
   return {state,api};
 }
@@ -169,6 +175,30 @@ test('bookshelf opens the actual automatic TXT record without another export ste
     await click(walk(f.root,true).find(n=>n.tag==='button'&&n.textContent.includes('我的书库')));await click(f.button('打开 TXT 文件夹'));
     assert.deepEqual(f.state.calls,[['reveal','original-txt']]);
   }finally{f.close();}
+});
+test('official login flow requires readable preview and acknowledgement before a current-page export',async()=>{
+  const f=await mount(Official,{initialUrl:'https://b.faloo.com/123.html'});
+  try{
+    assert.ok(f.button('我已登录，识别当前页').props.disabled);
+    await click(f.button('打开飞卢，去登录'));
+    await click(f.button('我已登录，识别当前页'));
+    assert.ok(f.button('确认，保存当前页为 TXT').props.disabled);
+    await acknowledge(f);await click(f.button('确认，保存当前页为 TXT'));
+    assert.deepEqual(f.state.calls.find(c=>c[0]==='official-save'),['official-save','faloo','official-token',true]);
+    await click(f.button('打开 TXT 所在文件夹'));
+    assert.ok(f.state.calls.some(c=>c[0]==='official-reveal'&&c[1]==='official-export'));
+    assert.equal(f.state.calls.filter(c=>c[0]==='start'||c[0]==='download').length,0);
+  }finally{f.close();}
+});
+test('protected official pages never expose a save action or start an automatic job',async()=>{
+  const f=await mount(Official,{initialUrl:'https://www.ciweimao.com/book/123'},({state})=>{state.officialPage={status:'protected',book_title:'原创图片页',paragraphs:[]};});
+  try{await click(f.button('打开刺猬猫，去登录'));await click(f.button('我已登录，识别当前页'));assert.match(f.root.textContent,/图片、画布/);assert.equal(f.button('确认，保存当前页为 TXT'),undefined);assert.equal(f.state.calls.filter(c=>c[0]==='official-save').length,0);}finally{f.close();}
+});
+test('new official links route to their account reader without public HTTP download',async()=>{
+  for(const url of ['https://www.ciweimao.com/book/123','https://b.faloo.com/123.html','https://www.cmread.com/yuekan/novel/123.html']){
+    const f=await mount(App);
+    try{const input=walk(f.root,true).find(n=>n.props.id==='novel-link');input.value=url;input.dispatch('input');await flush();walk(f.root,true).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();assert.match(f.root.textContent,/登录官网，识别当前页/);assert.equal(f.state.calls.filter(c=>c[0]==='inspect'||c[0]==='download').length,0);}finally{f.close();}
+  }
 });
 test('verification recovery preserves the page and job until manual completion then resumes the same task',async()=>{
   const f=await mount(AutoSave,{accountId:'original-account',preferredBook:stored.id,opened:true,revision:0,guided:true,hideExport:true},({state})=>{

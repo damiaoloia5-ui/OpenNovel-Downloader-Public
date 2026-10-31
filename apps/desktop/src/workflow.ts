@@ -1,4 +1,14 @@
 // UI routing only. The core still validates every official address and permission.
+export function officialBookPlatform(input:string):'ciweimao'|'faloo'|'migu'|null {
+  try {
+    const u=new URL(input.trim());
+    if(u.protocol!=='https:'||u.port||u.username||u.password||u.search||u.hash)return null;
+    if(u.hostname==='www.ciweimao.com'&&/^\/book\/[1-9]\d{0,23}\/?$/.test(u.pathname))return 'ciweimao';
+    if(u.hostname==='b.faloo.com'&&/^\/[1-9]\d{0,23}\.html$/.test(u.pathname))return 'faloo';
+    if(u.hostname==='www.cmread.com'&&/^\/yuekan\/novel\/[1-9]\d{0,23}\.html$/.test(u.pathname))return 'migu';
+    return null;
+  }catch{return null;}
+}
 export function qidianBookLink(input: string): string | null {
   try {
     const url = new URL(input.trim());

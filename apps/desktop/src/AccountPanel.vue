@@ -2,8 +2,9 @@
 import {computed,onMounted,onUnmounted,ref,watch} from 'vue';
 import CapturePanel from './CapturePanel.vue';
 import AutoSavePanel from './AutoSavePanel.vue';
+import OfficialReaderPanel from './OfficialReaderPanel.vue';
 import {accountList,createAccount,openAccount,closeAccount,previewAccountPage,confirmAccountPage,startAccountDownload,snapshot,type AccountStatus,type Book,type CapturePreview} from './api';
-import {qidianBookId,qidianBookLink} from './workflow';
+import {qidianBookId,qidianBookLink,officialBookPlatform} from './workflow';
 import {readGuidedCatalog} from './guidedCatalog';
 const props=defineProps<{bookId?:string;initialUrl?:string;accountId?:string;embedded?:boolean}>();
 const emit=defineEmits<{saved:[bookId:string];read:[bookId:string];ready:[bookId:string,accountId:string];selected:[accountId:string]}>();
@@ -38,7 +39,9 @@ onMounted(()=>{void action(async()=>{await reload();applyInput();});window.addEv
 onUnmounted(()=>{disposed=true;readEpoch++;window.removeEventListener('focus',refocus);});
 </script>
 <template>
-  <section class="account-panel" aria-label="起点保存引导">
+  <OfficialReaderPanel v-if="!embedded&&officialBookPlatform(initialUrl||'')" :initial-url="initialUrl" />
+  <details v-else-if="!embedded"><summary>刺猬猫、飞卢、咪咕：登录后识别当前页</summary><OfficialReaderPanel /></details>
+  <section v-if="!officialBookPlatform(initialUrl||'')" class="account-panel" aria-label="起点保存引导">
     <h2>{{ embedded?'保存这本书':'跟着提示保存小说' }} <small>起点 · 实验性</small></h2>
     <ol v-if="!embedded" class="flow-steps" aria-label="起点保存步骤"><li :aria-current="step===1?'step':undefined"><b>1</b>登录起点</li><li :aria-current="step===2?'step':undefined"><b>2</b>核对这本书</li><li :aria-current="step===3?'step':undefined"><b>3</b>保存并得到 TXT</li></ol>
     <label v-if="!embedded&&!qidianBookLink(bookUrl)">这本书的起点官网链接<input v-model="bookUrl" type="url" :disabled="busy" placeholder="从起点复制作品链接，粘贴到这里" /></label>

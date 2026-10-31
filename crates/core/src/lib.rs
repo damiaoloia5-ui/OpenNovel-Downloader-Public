@@ -5,6 +5,7 @@ mod domain;
 mod downloads;
 mod export;
 mod maintenance;
+mod official_reader;
 mod reading;
 mod revisions;
 mod session_capture;
@@ -18,6 +19,9 @@ pub use batch::{BatchItem, BatchSnapshot, MAX_BATCH_ITEMS};
 pub use domain::*;
 pub use export::ExportFormat;
 pub use maintenance::{BackupManifest, BookPreferences, DiagnosticReport};
+pub use official_reader::{
+    OfficialPage, official_book_link, official_login_url, official_platform_name,
+};
 pub use revisions::{
     CatalogChange, CatalogFieldChange, CatalogUpdate, HistoryEntry, RefreshReceipt,
 };

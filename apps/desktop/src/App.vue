@@ -9,7 +9,7 @@ import HelpGuide from './HelpGuide.vue';
 import BookWorkspace from './BookWorkspace.vue';
 import {automaticTxtSnapshot,type AutoTxtStatus} from './api';
 import {catalogAvailability} from './availabilityModel';
-import {qidianBookLink,qidianBookId} from './workflow';
+import {qidianBookLink,qidianBookId,officialBookPlatform} from './workflow';
 import type {WorkbenchTab} from './workbenchModel';
 import {preferences,sourceCapabilities,cancelJob,desktopAvailable,downloadBook,exportJob,importBook,inspectBook,jobDetails,pauseJob,resumeJob,retryChapters,revealExport,snapshot,type BookPreferences,type SourceInfo,type JobDetails,type Snapshot,type Catalog} from './api';
 
@@ -63,6 +63,7 @@ async function action(work:()=>Promise<void>){if(working.value)return;working.va
 async function openCreatedJob(id:string,epoch:number){try{const result=await jobDetails(id);if(disposed||epoch!==navigationEpoch)return;openWorkspace(result.job.book_id,'save');notice.value='任务已创建，保存结束后会自动生成 TXT；请在本书工作台查看。';}catch{if(disposed||epoch!==navigationEpoch)return;page.value='tasks';notice.value='任务已创建，暂时无法读取作品信息，请在任务进度中查看。';}}
 async function chooseFile(event:Event){const input=event.target as HTMLInputElement;const file=input.files?.[0];if(!file)return;await action(async()=>{if(file.size>16*1024*1024)throw new Error('文件超过 16 MiB，请拆分后导入。');const epoch=navigationEpoch;const id=await importBook(await file.text());await openCreatedJob(id,epoch);});input.value='';}
 async function inspect(autoSave=false){
+  if(officialBookPlatform(bookInput.value)){accountUrl.value=bookInput.value.trim();page.value='accounts';error.value='';notice.value='在平台官网窗口登录，打开可正常阅读的章节，再识别当前页。';return;}
   const link=qidianBookLink(bookInput.value);if(link){const stored=data.value.books.find(b=>b.source==='qidian-session'&&b.remote_id===qidianBookId(link));if(stored){openWorkspace(stored.id,'save');return;}accountUrl.value=link;page.value='accounts';error.value='';notice.value='按提示完成登录和书名确认，之后会自动保存并生成 TXT。';return;}
   await action(async()=>{
     const epoch=navigationEpoch;catalog.value=null;const input=bookInput.value.trim();
@@ -113,7 +114,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         <div v-if="error" class="message failure" role="alert">{{ error }}<button aria-label="关闭错误提示" @click="error = ''">×</button></div>
         <div v-if="notice" class="message success" role="status">{{ notice }}<button aria-label="关闭提示" @click="notice = ''">×</button></div>
         <div v-if="page!=='book'" class="page-heading">
-          <div><h1 ref="pageHeading" tabindex="-1">{{ page==='help'?'使用指引':page === 'download' ? '添加小说' : page === 'library' ? '我的书库' : page === 'tasks' ? '保存进度' : page==='accounts'?'登录与保存正文':page==='tools'?'备份与诊断':'小说来源' }}</h1><p class="intro">{{ page==='help'?'从添加到导出，按步骤完成。':page === 'download' ? '只需粘贴小说链接，软件会带你完成，最后得到 TXT。' : page === 'library' ? '选择作品，阅读或导出已经保存的正文。' : page === 'tasks' ? '查看保存进度，继续中断的任务。' : page==='accounts'?'起点按步骤引导；书旗入口在高级操作中。':page==='tools'?'创建书库备份、恢复副本，查看诊断信息。':'查看各个平台已验证的支持范围。' }}</p></div>
+          <div><h1 ref="pageHeading" tabindex="-1">{{ page==='help'?'使用指引':page === 'download' ? '添加小说' : page === 'library' ? '我的书库' : page === 'tasks' ? '保存进度' : page==='accounts'?'登录与保存正文':page==='tools'?'备份与诊断':'小说来源' }}</h1><p class="intro">{{ page==='help'?'从添加到导出，按步骤完成。':page === 'download' ? '只需粘贴小说链接，软件会带你完成，最后得到 TXT。' : page === 'library' ? '选择作品，阅读或导出已经保存的正文。' : page === 'tasks' ? '查看保存进度，继续中断的任务。' : page==='accounts'?'起点按步骤引导；刺猬猫、飞卢和咪咕可在官网登录后识别当前页。':page==='tools'?'创建书库备份、恢复副本，查看诊断信息。':'查看各个平台已验证的支持范围。' }}</p></div>
           <button v-if="page==='library'" class="primary" @click="page='download'">添加一本小说</button>
           <input ref="fileInput" type="file" accept=".json,application/json" class="file-input" aria-label="选择 JSON 书籍文件" @change="chooseFile" />
         </div>
@@ -185,10 +186,10 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         </template>
 
         <template v-if="page === 'sources'">
-          <div class="source-intro"><h2>已接入与待适配平台</h2><p>纵横、17K、番茄、七猫与晋江提供实验性官网免费正文保存；书旗先提供详情与目录，起点提供账户内保存实验。刺猬猫、飞卢和咪咕仍待适配，暂不开放下载。所选范围完成不代表整本完整。</p></div>
+          <div class="source-intro"><h2>已接入与待适配平台</h2><p>纵横、17K、番茄、七猫与晋江提供实验性官网免费正文保存；书旗先提供详情与目录，起点提供账户内保存实验。刺猬猫、飞卢提供登录后当前页普通文字采集；咪咕目前可登录和识别作品页，正文仍待验证。所选范围完成不代表整本完整。</p></div>
           <div class="source-list">
             <article><span class="source-monogram">本</span><div><h3>本地 JSON 内容</h3><p>用户提供的作品与章节 · 任务恢复 · TXT / EPUB</p></div><span class="available">已接入</span></article>
-            <article v-for="source in sourceInfos" :key="source.id"><span class="source-monogram">{{ source.name.slice(0,1) }}</span><div><h3>{{ source.name }}</h3><p>{{ source.note }}</p><small>{{ source.example }}</small></div><span :class="source.can_download ? 'available' : 'pending-label'">{{ source.id==='qidian-session'?'账户内自动保存':source.can_inspect===false?'待适配':source.can_download ? '实验性下载' : '仅详情/目录' }}</span></article>
+            <article v-for="source in sourceInfos" :key="source.id"><span class="source-monogram">{{ source.name.slice(0,1) }}</span><div><h3>{{ source.name }}</h3><p>{{ source.note }}</p><small>{{ source.example }}</small></div><span :class="source.can_download ? 'available' : 'pending-label'">{{ source.id==='qidian-session'?'账户内自动保存':['ciweimao-web','faloo-web','migu-web'].includes(source.id)?'账户当前页实验':source.can_inspect===false?'待适配':source.can_download ? '实验性下载' : '仅详情/目录' }}</span></article>
           </div>
           <p class="footnote">来源能力按目录、正文、账户与访问限制分别记录。付费平台留在后续路线，目前不承诺未购 VIP 正文获取能力。</p>
         </template>

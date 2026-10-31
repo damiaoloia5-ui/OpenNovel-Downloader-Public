@@ -109,6 +109,33 @@ pub async fn open_account(
         account_entry_url(&account.platform, &book_url)
     }
     .map_err(|e| e.to_string())?;
+    open_official_window(account, url, app, &state)
+}
+
+pub(crate) fn open_official_window(
+    account: AccountRecord,
+    url: tauri::Url,
+    app: tauri::AppHandle,
+    state: &AppState,
+) -> Result<(), String> {
+    if std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_some() {
+        return Err(
+            "检测到全局 WebView2 数据目录覆盖，无法保证账户隔离，请移除覆盖后重启软件。".into(),
+        );
+    }
+    if !account_navigation_allowed(&account.platform, &url) {
+        return Err("官网地址不属于当前平台".into());
+    }
+    let id = account.id.clone();
+    if state
+        .sessions
+        .lock()
+        .map_err(|_| "账户会话不可用")?
+        .get(&id)
+        .is_some_and(|s| s.reading.load(Ordering::Acquire))
+    {
+        return Err("官网正在读取，请等待当前操作完成".into());
+    }
     let label = window_label(&id);
     if let Some(window) = app.get_webview_window(&label) {
         window.navigate(url).map_err(|_| "官网窗口导航失败")?;
@@ -132,11 +159,7 @@ pub async fn open_account(
     let popup_label = label.clone();
     let title = format!(
         "{} · {} · 官网独立会话",
-        if platform == "qidian" {
-            "起点"
-        } else {
-            "书旗"
-        },
+        opennovel_core::official_platform_name(&platform).ok_or("未知官网平台")?,
         account.label
     );
     let window = WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(url))

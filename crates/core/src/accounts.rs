@@ -18,16 +18,24 @@ fn platform_host(platform: &str) -> Result<&'static str> {
     }
 }
 pub fn account_navigation_allowed(platform: &str, url: &Url) -> bool {
-    let Ok(host) = platform_host(platform) else {
-        return false;
+    let host = match platform {
+        "ciweimao" => "ciweimao.com",
+        "faloo" => "faloo.com",
+        "migu" => "cmread.com",
+        _ => match platform_host(platform) {
+            Ok(h) => h,
+            Err(_) => return false,
+        },
     };
     url.scheme() == "https"
         && url.port().is_none()
         && url.username().is_empty()
         && url.password().is_none()
-        && url
-            .host_str()
-            .is_some_and(|h| h == host || h.ends_with(&format!(".{host}")))
+        && url.host_str().is_some_and(|h| {
+            h == host
+                || h.ends_with(&format!(".{host}"))
+                || (platform == "migu" && h == "passport.migu.cn")
+        })
 }
 /// Use the site's normal shelf-to-sign-in redirect, independent of the homepage overlay.
 pub fn account_login_url(platform: &str) -> Result<Url> {
