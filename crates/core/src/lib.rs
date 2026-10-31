@@ -37,6 +37,8 @@ pub use storage::Library;
 pub enum Error {
     #[error("访问受限：{0}")]
     Restricted(String),
+    #[error("官网访问需处理：{0}")]
+    AccessChallenge(String),
     #[error("来源返回内容不符合预期：{0}")]
     SourceChanged(String),
     #[error("网络请求失败：{0}")]

@@ -194,11 +194,12 @@ impl Library {
             }
             let (state, error, pause) = match result {
                 Ok(job) => {
-                    let network = self
-                        .job_details(&job.id)?
-                        .items
-                        .iter()
-                        .any(|i| i.error_kind.as_deref() == Some("network"));
+                    let network = self.job_details(&job.id)?.items.iter().any(|i| {
+                        matches!(
+                            i.error_kind.as_deref(),
+                            Some("network" | "access_challenge")
+                        )
+                    });
                     let pause = network || job.state == "paused";
                     (
                         if pause {
@@ -216,6 +217,9 @@ impl Library {
                     true,
                 ),
                 Err(Error::Cancelled) => (item.state.clone(), None, true),
+                Err(error @ Error::AccessChallenge(_)) => {
+                    (item.state.clone(), Some(error.to_string()), true)
+                }
                 Err(error) => ("failed".into(), Some(error.to_string()), false),
             };
             self.connection()?.execute("UPDATE batch_items SET state=?3,error=?4 WHERE batch_id=?1 AND position=?2 AND EXISTS(SELECT 1 FROM batches WHERE id=?1 AND state='running' AND generation=?5)",params![id,item.position-1,state,error,generation])?;

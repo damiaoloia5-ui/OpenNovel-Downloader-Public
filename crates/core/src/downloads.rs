@@ -438,6 +438,7 @@ impl Library {
 fn error_kind(error: &Error) -> &'static str {
     match error {
         Error::Network(_) => "network",
+        Error::AccessChallenge(_) => "access_challenge",
         Error::Restricted(_) => "restricted",
         Error::SourceChanged(_) => "source_changed",
         Error::Invalid(_) | Error::Json(_) => "invalid_content",

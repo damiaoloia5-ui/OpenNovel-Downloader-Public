@@ -4,6 +4,90 @@ use opennovel_core::{
 };
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tempfile::tempdir;
+
+#[test]
+fn access_challenge_pauses_entire_batch_during_inspection_or_chapter_fetch() {
+    struct Gate {
+        inspection: bool,
+        blocked: AtomicBool,
+        inspects: AtomicUsize,
+        reads: AtomicUsize,
+    }
+    impl SourceAdapter for Gate {
+        fn source_id(&self) -> &str {
+            "qimao-web"
+        }
+        fn fetch_chapter(
+            &self,
+            _: &str,
+            c: &ChapterRef,
+            _: &AtomicBool,
+        ) -> opennovel_core::Result<ImportChapter> {
+            self.reads.fetch_add(1, Ordering::AcqRel);
+            if self.blocked.load(Ordering::Acquire) {
+                return Err(Error::AccessChallenge("原创全站验证".into()));
+            }
+            Ok(ImportChapter {
+                id: c.id.clone(),
+                title: c.title.clone(),
+                paragraphs: vec!["原创正文。".into()],
+            })
+        }
+    }
+    impl SourceProvider for Gate {
+        fn inspect(&self, input: &str) -> opennovel_core::Result<Catalog> {
+            self.inspects.fetch_add(1, Ordering::AcqRel);
+            if self.inspection && self.blocked.load(Ordering::Acquire) {
+                return Err(Error::AccessChallenge("原创目录验证".into()));
+            }
+            let (source, id) = identify(input)?;
+            Ok(Catalog {
+                source: source.into(),
+                remote_id: id,
+                title: "原创批次验证".into(),
+                author: String::new(),
+                description: String::new(),
+                chapters: vec![ChapterRef {
+                    id: "1".into(),
+                    title: "原创一章".into(),
+                    restricted: false,
+                }],
+            })
+        }
+        fn adapter(&self, _: &str) -> opennovel_core::Result<&dyn SourceAdapter> {
+            Ok(self)
+        }
+    }
+    for inspection in [true, false] {
+        let dir = tempdir().unwrap();
+        let library = Library::open(dir.path().join("library.db")).unwrap();
+        let id = library
+            .create_batch(&["qimao:1".into(), "qimao:2".into()], "1")
+            .unwrap();
+        let gate = Gate {
+            inspection,
+            blocked: AtomicBool::new(true),
+            inspects: AtomicUsize::new(0),
+            reads: AtomicUsize::new(0),
+        };
+        let stopped = library
+            .run_batch(&id, &gate, &AtomicBool::new(false))
+            .unwrap();
+        assert_eq!(stopped.state, "paused");
+        assert_eq!(gate.inspects.load(Ordering::Acquire), 1);
+        assert!(stopped.items[1].job_id.is_none());
+        let linked = stopped.items[0].job_id.clone();
+        gate.blocked.store(false, Ordering::Release);
+        let done = library
+            .run_batch(&id, &gate, &AtomicBool::new(false))
+            .unwrap();
+        assert_eq!(done.state, "completed");
+        if let Some(linked) = linked {
+            assert_eq!(done.items[0].job_id.as_deref(), Some(linked.as_str()));
+        }
+        assert_eq!(library.snapshot().unwrap().jobs.len(), 2);
+    }
+}
 struct Provider<'a> {
     library: &'a Library,
     batch: &'a str,

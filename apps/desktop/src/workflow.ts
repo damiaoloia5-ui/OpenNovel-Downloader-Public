@@ -22,7 +22,8 @@ export function qidianBookId(input: string): string | null {
   return qidianBookLink(input)?.split('/')[4] || null;
 }
 
-export function saveRecovery(error:string):string {
+export function saveRecovery(error:string,context:'account'|'public'='account'):string {
+  if(context==='public'&&/官网访问需处理|验证|登录/.test(error))return '官网当前拒绝程序访问，已停止后续请求并保留进度。请稍后继续；外部浏览器登录不等于程序已获得访问权限。';
   if(/登录|会话.*关闭|窗口.*关闭/.test(error))return '在起点官网窗口重新登录，再回到这里继续保存。';
   if(/验证|验证码/.test(error))return '在官网窗口完成验证，再回到这里继续保存。';
   if(/订阅|付费|保护|权限/.test(error))return '在官网核对这一章能否正常阅读。当前无法保存时，可先打开已生成的 TXT。';

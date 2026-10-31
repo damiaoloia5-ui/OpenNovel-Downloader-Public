@@ -460,6 +460,8 @@ mod tests {
             Err(Error::Cancelled)
         ));
         assert!(began.elapsed() < Duration::from_millis(200));
+        // Redirect rejection is independent of the previous client's active cooldown.
+        let source = Fanqie::new().unwrap();
         let (url,server)=serve(b"HTTP/1.1 302 Found\r\nLocation: https://not-allowed.example/secret\r\nContent-Length: 0\r\n\r\n".to_vec(),Duration::ZERO);
         assert!(matches!(
             source.http.request(url, &AtomicBool::new(false), 1024),

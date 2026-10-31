@@ -8,6 +8,89 @@ use std::sync::{
 };
 use tempfile::tempdir;
 
+#[test]
+fn site_access_challenge_stops_the_queue_and_explicit_resume_keeps_saved_chapters() {
+    struct GateReader {
+        blocked: AtomicBool,
+        calls: Mutex<Vec<String>>,
+    }
+    impl SourceAdapter for GateReader {
+        fn source_id(&self) -> &str {
+            "fanqie-web"
+        }
+        fn fetch_chapter(
+            &self,
+            _: &str,
+            ch: &ChapterRef,
+            _: &AtomicBool,
+        ) -> opennovel_core::Result<ImportChapter> {
+            self.calls.lock().unwrap().push(ch.id.clone());
+            if ch.id.ends_with('1') && self.blocked.load(Ordering::Acquire) {
+                return Err(Error::AccessChallenge("原创网站验证页".into()));
+            }
+            Ok(ImportChapter {
+                id: ch.id.clone(),
+                title: ch.title.clone(),
+                paragraphs: vec!["原创稳定保存正文。".into()],
+            })
+        }
+    }
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("library.db");
+    let library = Library::open(&path).unwrap();
+    let catalog = catalog();
+    let reader = GateReader {
+        blocked: AtomicBool::new(true),
+        calls: Mutex::new(Vec::new()),
+    };
+    let id = library.create_download(&catalog, 1, 5).unwrap();
+    let stopped = library
+        .run_job(&id, &reader, &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(
+        (
+            stopped.state.as_str(),
+            stopped.saved,
+            stopped.failed,
+            stopped.blocked
+        ),
+        ("partial", 1, 1, 0)
+    );
+    assert_eq!(reader.calls.lock().unwrap().len(), 2);
+    let detail = library.job_details(&id).unwrap();
+    assert_eq!(
+        detail.items[1].error_kind.as_deref(),
+        Some("access_challenge")
+    );
+    assert_eq!(detail.items[2].state, "queued");
+    let receipt = library
+        .export_automatic_txt(&stopped.book_id, dir.path().join("partial"))
+        .unwrap();
+    assert!(receipt.partial);
+    assert_eq!(receipt.saved_chapters, 1);
+    drop(library);
+    let library = Library::open(&path).unwrap();
+    reader.blocked.store(false, Ordering::Release);
+    let resumed = library
+        .run_job(&id, &reader, &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!((resumed.state.as_str(), resumed.saved), ("completed", 5));
+    let calls = reader.calls.lock().unwrap();
+    assert_eq!(calls.len(), 6);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|id| **id == catalog.chapters[0].id)
+            .count(),
+        1
+    );
+    let receipt = library
+        .export_automatic_txt(&resumed.book_id, dir.path().join("complete"))
+        .unwrap();
+    assert!(!receipt.partial);
+    assert_eq!(receipt.saved_chapters, 5);
+}
+
 fn catalog() -> Catalog {
     Catalog {
         source: "fanqie-web".into(),

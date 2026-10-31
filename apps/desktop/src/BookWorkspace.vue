@@ -31,7 +31,7 @@ const active=computed(()=>ownJobs.value.some(j=>['running','queued'].includes(j.
 const pending=computed(()=>ownJobs.value.some(j=>['running','queued','paused'].includes(j.state)));
 const limited=computed(()=>publicAccessLimited(currentJob.value,mode.value));
 const recoverable=computed(()=>!!currentJob.value&&!limited.value&&['paused','cancelled','failed','partial'].includes(currentJob.value.state));
-const recovery=computed(()=>limited.value?status.value?.message||'网页受限章节不能通过重复继续补齐。':saveRecovery(currentJob.value?.error||''));
+const recovery=computed(()=>limited.value?status.value?.message||'网页受限章节不能通过重复继续补齐。':saveRecovery(currentJob.value?.error||'',mode.value==='public'?'public':'account'));
 const chapters=computed(()=>detail.value?.chapters.filter(c=>(!onlySaved.value||c.saved)&&`${c.position} ${c.title}`.includes(search.value))||[]);
 const readerPages=computed(()=>Math.max(1,Math.ceil(chapters.value.length/100)));
 const visibleChapters=computed(()=>chapters.value.slice((readerPage.value-1)*100,readerPage.value*100));
