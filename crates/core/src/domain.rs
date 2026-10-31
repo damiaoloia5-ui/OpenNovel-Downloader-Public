@@ -184,12 +184,19 @@ impl BookSummary {
             "shuqi-web" => "书旗官网目录",
             "jinjiang-web" => "晋江官网免费章节",
             "local-json" => "本地 JSON 导入",
+            "zongheng-web" => "纵横官网免费章节",
+            "17k-web" => "17K 官网免费章节",
             "qidian-session" => "起点当前可读章节（实验性）",
             _ => &self.source,
         }
     }
     pub fn source_url(&self) -> Option<String> {
         match self.source.as_str() {
+            "zongheng-web" => Some(format!(
+                "https://www.zongheng.com/detail/{}",
+                self.remote_id
+            )),
+            "17k-web" => Some(format!("https://www.17k.com/book/{}.html", self.remote_id)),
             "qidian-session" => Some(format!("https://www.qidian.com/book/{}/", self.remote_id)),
             "fanqie-web" => Some(format!("https://fanqienovel.com/page/{}", self.remote_id)),
             "qimao-web" => Some(format!("https://www.qimao.com/shuku/{}/", self.remote_id)),

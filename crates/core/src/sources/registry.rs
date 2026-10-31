@@ -1,4 +1,4 @@
-use super::{Catalog, Fanqie, Jinjiang, Qimao, Shuqi, SourceAdapter, page};
+use super::{Catalog, Fanqie, Jinjiang, PublicHtml, Qimao, Shuqi, SourceAdapter, page};
 use crate::{Error, Result};
 use reqwest::Url;
 use serde::Serialize;
@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 
 #[derive(Debug, Serialize)]
 pub struct SourceInfo {
+    pub can_inspect: bool,
     pub id: &'static str,
     pub name: &'static str,
     pub can_download: bool,
@@ -13,9 +14,10 @@ pub struct SourceInfo {
     pub note: &'static str,
     pub example: &'static str,
 }
-static SOURCES: [SourceInfo; 5] = [
+static SOURCES: [SourceInfo; 10] = [
     SourceInfo {
         id: "qidian-session",
+        can_inspect: false,
         name: "起点当前可读章节",
         can_download: false,
         can_search: false,
@@ -24,6 +26,7 @@ static SOURCES: [SourceInfo; 5] = [
     },
     SourceInfo {
         id: "fanqie-web",
+        can_inspect: true,
         name: "番茄官网网页",
         can_download: true,
         can_search: false,
@@ -32,6 +35,7 @@ static SOURCES: [SourceInfo; 5] = [
     },
     SourceInfo {
         id: "qimao-web",
+        can_inspect: true,
         name: "七猫官网网页",
         can_download: true,
         can_search: false,
@@ -40,6 +44,7 @@ static SOURCES: [SourceInfo; 5] = [
     },
     SourceInfo {
         id: "jinjiang-web",
+        can_inspect: true,
         name: "晋江官网免费章节",
         can_download: true,
         can_search: true,
@@ -48,11 +53,57 @@ static SOURCES: [SourceInfo; 5] = [
     },
     SourceInfo {
         id: "shuqi-web",
+        can_inspect: true,
         name: "书旗官网目录",
         can_download: false,
         can_search: false,
         note: "详情与完整目录已接入；正文实测限流，尚未通过验收，暂不开放下载。",
         example: "https://www.shuqi.com/book/作品ID.html",
+    },
+    SourceInfo {
+        id: "zongheng-web",
+        name: "纵横官网免费章节",
+        can_inspect: true,
+        can_download: true,
+        can_search: false,
+        note: "实验性完整分卷目录与公开免费正文；VIP 跳过，保护或异常呈现停止。",
+        example: "https://www.zongheng.com/detail/作品ID",
+    },
+    SourceInfo {
+        id: "17k-web",
+        name: "17K 官网免费章节",
+        can_inspect: true,
+        can_download: true,
+        can_search: false,
+        note: "实验性完整分卷目录与公开免费正文；VIP 不请求，不接入包月或已购权限。",
+        example: "https://www.17k.com/book/作品ID.html",
+    },
+    SourceInfo {
+        id: "ciweimao-web",
+        name: "刺猬猫（待适配）",
+        can_inspect: false,
+        can_download: false,
+        can_search: false,
+        note: "已调研公开作品与目录页；目录完整性、正文呈现和权限未通过验收，暂不开放导入下载。",
+        example: "https://www.ciweimao.com/book/作品ID",
+    },
+    SourceInfo {
+        id: "faloo-web",
+        name: "飞卢（待适配）",
+        can_inspect: false,
+        can_download: false,
+        can_search: false,
+        note: "已调研公开作品与目录页；尚未通过正文及完整目录验收，暂不开放导入下载。",
+        example: "https://b.faloo.com/作品ID.html",
+    },
+    SourceInfo {
+        id: "migu-web",
+        name: "咪咕阅读（待适配）",
+        can_inspect: false,
+        can_download: false,
+        can_search: false,
+        note: "官网访问出现 TLS 中断，入口、目录和正文均待验收，暂不开放导入下载。",
+        example: "migu:作品ID",
     },
 ];
 pub fn source_infos() -> &'static [SourceInfo] {
@@ -69,6 +120,11 @@ pub fn identify(input: &str) -> Result<(&'static str, String)> {
         ("qimao:", "qimao-web"),
         ("shuqi:", "shuqi-web"),
         ("jinjiang:", "jinjiang-web"),
+        ("zongheng:", "zongheng-web"),
+        ("17k:", "17k-web"),
+        ("ciweimao:", "ciweimao-web"),
+        ("faloo:", "faloo-web"),
+        ("migu:", "migu-web"),
     ] {
         if let Some(id) = input.strip_prefix(prefix) {
             if page::numeric(id) && (source != "fanqie-web" || Fanqie::recognize(id).is_ok()) {
@@ -89,6 +145,52 @@ pub fn identify(input: &str) -> Result<(&'static str, String)> {
         return Err(invalid_link());
     }
     match url.host_str() {
+        Some("www.zongheng.com" | "book.zongheng.com")
+            if url.query().is_none() && url.fragment().is_none() =>
+        {
+            let id = url
+                .path()
+                .strip_prefix("/detail/")
+                .map(|p| p.trim_end_matches('/'))
+                .or_else(|| {
+                    url.path()
+                        .strip_prefix("/book/")
+                        .and_then(|p| p.strip_suffix(".html"))
+                })
+                .or_else(|| {
+                    url.path()
+                        .strip_prefix("/showchapter/")
+                        .and_then(|p| p.strip_suffix(".html"))
+                });
+            id.filter(|id| page::numeric(id))
+                .map(|id| ("zongheng-web", id.into()))
+                .ok_or_else(invalid_link)
+        }
+        Some("www.17k.com" | "www.ciweimao.com")
+            if url.query().is_none() && url.fragment().is_none() =>
+        {
+            let seventeen = url.host_str() == Some("www.17k.com");
+            let path = url.path().strip_prefix("/book/").ok_or_else(invalid_link)?;
+            let id = if seventeen {
+                path.strip_suffix(".html").ok_or_else(invalid_link)?
+            } else {
+                path.trim_end_matches('/')
+            };
+            if !page::numeric(id) {
+                return Err(invalid_link());
+            }
+            Ok((
+                if seventeen { "17k-web" } else { "ciweimao-web" },
+                id.into(),
+            ))
+        }
+        Some("b.faloo.com") if url.query().is_none() && url.fragment().is_none() => url
+            .path()
+            .strip_prefix('/')
+            .and_then(|p| p.strip_suffix(".html"))
+            .filter(|id| page::numeric(id))
+            .map(|id| ("faloo-web", id.into()))
+            .ok_or_else(invalid_link),
         Some("www.jjwxc.net") if url.path() == "/onebook.php" && url.fragment().is_none() => {
             let pairs = url.query_pairs().collect::<Vec<_>>();
             if pairs.len() != 1 || pairs[0].0 != "novelid" || !page::numeric(&pairs[0].1) {
@@ -117,10 +219,7 @@ pub fn identify(input: &str) -> Result<(&'static str, String)> {
     }
 }
 fn invalid_link() -> Error {
-    Error::Invalid(
-        "请输入已接入平台的官网作品详情页；也可使用 fanqie:ID、qimao:ID、shuqi:ID 或 jinjiang:ID"
-            .into(),
-    )
+    Error::Invalid("请输入来源清单中的官网作品详情页或 来源:ID；待适配平台暂不开放下载".into())
 }
 
 #[derive(Default)]
@@ -129,6 +228,8 @@ pub struct SourceHub {
     qimao: OnceLock<Qimao>,
     shuqi: OnceLock<Shuqi>,
     jinjiang: OnceLock<Jinjiang>,
+    zongheng: OnceLock<PublicHtml>,
+    seventeen: OnceLock<PublicHtml>,
 }
 fn initialize<T>(cell: &OnceLock<T>, create: impl FnOnce() -> Result<T>) -> Result<&T> {
     if cell.get().is_none() {
@@ -153,6 +254,16 @@ impl SourceHub {
             "qimao-web" => initialize(&self.qimao, Qimao::new)?.inspect(&id),
             "shuqi-web" => initialize(&self.shuqi, Shuqi::new)?.inspect(&id),
             "jinjiang-web" => initialize(&self.jinjiang, Jinjiang::new)?.inspect(&id),
+            "zongheng-web" => initialize(&self.zongheng, || PublicHtml::new(true))?.inspect(&id),
+            "17k-web" => initialize(&self.seventeen, || PublicHtml::new(false))?.inspect(&id),
+            "ciweimao-web" | "faloo-web" | "migu-web" => Err(Error::Restricted(
+                SOURCES
+                    .iter()
+                    .find(|s| s.id == source)
+                    .expect("known source")
+                    .note
+                    .into(),
+            )),
             _ => Err(invalid_link()),
         }
     }
@@ -161,6 +272,8 @@ impl SourceHub {
             "fanqie-web" => Ok(initialize(&self.fanqie, Fanqie::new)?),
             "qimao-web" => Ok(initialize(&self.qimao, Qimao::new)?),
             "jinjiang-web" => Ok(initialize(&self.jinjiang, Jinjiang::new)?),
+            "zongheng-web" => Ok(initialize(&self.zongheng, || PublicHtml::new(true))?),
+            "17k-web" => Ok(initialize(&self.seventeen, || PublicHtml::new(false))?),
             "shuqi-web" => Err(Error::Restricted(
                 "书旗当前仅支持详情与目录，正文尚未通过实测验收，暂不开放下载".into(),
             )),

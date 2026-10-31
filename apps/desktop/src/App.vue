@@ -122,7 +122,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
           <ol class="quick-path" aria-label="基本操作步骤"><li><b>1</b> 粘贴链接</li><li><b>2</b> 按提示操作</li><li><b>3</b> 拿到 TXT</li></ol>
           <form class="download-panel" @submit.prevent="inspect(true)">
             <label for="novel-link">粘贴小说的官网作品链接</label>
-            <div class="link-row"><input id="novel-link" v-model="bookInput" type="text" placeholder="支持番茄、七猫、晋江、起点、书旗官网作品链接" :disabled="working" required /><button class="primary" :disabled="!desktopAvailable || working || !bookInput.trim()">{{ working ? '正在识别，请稍等…' : '开始保存为 TXT' }}</button></div>
+            <div class="link-row"><input id="novel-link" v-model="bookInput" type="text" placeholder="粘贴官网作品链接，例如纵横、17K、番茄、七猫、晋江或起点" :disabled="working" required /><button class="primary" :disabled="!desktopAvailable || working || !bookInput.trim()">{{ working ? '正在识别，请稍等…' : '开始保存为 TXT' }}</button></div>
             <p class="footnote">免费网页会直接开始保存；起点会提示你登录。完成后自动生成 TXT，不需要手动选格式。</p><p class="footnote">不知道复制哪个链接？打开小说的作品介绍页，复制浏览器顶部地址，粘贴到这里。书旗目前只能读取目录。</p>
             <details class="optional-options"><summary>只想先看看能保存多少？</summary><button type="button" :disabled="!desktopAvailable||working||!bookInput.trim()" @click="inspect()">只看获取范围</button></details>
           </form>
@@ -185,10 +185,10 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         </template>
 
         <template v-if="page === 'sources'">
-          <div class="source-intro"><h2>当前支持范围</h2><p>番茄、七猫与晋江支持已验证的官网免费正文；书旗先提供详情与目录。起点在平台账户提供自动逐章保存实验。所选范围完成不代表整本完整。</p></div>
+          <div class="source-intro"><h2>已接入与待适配平台</h2><p>纵横、17K、番茄、七猫与晋江提供实验性官网免费正文保存；书旗先提供详情与目录，起点提供账户内保存实验。刺猬猫、飞卢和咪咕仍待适配，暂不开放下载。所选范围完成不代表整本完整。</p></div>
           <div class="source-list">
             <article><span class="source-monogram">本</span><div><h3>本地 JSON 内容</h3><p>用户提供的作品与章节 · 任务恢复 · TXT / EPUB</p></div><span class="available">已接入</span></article>
-            <article v-for="source in sourceInfos" :key="source.id"><span class="source-monogram">{{ source.name.slice(0,1) }}</span><div><h3>{{ source.name }}</h3><p>{{ source.note }}</p><small>{{ source.example }}</small></div><span :class="source.can_download ? 'available' : 'pending-label'">{{ source.id==='qidian-session'?'账户内自动保存':source.can_download ? '实验性下载' : '仅详情/目录' }}</span></article>
+            <article v-for="source in sourceInfos" :key="source.id"><span class="source-monogram">{{ source.name.slice(0,1) }}</span><div><h3>{{ source.name }}</h3><p>{{ source.note }}</p><small>{{ source.example }}</small></div><span :class="source.can_download ? 'available' : 'pending-label'">{{ source.id==='qidian-session'?'账户内自动保存':source.can_inspect===false?'待适配':source.can_download ? '实验性下载' : '仅详情/目录' }}</span></article>
           </div>
           <p class="footnote">来源能力按目录、正文、账户与访问限制分别记录。付费平台留在后续路线，目前不承诺未购 VIP 正文获取能力。</p>
         </template>

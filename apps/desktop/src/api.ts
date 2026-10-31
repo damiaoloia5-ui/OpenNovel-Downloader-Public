@@ -27,7 +27,7 @@ export interface Snapshot { books: Book[]; jobs: Job[] }
 export interface JobItem {chapter_id:string;position:number;title:string;state:string;error:string|null;error_kind:string|null;retryable:boolean}
 export interface JobDetails {job:Job;items:JobItem[]}
 export interface Catalog { source: string; remote_id: string; title: string; author: string; description:string; chapters: { id: string; title: string; restricted: boolean }[] }
-export interface SourceInfo {id:string;name:string;can_download:boolean;can_search:boolean;note:string;example:string}
+export interface SourceInfo {id:string;name:string;can_inspect?:boolean;can_download:boolean;can_search:boolean;note:string;example:string}
 export interface SearchResult {source:string;remote_id:string;title:string;author:string;input:string}
 export interface BatchItem {position:number;input:string;state:string;job_id:string|null;error:string|null}
 export interface Batch {id:string;state:string;selection:string;duplicates:number;items:BatchItem[];error:string|null}

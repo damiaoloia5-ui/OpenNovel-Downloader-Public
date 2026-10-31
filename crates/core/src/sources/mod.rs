@@ -1,12 +1,14 @@
 mod fanqie;
 mod jinjiang;
 mod page;
+mod public_html;
 mod qimao;
 mod registry;
 mod shuqi;
 mod web;
 pub use fanqie::Fanqie;
 pub use jinjiang::Jinjiang;
+pub use public_html::PublicHtml;
 pub use qimao::Qimao;
 pub use registry::{SourceHub, SourceInfo, download_supported, identify, source_infos};
 pub use shuqi::Shuqi;
