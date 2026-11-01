@@ -1,4 +1,6 @@
 mod fanqie;
+mod fanqie_engine;
+pub use fanqie_engine::parse_engine_chapter;
 mod fanqie_probe;
 pub use fanqie_probe::{OfficialProbeReport, probe_official_chapter};
 mod jinjiang;
