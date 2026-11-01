@@ -4,6 +4,7 @@ mod account_download;
 mod accounts;
 mod auto_txt;
 mod capture;
+mod local_engine;
 mod official_reader;
 use account_download::{account_download_jobs, resume_account_download, start_account_download};
 use accounts::{account_list, close_account, create_account, open_account};
@@ -22,6 +23,7 @@ use std::{
 use tauri::{Manager, State};
 
 struct AppState {
+    engine: Arc<local_engine::EngineControl>,
     auto_txt: auto_txt::AutoTxtService,
     library: Arc<Library>,
     source: Arc<SourceHub>,
@@ -380,14 +382,60 @@ struct ActiveTask {
 }
 
 #[tauri::command]
-fn source_capabilities() -> &'static [SourceInfo] {
-    source_infos()
+fn source_capabilities(state: State<'_, AppState>) -> Vec<SourceInfo> {
+    let mut sources = source_infos().to_vec();
+    sources.push(SourceInfo {
+        id: opennovel_core::sources::LOCAL_ENGINE_SOURCE,
+        name: "番茄本地引擎",
+        can_inspect: true,
+        can_download: state.engine.enabled(),
+        can_search: false,
+        note: "默认关闭的隔离实验组件，仅明确免费章；正文逐章验证，不保证全书。与网页书库独立，不合并旧任务。",
+        example: "https://fanqienovel.com/page/作品ID",
+    });
+    sources
+}
+
+#[tauri::command]
+async fn local_engine_status(
+    state: State<'_, AppState>,
+) -> Result<local_engine::EngineStatus, String> {
+    let engine = Arc::clone(&state.engine);
+    blocking(move || Ok(engine.status())).await
+}
+
+#[tauri::command]
+async fn set_local_engine(
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<local_engine::EngineStatus, String> {
+    if !enabled {
+        let snapshot = state.library.snapshot().map_err(|e| e.to_string())?;
+        let active = state.cancellations.lock().map_err(|_| "任务管理器不可用")?;
+        if snapshot.jobs.iter().any(|j| {
+            j.source == opennovel_core::sources::LOCAL_ENGINE_SOURCE && active.contains_key(&j.id)
+        }) {
+            return Err("请先暂停本地引擎任务，待进程停止后再关闭组件".into());
+        }
+    }
+    let engine = Arc::clone(&state.engine);
+    blocking(move || engine.set(enabled)).await
 }
 
 #[tauri::command]
 async fn inspect_book(input: String, state: State<'_, AppState>) -> Result<Catalog, String> {
     let handle = Arc::clone(&state.source);
-    blocking(move || handle.inspect(&input)).await
+    let engine = state.engine.enabled();
+    blocking(move || inspect_channel(&handle, &input, engine)).await
+}
+
+fn inspect_channel(hub: &SourceHub, input: &str, engine: bool) -> opennovel_core::Result<Catalog> {
+    let (source, id) = identify(input)?;
+    if engine && source == "fanqie-web" {
+        opennovel_core::sources::Fanqie::new()?.inspect_engine(&id)
+    } else {
+        hub.inspect(input)
+    }
 }
 
 #[tauri::command]
@@ -400,9 +448,21 @@ async fn download_book(
 ) -> Result<String, String> {
     let handle = Arc::clone(&state.source);
     let library = Arc::clone(&state.library);
+    let engine = state.engine.enabled();
     let job = blocking(move || {
-        handle.adapter(identify(&input)?.0)?;
-        let catalog = handle.inspect(&input)?;
+        let catalog = inspect_channel(&handle, &input, engine)?;
+        if catalog.source == opennovel_core::sources::LOCAL_ENGINE_SOURCE {
+            let positions = if let Some(selection) = selection.filter(|s| !s.trim().is_empty()) {
+                opennovel_core::parse_selection(&selection, catalog.chapters.len())?
+            } else {
+                if first == 0 || last < first || last > catalog.chapters.len() {
+                    return Err(opennovel_core::Error::Invalid("章节范围超出目录".into()));
+                }
+                (first..=last).collect()
+            };
+            return library.create_engine_download(&catalog, &positions);
+        }
+        handle.adapter(&catalog.source)?;
         if let Some(selection) = selection.filter(|s| !s.trim().is_empty()) {
             library.create_download_selected(
                 &catalog,
@@ -503,6 +563,7 @@ async fn retry_chapters(
 async fn update_book(book_id: String, state: State<'_, AppState>) -> Result<String, String> {
     let library = Arc::clone(&state.library);
     let handle = Arc::clone(&state.source);
+    let engine = Arc::clone(&state.engine);
     let job = blocking(move || {
         let book = library
             .snapshot()?
@@ -510,6 +571,15 @@ async fn update_book(book_id: String, state: State<'_, AppState>) -> Result<Stri
             .into_iter()
             .find(|book| book.id == book_id)
             .ok_or_else(|| opennovel_core::Error::Invalid("作品不存在".into()))?;
+        if book.source == opennovel_core::sources::LOCAL_ENGINE_SOURCE {
+            engine.require()?;
+            let catalog =
+                opennovel_core::sources::Fanqie::new()?.inspect_engine(&book.remote_id)?;
+            return library.create_engine_download(
+                &catalog,
+                &(1..=catalog.chapters.len()).collect::<Vec<_>>(),
+            );
+        }
         let url = book
             .source_url()
             .ok_or_else(|| opennovel_core::Error::Invalid("该来源不支持在线更新".into()))?;
@@ -570,6 +640,11 @@ async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> 
     if snapshot.source == opennovel_core::QIDIAN_SESSION_SOURCE {
         return Err("起点自动任务请在平台账户选择官网会话后继续".into());
     }
+    let engine_runtime = if snapshot.source == opennovel_core::sources::LOCAL_ENGINE_SOURCE {
+        Some(state.engine.require().map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
     if matches!(snapshot.state.as_str(), "partial" | "blocked")
         && snapshot.blocked > 0
         && snapshot.failed == 0
@@ -628,6 +703,22 @@ async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> 
         // Errors are recorded by the core in the persisted task; never log the input text.
         let result = if snapshot.source == "local-json" {
             library.run_import(&job_id, &token)
+        } else if let Some(runtime) = engine_runtime {
+            (|| {
+                let book = library.book_details(&snapshot.book_id)?.book;
+                let items = library
+                    .job_details(&job_id)?
+                    .items
+                    .into_iter()
+                    .map(|i| i.chapter_id)
+                    .collect();
+                let client = local_engine::EngineAdapter::new(runtime, book.remote_id, items);
+                if let Some(chapters) = selection {
+                    library.retry_chapters(&job_id, &client, &token, &chapters)
+                } else {
+                    library.run_job(&job_id, &client, &token)
+                }
+            })()
         } else {
             handle.adapter(&snapshot.source).and_then(|client| {
                 if let Some(chapters) = selection {
@@ -704,6 +795,7 @@ fn main() {
             )?;
             app.manage(official_reader::OfficialReaderState::default());
             app.manage(AppState {
+                engine: Arc::default(),
                 library,
                 auto_txt,
                 source: Arc::default(),
@@ -763,6 +855,8 @@ fn main() {
                     preview_diagnostics,
                     save_diagnostics,
                     source_capabilities,
+                    local_engine_status,
+                    set_local_engine,
                     library_snapshot,
                     book_details,
                     read_chapter,

@@ -6,6 +6,7 @@ import SourceSearch from './SourceSearch.vue';
 import BatchPanel from './BatchPanel.vue';
 import AccountPanel from './AccountPanel.vue';
 import HelpGuide from './HelpGuide.vue';
+import LocalEnginePanel from './LocalEnginePanel.vue';
 import BookWorkspace from './BookWorkspace.vue';
 import {automaticTxtSnapshot,type AutoTxtStatus} from './api';
 import {catalogAvailability} from './availabilityModel';
@@ -80,6 +81,7 @@ async function inspect(autoSave=false){
 async function selectSearchResult(input:string){bookInput.value=input;await inspect();}
 async function startDownload(openOnly=false){await action(async()=>{if(!catalogCanDownload.value)throw new Error(catalogSource.value?.note||'该来源暂不支持正文下载');if(bookInput.value.trim()!==inspectedInput.value)throw new Error('链接已改变，请重新读取目录。');const chosen=openOnly?access.value?.selection:selection.value;if(openOnly&&!chosen)throw new Error('当前目录没有标记开放的章节。');const epoch=navigationEpoch;const id=await downloadBook(inspectedInput.value,firstChapter.value,lastChapter.value,chosen);await openCreatedJob(id,epoch);});}
 function sourceLabel(id:string){const info=sourceInfos.value.find(s=>s.id===id);return id==='local-json'?'本地 JSON':info?`${info.name} · 实验性`:id;}
+async function engineChanged(){try{const next=await sourceCapabilities();if(sourceInfos.value.find(s=>s.id==='fanqie-app-local')?.can_download!==next.find(s=>s.id==='fanqie-app-local')?.can_download){catalog.value=null;inspectedInput.value='';}sourceInfos.value=next;}catch(e){error.value=String(e);}}
 onMounted(()=>{if(!desktopAvailable)return;void sourceCapabilities().then(r=>sourceInfos.value=r).catch(e=>error.value=String(e));void getCurrentWindow().onResized(visibilityChanged).then(unlisten=>{if(disposed)unlisten();else unlistenResize=unlisten;}).catch(e=>error.value=String(e));void poll();document.addEventListener('visibilitychange',visibilityChanged);});
 onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();document.removeEventListener('visibilitychange',visibilityChanged);});
 </script>
@@ -127,6 +129,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
             <p class="footnote">免费网页会直接开始保存；起点会提示你登录。完成后自动生成 TXT，不需要手动选格式。</p><p class="footnote">不知道复制哪个链接？打开小说的作品介绍页，复制浏览器顶部地址，粘贴到这里。书旗目前只能读取目录。</p>
             <details class="optional-options"><summary>只想先看看能保存多少？</summary><button type="button" :disabled="!desktopAvailable||working||!bookInput.trim()" @click="inspect()">只看获取范围</button></details>
           </form>
+          <LocalEnginePanel :disabled="working" @changed="engineChanged" />
           <section v-if="catalog" class="download-panel" aria-label="作品目录">
             <h2>{{ catalog.title }}</h2><p class="footnote">{{ catalogSource?.name || catalog.source }} · {{ catalog.author || '未标注作者' }} · 全目录 {{ catalog.chapters.length }} 章</p>
             <section v-if="access" aria-label="目录可获取范围"><h3>先看当前获取范围</h3><p v-if="access.supported" role="status">目录标记开放 {{ access.open }} 章 · 目录受限 {{ access.restricted }} 章。开放标记仅表示可以尝试，不代表正文已验证，也不保证整书免费。</p><p v-else role="status">正文待验证 {{ access.unverified }} 章，当前来源没有开放网页正文下载。</p><p class="footnote">受限可能涉及付费、锁定或渠道限制；实际结果以逐章保存为准。不会自动购买、广告解锁或切换来源。</p></section>

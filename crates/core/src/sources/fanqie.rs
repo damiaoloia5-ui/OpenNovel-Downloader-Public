@@ -59,6 +59,15 @@ impl Fanqie {
     }
 
     pub fn inspect(&self, input: &str) -> Result<Catalog> {
+        self.inspect_channel(input, false)
+    }
+
+    /// Explicit experimental channel; the normal web adapter remains unchanged.
+    pub fn inspect_engine(&self, input: &str) -> Result<Catalog> {
+        self.inspect_channel(input, true)
+    }
+
+    fn inspect_channel(&self, input: &str, engine: bool) -> Result<Catalog> {
         let id = Self::recognize(input)?;
         let bytes = self.get(
             &format!("https://fanqienovel.com/page/{id}"),
@@ -67,7 +76,7 @@ impl Fanqie {
         )?;
         let html = String::from_utf8(bytes)
             .map_err(|_| Error::SourceChanged("作品页不是 UTF-8 文本".into()))?;
-        Self::parse_catalog(&html, &id)
+        Self::parse_catalog_channel(&html, &id, engine)
     }
 
     fn get(&self, url: &str, cancelled: &AtomicBool, maximum: usize) -> Result<Vec<u8>> {
@@ -75,6 +84,14 @@ impl Fanqie {
     }
 
     pub fn parse_catalog(html: &str, expected_id: &str) -> Result<Catalog> {
+        Self::parse_catalog_channel(html, expected_id, false)
+    }
+
+    pub fn parse_engine_catalog(html: &str, expected_id: &str) -> Result<Catalog> {
+        Self::parse_catalog_channel(html, expected_id, true)
+    }
+
+    fn parse_catalog_channel(html: &str, expected_id: &str, engine: bool) -> Result<Catalog> {
         let state = initial_state(html)?;
         let page = &state["page"];
         if text(page, "bookId")? != expected_id {
@@ -93,7 +110,18 @@ impl Fanqie {
                 chapters.push(ChapterRef {
                     id,
                     title: text(item, "title")?,
-                    restricted: access_restricted(item)?,
+                    restricted: if engine {
+                        // App-only free chapters are distinct from paid chapters. Require
+                        // the same explicit permission fields as the web parser first.
+                        access_restricted(item)?;
+                        item["needPay"] != 0
+                            || paid_marker(item, "isPaidPublication")?
+                            || paid_marker(item, "isPaidStory")?
+                            || paid_marker(page, "isPaidPublication")?
+                            || paid_marker(page, "isPaidStory")?
+                    } else {
+                        access_restricted(item)?
+                    },
                 });
             }
         }
@@ -112,7 +140,12 @@ impl Fanqie {
             return Err(changed("目录列表与索引不一致，不能确定完整目录"));
         }
         let catalog = Catalog {
-            source: "fanqie-web".into(),
+            source: if engine {
+                super::LOCAL_ENGINE_SOURCE
+            } else {
+                "fanqie-web"
+            }
+            .into(),
             remote_id: expected_id.into(),
             title: text(page, "bookName")?,
             author: page["author"].as_str().unwrap_or_default().to_owned(),
@@ -254,6 +287,13 @@ fn access_restricted(value: &Value) -> Result<bool> {
         .as_i64()
         .ok_or_else(|| changed("章节付费状态缺失"))?;
     Ok(locked || pay != 0 || value["isPaidPublication"] == true || value["isPaidStory"] == true)
+}
+fn paid_marker(value: &Value, key: &str) -> Result<bool> {
+    match &value[key] {
+        Value::Null => Ok(false),
+        Value::Bool(value) => Ok(*value),
+        _ => Err(changed("作品付费标记类型变化")),
+    }
 }
 fn font_data() -> &'static Value {
     static DATA: OnceLock<Value> = OnceLock::new();

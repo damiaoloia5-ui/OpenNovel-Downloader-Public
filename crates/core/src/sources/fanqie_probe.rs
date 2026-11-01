@@ -353,6 +353,14 @@ mod tests {
                             }
                             request.push(byte[0]);
                         }
+                        // An abandoned TCP preconnection is not an HTTP request.
+                        if request.is_empty() {
+                            continue;
+                        }
+                        assert!(
+                            request.ends_with(b"\r\n\r\n"),
+                            "incomplete controlled request"
+                        );
                         requests.push(String::from_utf8(request).unwrap());
                         let _ = stream.write_all(headers.as_bytes());
                         let _ = stream.flush();
@@ -405,7 +413,11 @@ mod tests {
             assert_eq!(report.bytes, 0);
             assert_eq!(requests.len(), 1, "no follow-up for {status}");
             let request = requests[0].to_ascii_lowercase();
-            assert!(request.starts_with("get /probe?itemid="));
+            assert!(
+                request.starts_with("get /probe?itemid="),
+                "controlled request line: {:?}",
+                request.lines().next()
+            );
             assert!(request.contains("\r\nismobile: 0\r\n"));
             assert!(!request.contains("\r\ncookie:"));
             assert!(!request.contains("\r\nauthorization:"));

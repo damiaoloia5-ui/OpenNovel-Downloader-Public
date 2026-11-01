@@ -264,29 +264,44 @@ mod tests {
             let mut deadline = Instant::now() + Duration::from_secs(30);
             for response in responses {
                 let mut stream = loop {
-                    match listener.accept() {
-                        Ok((stream, _)) => break stream,
-                        Err(e)
-                            if e.kind() == std::io::ErrorKind::WouldBlock
-                                && Instant::now() < deadline =>
-                        {
-                            std::thread::sleep(Duration::from_millis(5))
+                    let mut stream = loop {
+                        match listener.accept() {
+                            Ok((stream, _)) => break stream,
+                            Err(e)
+                                if e.kind() == std::io::ErrorKind::WouldBlock
+                                    && Instant::now() < deadline =>
+                            {
+                                std::thread::sleep(Duration::from_millis(5))
+                            }
+                            Err(_) => return,
                         }
-                        Err(_) => return,
+                    };
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(1)))
+                        .unwrap();
+                    let mut request = Vec::new();
+                    while !request.ends_with(b"\r\n\r\n") && request.len() < 8192 {
+                        let mut byte = [0];
+                        if stream.read(&mut byte).unwrap_or(0) == 0 {
+                            break;
+                        }
+                        request.push(byte[0]);
                     }
+                    // A client may abandon a preconnected socket without issuing
+                    // HTTP. It must not consume a response or end the server.
+                    if request.is_empty() {
+                        if Instant::now() >= deadline {
+                            return;
+                        }
+                        continue;
+                    }
+                    assert!(
+                        request.ends_with(b"\r\n\r\n"),
+                        "incomplete controlled request"
+                    );
+                    break stream;
                 };
                 deadline = Instant::now() + Duration::from_secs(8);
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(1)))
-                    .unwrap();
-                let mut request = Vec::new();
-                while !request.ends_with(b"\r\n\r\n") && request.len() < 8192 {
-                    let mut byte = [0];
-                    if stream.read(&mut byte).unwrap_or(0) == 0 {
-                        return;
-                    }
-                    request.push(byte[0]);
-                }
                 observed.fetch_add(1, Ordering::AcqRel);
                 let _ = stream.write_all(response);
                 let _ = stream.flush();
@@ -305,6 +320,17 @@ mod tests {
     const OK: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
     const BUSY: &[u8] =
         b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+    #[test]
+    fn unused_tcp_connection_does_not_consume_an_http_fixture() {
+        let (url, calls, worker) = scripted_server(vec![OK]);
+        drop(std::net::TcpStream::connect(("127.0.0.1", url.port().unwrap())).unwrap());
+        let client = WebClient::new(&["fanqienovel.com"]).unwrap();
+        let result = client.request(url, &AtomicBool::new(false), 128);
+        worker.join().unwrap();
+        assert_eq!(result.unwrap(), b"ok");
+        assert_eq!(calls.load(Ordering::Acquire), 1);
+    }
 
     #[test]
     fn persistent_transient_error_stops_after_three_attempts() {

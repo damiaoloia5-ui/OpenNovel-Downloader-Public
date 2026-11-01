@@ -1,4 +1,4 @@
-"""Private persistent engine session. Research API, not enabled by the desktop app."""
+"""Private persistent engine session. Only explicit optional callers may enable it."""
 import base64
 import json
 import os
@@ -12,13 +12,17 @@ import time
 import run_local_engine_gate as sandbox
 from https_read_gate import fetch_once, validate_request
 
+CREATE_FLAGS = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+
 
 class EngineStopped(RuntimeError):
-    pass
+    def __init__(self, message, kind='stopped'):
+        super().__init__(message)
+        self.kind = kind if kind in {'stopped', 'access_challenge', 'rate_limited', 'permission_changed'} else 'stopped'
 
 
 class EngineSession:
-    def __init__(self, book_id, items, *, live=False, fixture=None):
+    def __init__(self, book_id, items, *, live=False, fixture=None, cancelled=None):
         if not re.fullmatch('[1-9][0-9]{9,23}', book_id) or not items or len(items) > 10000 or any(not re.fullmatch('[1-9][0-9]{9,23}', x) for x in items):
             raise ValueError('explicit bounded identities required')
         if not live and fixture is None:
@@ -32,30 +36,45 @@ class EngineSession:
         self.env = dict(os.environ, OPENNOVEL_REVIEW_CAPABILITY=secrets.token_hex(32))
         sandbox.verify_source()
         try:
+            self._check_stop(cancelled)
             python = self._docker('image', 'inspect', 'python:3.12-slim', '--format', '{{.Id}}')
+            self._check_stop(cancelled)
             self.relay = self._create(python, ['python', '-u', '/review/persistent_read_gate.py'], 'none',
                 [f'type=bind,source={sandbox.SCRIPTS},target=/review,readonly'])
+            self._check_stop(cancelled)
             self._docker('start', self.relay)
+            self._check_stop(cancelled)
             self.engine = self._create(sandbox.RUST_IMAGE,
                 ['/target/x86_64-unknown-linux-gnu/debug/examples/opennovel_engine_service'],
                 'container:' + self.relay, [f'type=volume,source={sandbox.TARGET},target=/target,readonly'])
+            self._check_stop(cancelled)
             self._child = subprocess.Popen(['docker', 'start', '-ai', self.engine], env=self.env,
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                creationflags=CREATE_FLAGS)
             self._reader = threading.Thread(target=self._read_responses, daemon=True)
             self._reader.start()
+            until = time.monotonic() + 20
+            while True:
+                self._check_stop(cancelled)
+                state = json.loads(self._docker('inspect', self.engine))[0]['State']
+                if state['Running']:
+                    break
+                if state['Status'] != 'created' or time.monotonic() >= until:
+                    raise EngineStopped('engine did not start')
+                time.sleep(0.03)
         except BaseException:
             self.close()
             raise
 
     def _docker(self, *args, input=None):
         result = subprocess.run(['docker', *args], input=input, text=True, capture_output=True,
-            encoding='utf-8', errors='replace', timeout=15, env=self.env)
+            encoding='utf-8', errors='replace', timeout=15, env=self.env, creationflags=CREATE_FLAGS)
         if result.returncode:
             raise EngineStopped('isolated engine operation failed')
         return result.stdout.strip()
 
     def _create(self, image, args, network, mounts):
-        command = ['create', '-i', '--network', network, '--read-only', '--user', '10001:10001',
+        command = ['create', '--rm', '-i', '--network', network, '--read-only', '--user', '10001:10001',
             '--log-driver=none', '--cap-drop=ALL', '--security-opt=no-new-privileges',
             '--pids-limit=256', '--memory=2g', '--cpus=2', '--env', 'OPENNOVEL_REVIEW_CAPABILITY',
             '--env', 'PYTHONDONTWRITEBYTECODE=1', '--tmpfs', '/tmp:rw,nosuid,nodev,size=134217728']
@@ -65,7 +84,7 @@ class EngineSession:
         self._containers.append(identifier)
         inspect = json.loads(self._docker('inspect', identifier))[0]
         host = inspect['HostConfig']
-        if host['NetworkMode'] != network or not host['ReadonlyRootfs'] or host['PortBindings'] or host['Privileged'] or host['CapAdd'] or host['CapDrop'] != ['ALL'] or host['LogConfig']['Type'] != 'none' or inspect['Config']['User'] != '10001:10001':
+        if not host['AutoRemove'] or host['NetworkMode'] != network or not host['ReadonlyRootfs'] or host['PortBindings'] or host['Privileged'] or host['CapAdd'] or host['CapDrop'] != ['ALL'] or host['LogConfig']['Type'] != 'none' or inspect['Config']['User'] != '10001:10001':
             raise EngineStopped('isolation refused')
         self.evidence.append({'container': identifier, 'network': network, 'user': '10001:10001',
                               'mounts': [{'path': m['Destination'], 'rw': m['RW']} for m in inspect['Mounts']]})
@@ -103,6 +122,10 @@ class EngineSession:
             raise EngineStopped('one active request per session')
         try:
             self._check_stop(cancelled)
+            # Docker's attached CLI can outlive an auto-removed engine while its
+            # stdin remains open; never treat CLI liveness as engine liveness.
+            if self._docker('ps', '--no-trunc', '--filter', 'id=' + self.engine, '--format', '{{.ID}}') != self.engine:
+                raise EngineStopped('engine container exited; create a fresh session')
             self.sequence += 1
             sequence = self.sequence
             self._write_mail('approval', {'sequence': sequence, 'item_id': item_id})
@@ -144,7 +167,8 @@ class EngineSession:
                 except queue.Empty:
                     continue
             if result['status'] != 200:
-                raise EngineStopped('upstream restricted or failed; session stopped')
+                kind = 'access_challenge' if result['status'] in (401, 403) else 'rate_limited' if result['status'] == 429 else 'stopped'
+                raise EngineStopped('upstream restricted or failed; session stopped', kind)
             self._check_stop(cancelled)
             self._write_mail(f'response-{sequence}', result)
             deadline = time.monotonic() + 5
@@ -160,8 +184,10 @@ class EngineSession:
             if not value or value.get('sequence') != sequence or value.get('ok') is not True:
                 raise EngineStopped('stale or failed engine response')
             envelope = value.get('envelope', {})
-            if envelope.get('book_id') != self.book_id or envelope.get('item_id') != item_id or type(envelope.get('need_pay')) is not int or envelope['need_pay'] != 0:
+            if envelope.get('book_id') != self.book_id or envelope.get('item_id') != item_id or type(envelope.get('need_pay')) is not int:
                 raise EngineStopped('identity or permission changed')
+            if envelope['need_pay'] != 0:
+                raise EngineStopped('permission changed', 'permission_changed')
             self._check_stop(cancelled)
             return envelope
         except BaseException as error:
@@ -177,14 +203,27 @@ class EngineSession:
         failures = []
         for identifier in reversed(self._containers):
             try:
-                state = json.loads(self._docker('inspect', identifier))[0]['State']
-                if state['Running']:
-                    self._docker('stop', '--time', '1', identifier)
-                self._docker('rm', identifier)
+                # AutoRemove also covers EOF/idle exit after a killed desktop worker.
+                # Check absence explicitly rather than hiding arbitrary Docker failures.
+                if self._docker('ps', '-a', '--no-trunc', '--filter', 'id=' + identifier, '--format', '{{.ID}}'):
+                    state = json.loads(self._docker('inspect', identifier))[0]['State']
+                    if state['Running']:
+                        self._docker('stop', '--time', '1', identifier)
+                    else:
+                        self._docker('rm', identifier)
+                    if self._docker('ps', '-a', '--no-trunc', '--filter', 'id=' + identifier, '--format', '{{.ID}}'):
+                        raise EngineStopped('owned container survived stop')
             except EngineStopped:
                 failures.append(identifier)
         self._containers = failures
         if self._child is not None:
+            if self._child.stdin is not None:
+                try:
+                    self._child.stdin.close()
+                except OSError:
+                    pass
+                finally:
+                    self._child.stdin = None
             if hasattr(self, '_reader'):
                 self._reader.join(timeout=2)
             try:

@@ -4,7 +4,7 @@ use reqwest::Url;
 use serde::Serialize;
 use std::sync::OnceLock;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SourceInfo {
     pub can_inspect: bool,
     pub id: &'static str,

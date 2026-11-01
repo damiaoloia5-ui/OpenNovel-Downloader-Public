@@ -95,7 +95,9 @@ def main():
 
     with EngineSession(BOOK, ITEMS, fixture=original_fixture) as exited:
         exited._docker('stop', '--time', '1', exited.engine)
-        exited._child.wait(timeout=5)
+        # An attached Docker CLI may wait for stdin after AutoRemove. The
+        # session must inspect engine liveness instead of waiting for that CLI.
+        assert not exited._docker('ps', '-a', '--no-trunc', '--filter', 'id=' + exited.engine, '--format', '{{.ID}}')
         try:
             exited.request(ITEMS[0])
         except EngineStopped:
