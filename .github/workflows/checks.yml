@@ -16,23 +16,21 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run test:frontend
-      - run: npm run build
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: npm run test
-      - run: npm run desktop:package
+      - run: python scripts/verify_project.py --package basic --native
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: opennovel-windows-x64
+          name: opennovel-windows-x64-basic
           include-hidden-files: true
           path: |
             target/release/bundle/nsis/*-setup.exe
             .artifacts/release/THIRD_PARTY_NOTICES.txt
+            .artifacts/checks/**/report.json

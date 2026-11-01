@@ -123,7 +123,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         <button :class="{ selected: page === 'tools' }" @click="page = 'tools'"><span aria-hidden="true">▣</span>备份与诊断</button>
         </details>
       </nav>
-      <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>综合功能候选版 · 0.3.5</p></div>
+      <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>综合功能候选版 · 0.3.6</p></div>
     </aside>
 
     <main>

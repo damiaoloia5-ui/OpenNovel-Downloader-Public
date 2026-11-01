@@ -378,6 +378,25 @@ test('protected official pages never expose a save action or start an automatic 
   const f=await mount(Official,{initialUrl:'https://www.ciweimao.com/book/123'},({state})=>{state.officialPage={status:'protected',book_title:'原创图片页',paragraphs:[]};});
   try{await click(f.button('打开刺猬猫，去登录'));await click(f.button('我已登录，识别当前页'));assert.match(f.root.textContent,/图片、画布/);assert.equal(f.button('确认，保存当前页为 TXT'),undefined);assert.equal(f.state.calls.filter(c=>c[0]==='official-save').length,0);}finally{f.close();}
 });
+test('late official opening and failures cannot authorize or label a different selected book',async()=>{
+  for(const failed of [false,true]){
+    let finish;const f=await mount(Official,{initialUrl:'https://b.faloo.com/123.html'},({api})=>{
+      api.openOfficialReader=()=>new Promise((resolve,reject)=>{finish=()=>failed?reject('旧作品原创错误'):resolve();});
+    });try{
+      await click(f.button('打开飞卢，去登录'));f.props.initialUrl='https://www.ciweimao.com/book/456';await flush();finish();await flush();
+      assert.ok(f.button('我已登录，识别当前页').props.disabled);assert.doesNotMatch(f.root.textContent,/旧作品原创错误|请在官网自行登录/);
+    }finally{f.close();}
+  }
+});
+test('late official exports stay with the original context and never appear under a new book',async()=>{
+  let finish;const f=await mount(Official,{initialUrl:'https://b.faloo.com/123.html'},({api})=>{
+    api.saveOfficialReader=()=>new Promise(resolve=>{finish=()=>resolve({id:'old-export',path:'D:/old-original.txt'});});
+  });try{
+    await click(f.button('打开飞卢，去登录'));await click(f.button('我已登录，识别当前页'));await acknowledge(f);
+    await click(f.button('确认，保存当前页为 TXT'));f.props.initialUrl='https://b.faloo.com/456.html';await flush();finish();await flush();
+    assert.equal(f.button('打开 TXT 所在文件夹'),undefined);assert.doesNotMatch(f.root.textContent,/old-original|TXT 已保存/);
+  }finally{f.close();}
+});
 test('new official links route to their account reader without public HTTP download',async()=>{
   for(const url of ['https://www.ciweimao.com/book/123','https://b.faloo.com/123.html','https://www.cmread.com/yuekan/novel/123.html']){
     const f=await mount(App);

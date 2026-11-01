@@ -2,7 +2,9 @@
 
 先阅读 [README](README.md)、[计划书](PROJECT_PLAN.md) 和 [来源状态](docs/sources.md)。GUI、CLI 共用 Rust 核心；适配器返回标准目录与正文，事务、任务和导出由核心管理。保持来源 ID 与远端 ID 的组合身份，章节 ID 不作为排序值。
 
-环境为 Rust >=1.96、Node >=22.12，Windows 桌面构建需要 C++ 工具链、Windows SDK 和 WebView2。安装 `npm ci` 后，执行 README 的全部开发检查；变更 IPC、原生文件行为或安装器时，还需运行打包后的原生应用。普通测试不访问商业网站，不需要账户。
+环境为 Rust >=1.96、Node >=22.12、Python >=3.11，Windows 桌面构建需要 C++ 工具链、Windows SDK 和 WebView2。安装 `npm ci` 后，执行 `python scripts/verify_project.py --package basic --native`；已有 Cargo 缓存可加 `--offline`。变更 IPC、原生文件行为或安装器时，还需运行打包后的原生应用。普通测试不访问商业网站，不需要账户。统一回执记录原生原创样本结果，不冒充真实窗口、账号或干净系统证明。
+
+一体化版的固定镜像、源码包和 Python ZIP 由维护者显式提供；从新源码目录重建见[构建与交付](docs/BUILD_AND_RELEASE.md)。不把开发机历史构建目录当成贡献者前置条件。
 
 新增来源应先提交研究证据：官方访问渠道、真实样本和日期、目录顺序、正文校验、访问限制、请求预算及失败样本，再实现原创受控契约测试。只有实际通过的能力可写入支持清单。不复制参考项目代码、不包含真实凭据和采集正文，不在普通 CI 请求商业平台。
 
