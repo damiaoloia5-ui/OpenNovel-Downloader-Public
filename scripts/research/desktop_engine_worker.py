@@ -26,8 +26,12 @@ def check():
     try:
         result = subprocess.run([sandbox.DOCKER, 'info', '--format', '{{.OSType}}'], check=True,
                                 capture_output=True, text=True, timeout=5, creationflags=CREATE_FLAGS)
+        if result.stdout.strip() == 'windows':
+            return 'docker_windows_mode'
         if result.stdout.strip() != 'linux':
             return 'docker_unavailable'
+    except FileNotFoundError:
+        return 'docker_missing'
     except (OSError, subprocess.SubprocessError):
         return 'docker_unavailable'
     if offline.present():

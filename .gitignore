@@ -4,6 +4,8 @@ target/
 dist/
 coverage/
 .vite/
+__pycache__/
+*.py[cod]
 
 # Local development data and tooling
 .cache/

@@ -50,6 +50,7 @@ await writeFile(entry,`export {default as Account} from ${JSON.stringify(resolve
 await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as Official} from '+JSON.stringify(resolve('apps/desktop/src/OfficialReaderPanel.vue'))+';\n');
 const real=new Set(['AccountPanel.vue','AutoSavePanel.vue','App.vue','OfficialReaderPanel.vue']);
 real.add('LocalEnginePanel.vue');
+await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as Engine} from '+JSON.stringify(resolve('apps/desktop/src/LocalEnginePanel.vue'))+';\n');
 real.add('TxtSupplementPanel.vue');
 await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as Supplement} from '+JSON.stringify(resolve('apps/desktop/src/TxtSupplementPanel.vue'))+';\n');
 await build({configFile:false,logLevel:'error',plugins:[{
@@ -61,7 +62,7 @@ await build({configFile:false,logLevel:'error',plugins:[{
     return transformWithOxc(compiled.content,`${id}.ts`,{lang:'ts'});
   },
 }],build:{ssr:entry,outDir:output,emptyOutDir:false,rollupOptions:{output:{entryFileNames:'components.mjs'}}}});
-const {Account,AutoSave,App,Official,Supplement}=await import(pathToFileURL(join(output,'components.mjs')).href);
+const {Account,AutoSave,App,Official,Supplement,Engine}=await import(pathToFileURL(join(output,'components.mjs')).href);
 function element(tag,text=''){
   return {tag,tagName:tag.toUpperCase(),children:[],parent:null,props:{},text,listeners:{},value:'',checked:false,selected:false,
     get textContent(){return this.text+this.children.map(n=>n.textContent).join('');},
@@ -121,6 +122,46 @@ async function click(button){assert.ok(button,'button exists');assert.ok(!button
 async function waitFor(predicate){const deadline=Date.now()+5000;while(!predicate()){if(Date.now()>deadline)throw Error('controlled component wait timed out');await new Promise(resolve=>setTimeout(resolve,20));await flush();}}
 async function loginAndRead(f){await click(f.button('打开起点，去登录'));await click(f.button('我已登录，下一步'));await waitFor(()=>f.button('是这本，开始保存为 TXT'));}
 async function acknowledge(f){const input=walk(f.root,true).find(n=>n.tag==='input'&&n.type==='checkbox');assert.ok(input);input.checked=true;input.dispatch('change');await flush();}
+
+function openEngineOptions(f){walk(f.root).find(n=>n.tag==='details').props.open=true;}
+test('remembered enhancement can be forgotten even when its runtime is unavailable',async()=>{
+  const f=await mount(Engine,{current:{enabled:false,ready:false,installed:false,remembered:true,message:'原创组件失效',issue:'component_unavailable',next_step:'重新安装完整一体化版，原书库无需删除。'}},({state,api})=>{
+    api.setLocalEngine=async enabled=>{state.calls.push(['set-engine',enabled]);return {enabled:false,ready:false,remembered:false,message:'原创组件仍未就绪'};};
+  });try{
+    openEngineOptions(f);assert.match(f.root.textContent,/下一步：重新安装完整/);
+    assert.equal(f.button('重新准备本地增强'),undefined);
+    await click(f.button('关闭并忘记选择'));
+    assert.deepEqual(f.state.calls,[['set-engine',false]]);
+    assert.equal(f.button('关闭并忘记选择'),undefined);
+  }finally{f.close();}
+});
+test('failed preparation retains recovery and forget actions without starting a download',async()=>{
+  let attempts=0;const f=await mount(Engine,{current:{enabled:false,ready:false,installed:true,remembered:true,message:'原创服务暂不可用',next_step:'等待 Linux 服务就绪后重新准备。'}},({state,api})=>{
+    api.setLocalEngine=async enabled=>{state.calls.push(['set-engine',enabled]);if(++attempts===1)throw '原创导入失败：检查可用空间';return {enabled:true,ready:true,remembered:true,installed:true,message:'原创组件已就绪'};};
+  });try{
+    openEngineOptions(f);await click(f.button('重新准备本地增强'));assert.match(f.root.textContent,/原创导入失败/);
+    assert.ok(f.button('关闭并忘记选择'));await click(f.button('重新准备本地增强'));
+    assert.match(f.root.textContent,/已启用并记住/);assert.deepEqual(f.state.calls,[['set-engine',true],['set-engine',true]]);
+  }finally{f.close();}
+});
+test('preparation shows its own busy state, rejects duplicate actions and ignores an abandoned result',async()=>{
+  let finish,checked=0;const f=await mount(Engine,{current:{enabled:false,ready:false,installed:true,remembered:false,message:'首次准备'},onChecked:()=>checked++},({state,api})=>{
+    api.setLocalEngine=enabled=>{state.calls.push(['set-engine',enabled]);return new Promise(resolve=>{finish=resolve;});};
+  });try{
+    openEngineOptions(f);const button=f.button('启用并记住选择');button.props.onClick();button.props.onClick();await flush();
+    assert.match(f.root.textContent,/正在校验并准备内置引擎/);assert.ok(f.button('重新检查组件').props.disabled);
+    assert.deepEqual(f.state.calls,[['set-engine',true]]);f.close();finish({enabled:true,ready:true,remembered:true,message:'已准备'});await flush();
+    assert.equal(checked,0);
+  }finally{f.close();}
+});
+test('read-only recheck displays recovery steps without enabling the component',async()=>{
+  const f=await mount(Engine,{current:{enabled:false,ready:false,installed:true,remembered:false,message:'首次状态'}},({state,api})=>{
+    api.localEngineStatus=async()=>{state.calls.push(['check-engine']);return {enabled:false,ready:false,installed:true,remembered:false,message:'Windows 容器模式',issue:'docker_windows_mode',next_step:'手动切换到 Linux 容器后重新检查。'};};
+  });try{
+    openEngineOptions(f);await click(f.button('重新检查组件'));assert.match(f.root.textContent,/手动切换到 Linux 容器/);
+    assert.deepEqual(f.state.calls,[['check-engine']]);assert.ok(f.button('启用并记住选择'));
+  }finally{f.close();}
+});
 
 test('TXT supplementation previews before explicit confirmation and retains the selected book identity',async()=>{
   const f=await mount(Supplement,{bookId:'original-book',disabled:false});try{

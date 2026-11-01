@@ -69,7 +69,7 @@ pub fn run(output: &Path) -> Result<bool, Box<dyn std::error::Error>> {
     std::fs::write(
         root.join("README.txt"),
         format!(
-            "OpenNovel {} 安装检查\r\n基础检查：{}\r\n可选番茄组件：{}\r\n详细结果：report.json\r\n本次仅使用原创两章独立样本；未打开原书库，未请求小说平台。\r\n检查通过不代表真实窗口、全平台或 VIP 验收。\r\n",
+            "OpenNovel {} 安装检查\r\n基础检查：{}\r\n可选番茄组件：{}\r\n下一步：{}\r\n详细结果：report.json\r\n本次仅使用原创两章独立样本；未打开原书库，未请求小说平台。\r\n检查通过不代表真实窗口、全平台或 VIP 验收。\r\n",
             env!("CARGO_PKG_VERSION"),
             if passed {
                 "通过"
@@ -80,7 +80,10 @@ pub fn run(output: &Path) -> Result<bool, Box<dyn std::error::Error>> {
                 "就绪（仍默认关闭）"
             } else {
                 "未就绪，普通网页功能不依赖它"
-            }
+            },
+            report["optional_local_engine"]["next_step"]
+                .as_str()
+                .unwrap_or("请查看报告")
         ),
     )?;
     Ok(passed)

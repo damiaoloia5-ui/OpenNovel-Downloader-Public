@@ -31,7 +31,8 @@ def main():
         path = distribution / name
         if path.stat().st_size != expected['bytes'] or hashlib.sha256(path.read_bytes()).hexdigest() != expected['sha256']:
             raise ValueError('offline distribution changed')
-    destination = repo / '.artifacts/offline-resources/opennovel-engine'
+    version = json.loads((repo / 'package.json').read_text(encoding='utf-8'))['version']
+    destination = repo / '.artifacts' / ('integrated-resources-' + version) / 'opennovel-engine'
     if not destination.exists():
         assemble(destination, config.SOURCE, config.PREVIOUS / 'inventory.json', config.SCRIPTS, repo / 'LICENSE')
         shutil.copytree(python, destination / 'python')

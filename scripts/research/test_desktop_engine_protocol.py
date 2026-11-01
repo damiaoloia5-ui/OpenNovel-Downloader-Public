@@ -11,6 +11,14 @@ import desktop_engine_worker as worker
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_missing_docker_and_windows_backend_have_different_recovery(self):
+        with patch.object(worker.sandbox, 'verify_source'), patch.object(worker.subprocess, 'run', side_effect=FileNotFoundError()) as run:
+            self.assertEqual(worker.check(), 'docker_missing')
+            self.assertEqual(run.call_count, 1)
+        with patch.object(worker.sandbox, 'verify_source'), patch.object(worker.subprocess, 'run', return_value=types.SimpleNamespace(stdout='windows\n')) as run:
+            self.assertEqual(worker.check(), 'docker_windows_mode')
+            self.assertEqual(run.call_count, 1)
+
     def test_check_reports_docker_unavailable_without_attempting_installation(self):
         with patch.object(worker.sandbox, 'verify_source'), patch.object(worker.subprocess, 'run', side_effect=OSError('original missing runtime')) as run:
             self.assertEqual(worker.check(), 'docker_unavailable')
@@ -20,7 +28,7 @@ class ProtocolTests(unittest.TestCase):
         with patch.object(worker, 'check', side_effect=['docker_unavailable', None]), patch.object(worker.subprocess, 'run') as run:
             self.assertIsNone(worker.prepare())
             self.assertEqual(run.call_args.args[0], [worker.sandbox.DOCKER, 'desktop', 'start', '--detach'])
-        for reason in [None, 'images_missing', 'engine_missing', 'source_changed']:
+        for reason in [None, 'images_missing', 'engine_missing', 'source_changed', 'docker_missing', 'docker_windows_mode', 'offline_bundle_invalid']:
             with patch.object(worker, 'check', return_value=reason), patch.object(worker.subprocess, 'run') as run:
                 self.assertEqual(worker.prepare(), reason)
                 run.assert_not_called()

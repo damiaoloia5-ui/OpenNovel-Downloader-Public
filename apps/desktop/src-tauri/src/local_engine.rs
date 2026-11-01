@@ -33,6 +33,84 @@ pub struct EngineStatus {
     pub remembered: bool,
     pub installed: bool,
     pub message: String,
+    pub issue: Option<EngineIssue>,
+    pub next_step: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineIssue {
+    ComponentUnavailable,
+    DockerMissing,
+    DockerUnavailable,
+    DockerWindowsMode,
+    ImagesMissing,
+    EngineMissing,
+    SourceChanged,
+    OfflineBundlePending,
+    OfflineBundleInvalid,
+    OfflineImportFailed,
+    CheckFailed,
+}
+
+impl EngineIssue {
+    fn from_reason(reason: Option<&str>) -> Self {
+        match reason {
+            Some("docker_missing") => Self::DockerMissing,
+            Some("docker_unavailable") => Self::DockerUnavailable,
+            Some("docker_windows_mode") => Self::DockerWindowsMode,
+            Some("images_missing") => Self::ImagesMissing,
+            Some("engine_missing") => Self::EngineMissing,
+            Some("source_changed") => Self::SourceChanged,
+            Some("offline_bundle_pending") => Self::OfflineBundlePending,
+            Some("offline_bundle_invalid") => Self::OfflineBundleInvalid,
+            Some("offline_import_failed") => Self::OfflineImportFailed,
+            _ => Self::CheckFailed,
+        }
+    }
+
+    fn message(self) -> &'static str {
+        match self {
+            Self::ComponentUnavailable => "增强组件未找到、版本不匹配或完整性检查未通过",
+            Self::DockerMissing => "未找到 Docker Desktop 的命令程序",
+            Self::DockerUnavailable => "Docker Linux 服务尚未就绪或当前不可访问",
+            Self::DockerWindowsMode => "Docker 当前使用 Windows 容器模式",
+            Self::ImagesMissing => "开发组件所需镜像缺失",
+            Self::EngineMissing => "隔离引擎未就绪或启动检查失败",
+            Self::SourceChanged => "组件源码校验失败",
+            Self::OfflineBundlePending => "内置引擎尚未完成首次准备",
+            Self::OfflineBundleInvalid => "内置离线组件校验失败",
+            Self::OfflineImportFailed => "内置引擎导入失败",
+            Self::CheckFailed => "本地增强检查未完成",
+        }
+    }
+
+    fn next_step(self) -> &'static str {
+        match self {
+            Self::DockerMissing => {
+                "安装 Docker Desktop 并启用 Linux 后端，完成后点“重新检查组件”；普通网页保存可继续使用。"
+            }
+            Self::DockerUnavailable => {
+                "打开 Docker Desktop，等待 Linux 服务就绪后点“重新准备本地增强”；软件不会修改虚拟化设置。"
+            }
+            Self::DockerWindowsMode => {
+                "在 Docker Desktop 手动切换到 Linux 容器，等待就绪后点“重新检查组件”。"
+            }
+            Self::OfflineBundlePending => {
+                "点“启用并记住选择”或“重新准备本地增强”，软件会校验并导入内置引擎，无需下载镜像。"
+            }
+            Self::OfflineImportFailed => {
+                "检查 Docker Desktop 和磁盘可用空间，再点“重新准备本地增强”；已保存正文保留。"
+            }
+            Self::ComponentUnavailable | Self::SourceChanged | Self::OfflineBundleInvalid => {
+                "重新安装完整的一体化版，保留随包资源目录；不要只复制 EXE。原书库无需删除。"
+            }
+            Self::ImagesMissing => "使用完整一体化安装包；开发版请按组件说明准备固定镜像。",
+            Self::EngineMissing | Self::CheckFailed => {
+                "确认 Docker Desktop 的 Linux 服务正常，点“重新检查组件”；仍失败时重新安装完整一体化版。"
+            }
+        }
+    }
 }
 
 impl EngineControl {
@@ -89,24 +167,45 @@ impl EngineControl {
     pub fn status(&self) -> EngineStatus {
         let runtime = Runtime::discover();
         let installed = runtime.is_ok();
-        let mut status = self.checked_status(runtime.and_then(|r| r.check()));
-        status.installed = installed;
-        status
+        let issue = match runtime {
+            Ok(runtime) => runtime
+                .probe(false)
+                .unwrap_or(Some(EngineIssue::CheckFailed)),
+            Err(_) => Some(EngineIssue::ComponentUnavailable),
+        };
+        self.diagnostic_status(issue, installed)
     }
 
+    #[cfg(test)]
     fn checked_status(&self, result: Result<()>) -> EngineStatus {
+        self.diagnostic_status(result.err().map(|_| EngineIssue::CheckFailed), false)
+    }
+
+    fn diagnostic_status(&self, issue: Option<EngineIssue>, installed: bool) -> EngineStatus {
         let _revision = self
             .choice_revision
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let ready = result.is_ok();
+        let ready = issue.is_none();
         let remembered = self.remembered.load(Ordering::Acquire);
         self.enabled.store(ready && remembered, Ordering::Release);
         EngineStatus {
             enabled: self.enabled(),
             ready,
             remembered,
-            installed: false,
+            installed,
+            issue,
+            next_step: issue.map_or_else(
+                || {
+                    if remembered {
+                        "粘贴番茄作品链接，点“开始保存为 TXT”。"
+                    } else {
+                        "首次点“启用并记住选择”，之后直接粘贴链接保存。"
+                    }
+                    .into()
+                },
+                |issue| issue.next_step().into(),
+            ),
             message: if ready {
                 if remembered {
                     "本地增强已启用，下次打开软件会自动恢复；粘贴番茄链接即可保存免费章节。".into()
@@ -116,7 +215,7 @@ impl EngineControl {
             } else {
                 format!(
                     "本地增强暂不可用：{}。普通网页保存仍可使用。",
-                    result.unwrap_err()
+                    issue.unwrap().message()
                 )
             },
         }
@@ -290,6 +389,7 @@ impl Runtime {
         command
     }
 
+    #[cfg(test)]
     fn check(&self) -> Result<()> {
         self.check_mode(false)
     }
@@ -299,6 +399,17 @@ impl Runtime {
     }
 
     fn check_mode(&self, prepare: bool) -> Result<()> {
+        if let Some(issue) = self.probe(prepare)? {
+            return Err(Error::Invalid(format!(
+                "{}。{}",
+                issue.message(),
+                issue.next_step()
+            )));
+        }
+        Ok(())
+    }
+
+    fn probe(&self, prepare: bool) -> Result<Option<EngineIssue>> {
         let mut command = self.command();
         command.arg(if prepare { "--prepare" } else { "--check" });
         let worker = Worker::spawn(command)?;
@@ -307,31 +418,9 @@ impl Runtime {
             Duration::from_secs(if prepare { 240 } else { 35 }),
         )?;
         if result["ready"] != true {
-            return Err(Error::Invalid(
-                match result["reason"].as_str() {
-                    Some("docker_unavailable") => {
-                        "请先启动 Docker Desktop，再点击重新检查；需要 Linux 隔离后端"
-                    }
-                    Some("images_missing") => {
-                        "本地隔离镜像缺失，请按组件安装说明准备；软件不会自动下载"
-                    }
-                    Some("engine_missing") => "本地隔离引擎构建缺失，请按组件安装说明准备",
-                    Some("source_changed") => "组件源码校验失败，请重新安装匹配的完整组件",
-                    Some("offline_bundle_pending") => {
-                        "首次使用需要准备内置引擎，请点击启用；无需手工下载镜像或构建"
-                    }
-                    Some("offline_bundle_invalid") => {
-                        "内置离线组件校验失败，请重新安装完整一体化版"
-                    }
-                    Some("offline_import_failed") => {
-                        "内置引擎准备失败，请检查 Docker 和可用空间后重试；已存正文保留"
-                    }
-                    _ => "本地组件检查失败，请重新检查或安装匹配组件",
-                }
-                .into(),
-            ));
+            return Ok(Some(EngineIssue::from_reason(result["reason"].as_str())));
         }
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -659,6 +748,40 @@ impl SourceAdapter for EngineAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagnostics_keep_consent_and_distinguish_environment_recovery() {
+        let root = tempfile::tempdir().unwrap();
+        let control = EngineControl::for_directory(root.path());
+        control.save_choice(true).unwrap();
+        for (reason, expected) in [
+            ("docker_missing", "安装 Docker Desktop"),
+            ("docker_unavailable", "等待 Linux 服务就绪"),
+            ("docker_windows_mode", "切换到 Linux 容器"),
+            ("offline_bundle_pending", "导入内置引擎"),
+            ("offline_import_failed", "磁盘可用空间"),
+            ("offline_bundle_invalid", "重新安装完整"),
+        ] {
+            let issue = EngineIssue::from_reason(Some(reason));
+            let status = control.diagnostic_status(Some(issue), true);
+            assert!(!status.enabled && !status.ready && status.remembered);
+            assert!(status.next_step.contains(expected));
+            assert_eq!(serde_json::to_value(&status).unwrap()["issue"], reason);
+        }
+        assert!(EngineControl::for_directory(root.path()).remembered());
+        assert!(control.diagnostic_status(None, true).enabled);
+    }
+
+    #[test]
+    fn unknown_probe_reasons_do_not_authorize_or_expose_remote_details() {
+        for reason in [None, Some("private upstream error text")] {
+            let issue = EngineIssue::from_reason(reason);
+            assert_eq!(issue, EngineIssue::CheckFailed);
+            let status = EngineControl::default().diagnostic_status(Some(issue), true);
+            assert!(!status.ready && !status.enabled && !status.remembered);
+            assert!(!status.message.contains("private"));
+        }
+    }
 
     #[test]
     fn local_engine_is_disabled_without_a_saved_choice() {

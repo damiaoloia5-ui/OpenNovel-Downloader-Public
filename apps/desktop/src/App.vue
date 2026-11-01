@@ -123,7 +123,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         <button :class="{ selected: page === 'tools' }" @click="page = 'tools'"><span aria-hidden="true">▣</span>备份与诊断</button>
         </details>
       </nav>
-      <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>综合功能候选版 · 0.3.3</p></div>
+      <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>综合功能候选版 · 0.3.4</p></div>
     </aside>
 
     <main>
@@ -149,7 +149,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
           <LocalEnginePanel :disabled="working" :current="engineStatus" @checked="engineStatus=$event" @changed="engineChanged" />
           <section v-if="catalog" class="download-panel" aria-label="作品目录">
             <h2>{{ catalog.title }}</h2><p class="footnote">{{ catalogSource?.name || catalog.source }} · {{ catalog.author || '未标注作者' }} · 全目录 {{ catalog.chapters.length }} 章</p>
-            <section v-if="engineOffer" aria-label="更多免费章节保存方式"><h3>启用一次，之后直接保存免费章节</h3><p class="footnote">组件已由软件管理。首次启用会检查环境，必要时启动已安装的隔离服务，并记住选择；只保存明确免费且通过校验的正文。</p><button class="primary" :disabled="working||bookInput.trim()!==inspectedInput" @click="enableEngineForBook">启用本地组件，保存更多免费章节</button><p class="footnote">也可以继续使用下方的“仅保存目录标记开放章”。</p></section>
+            <section v-if="engineOffer" aria-label="更多免费章节保存方式"><h3>启用一次，之后直接保存免费章节</h3><p class="footnote">组件已由软件管理。首次启用会检查环境，必要时启动已安装的隔离服务，并记住选择；只保存明确免费且通过校验的正文。</p><p v-if="!engineStatus?.ready&&engineStatus?.next_step" class="footnote">下一步：{{ engineStatus.next_step }}</p><button class="primary" :disabled="working||bookInput.trim()!==inspectedInput" @click="enableEngineForBook">启用本地组件，保存更多免费章节</button><p class="footnote">也可以继续使用下方的“仅保存目录标记开放章”。</p></section>
             <section v-if="access" aria-label="目录可获取范围"><h3>先看当前获取范围</h3><p v-if="access.supported" role="status">目录标记开放 {{ access.open }} 章 · 目录受限 {{ access.restricted }} 章。开放标记仅表示可以尝试，不代表正文已验证，也不保证整书免费。</p><p v-else role="status">正文待验证 {{ access.unverified }} 章，当前来源没有开放网页正文下载。</p><p class="footnote">受限可能涉及付费、锁定或渠道限制；实际结果以逐章保存为准。不会自动购买、广告解锁或切换来源。</p></section>
             <p v-if="!catalogCanDownload" class="message warning" role="status">{{ catalogSource?.note || '该来源暂不支持正文下载' }}</p>
             <p v-if="catalog.description" class="book-description">{{ catalog.description }}</p>

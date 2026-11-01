@@ -1,5 +1,7 @@
 # OpenNovel Downloader
 
+v0.3.4 首次使用与恢复候选版：增强检查区会说明具体故障及下一步，区分 Docker 缺失、Linux 服务未就绪和 Windows 容器模式；已记住但失效的增强也可重新准备或关闭并忘记。离线组件和来源范围保持不变，见[操作说明](docs/local-engine.md)。
+
 v0.3.3 离线一体化本机候选版：附带独立引擎镜像和完整对应源码，首次启用时校验并从本地包准备；不再要求用户下载镜像或建立开发构建卷。仍需 Docker Linux 后端，不安装系统组件、不绕过付费或验证。见[操作说明](docs/local-engine.md)及[本轮验证](docs/verification/2026-11-01-offline-engine.md)。以下保留历史进展。
 
 v0.3.2 一体化本机候选版：内置固定官方 Python 与组件脚本，自动发现资源；首次主动启用后记住选择，下次粘贴链接直接保存，无需环境变量或启动脚本。启用时可尝试启动已安装的 Docker Desktop。Docker、固定镜像和引擎构建卷仍为系统依赖，不能称全依赖离线包。见[使用说明](docs/local-engine.md)和[本轮验证](docs/verification/2026-11-01-integrated.md)。以下保留历史进展。
