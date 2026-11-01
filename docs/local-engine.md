@@ -14,7 +14,7 @@
 
 ## 维护者准备环境
 
-这是本机开发组件，路径固定在源码树，不从当前目录或网页下载并执行脚本。单独复制 EXE 到另一台机器不能获得此能力。
+这是本机开发组件，支持独立准备目录和原有源码树两种布局；不从当前目录或网页下载并执行脚本。Python、Docker、固定镜像及构建卷仍为外部依赖，单独复制 EXE 到另一台机器不能获得此能力。
 
 - Windows、项目现有 Rust/Node 构建环境、Python 3.12+、运行中的 Docker Desktop Linux 后端。
 - 先按[隔离评估](research/local-engine-admission-20261101.md)固定候选源码、inventory、镜像和依赖缓存；不要运行来源不明的 Windows 成品，也不要使用候选设备补齐/权益入口。
@@ -29,6 +29,22 @@ npm run desktop:dev
 ```
 
 状态检查只验证固定源码哈希、本地镜像、只读构建及 Docker 可用性，不向小说平台请求正文，不自动安装依赖或拉取镜像。不需要填写 API Key、Cookie 或账户凭据。依赖缺失时只禁用引擎，普通网页功能保持原流程。
+
+### 独立准备目录（推荐用于本机预览）
+
+先完成固定构建和桌面 `npm run desktop:build`，再使用当前 Python 准备一个**尚不存在的绝对目录**：
+
+```powershell
+python -B scripts/prepare_local_engine.py --output 'D:\OpenNovel-Engine-Preview' --executable target/release/opennovel-desktop.exe
+```
+
+工具先核对已有候选源码，再复制 7 个运行脚本、完整候选源码及其许可证、校验清单和可选 EXE。不会拉取镜像、请求章节、执行候选或覆盖已有目录。复制失败时保留现场，不自动递归删除输出。候选 Linux 二进制不在复制目录中，仍使用本机预先构建的只读 Docker 卷。
+
+双击新目录中的 `Start-Isolated-Preview.cmd`，启动脚本仅设置进程级 `OPENNOVEL_ENGINE_PYTHON` 和 `OPENNOVEL_ENGINE_ROOT`，并使用该目录的独立 `preview-library`。程序启动后仍需主动启用引擎，不更改现有快捷方式、系统设置或原书库。
+
+程序按本次 EXE 构建嵌入的字节核对全部运行脚本，并拒绝额外脚本、子目录或被改写的脚本；`component.json` 只是校验记录，不能授权任意代码。升级脚本或程序后请重新准备一个新目录，不能拼接不同版本。清单及源码校验不构成对 Docker 卷内二进制或整套依赖的全面安全证明。
+
+不需要继续读取原开发目录内的运行脚本或候选源码，但仍依赖本机 Python 安装和 Docker 环境，因此该目录不是通用离线安装包。最新准备验证见 [本轮记录](verification/2026-11-01-prepared-component.md)。
 
 ## 实现与限制
 

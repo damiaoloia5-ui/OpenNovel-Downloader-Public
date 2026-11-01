@@ -9,7 +9,7 @@ import subprocess
 import threading
 import time
 
-import run_local_engine_gate as sandbox
+import engine_runtime_config as sandbox
 from https_read_gate import fetch_once, validate_request
 
 CREATE_FLAGS = getattr(subprocess, 'CREATE_NO_WINDOW', 0)

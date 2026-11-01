@@ -71,6 +71,7 @@ impl EngineControl {
 pub struct Runtime {
     python: PathBuf,
     worker: PathBuf,
+    component: Option<PathBuf>,
     #[cfg(test)]
     fixture: bool,
 }
@@ -81,16 +82,49 @@ impl Runtime {
             .map(PathBuf::from)
             .filter(|p| p.is_absolute() && p.is_file())
             .ok_or_else(unavailable)?;
-        // Development component only: never resolve a helper from the working
-        // directory, a download, frontend input or the user's PATH.
-        let worker = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../scripts/research/desktop_engine_worker.py");
+        Self::from_paths(
+            python,
+            std::env::var_os("OPENNOVEL_ENGINE_ROOT").map(PathBuf::from),
+        )
+    }
+
+    fn from_paths(python: PathBuf, component: Option<PathBuf>) -> Result<Self> {
+        if !python.is_absolute() || !python.is_file() {
+            return Err(unavailable());
+        }
+        // Never resolve executable scripts from cwd, frontend input or PATH.
+        let scripts = if let Some(root) = &component {
+            if !root.is_absolute() {
+                return Err(unavailable());
+            }
+            let scripts = root.join("runtime");
+            let entries = std::fs::read_dir(&scripts)?.collect::<std::io::Result<Vec<_>>>()?;
+            if entries.len() != COMPONENT_SCRIPTS.len()
+                || entries
+                    .iter()
+                    .any(|e| !e.file_type().is_ok_and(|t| t.is_file()))
+            {
+                return Err(unavailable());
+            }
+            // The manifest describes a prepared copy; it cannot authorize code.
+            // Compare against the scripts embedded in this application build.
+            for (name, expected) in COMPONENT_SCRIPTS {
+                if std::fs::read(scripts.join(name))? != *expected {
+                    return Err(unavailable());
+                }
+            }
+            scripts
+        } else {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../scripts/research")
+        };
+        let worker = scripts.join("desktop_engine_worker.py");
         if !worker.is_file() {
             return Err(unavailable());
         }
         Ok(Self {
             python,
             worker,
+            component,
             #[cfg(test)]
             fixture: false,
         })
@@ -106,6 +140,11 @@ impl Runtime {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+        if let Some(root) = &self.component {
+            command.env("OPENNOVEL_ENGINE_ROOT", root);
+        } else {
+            command.env_remove("OPENNOVEL_ENGINE_ROOT");
+        }
         #[cfg(test)]
         if self.fixture {
             command.arg("--fixture");
@@ -128,6 +167,37 @@ impl Runtime {
         Ok(())
     }
 }
+
+const COMPONENT_SCRIPTS: &[(&str, &[u8])] = &[
+    (
+        "desktop_engine_worker.py",
+        include_bytes!("../../../../scripts/research/desktop_engine_worker.py"),
+    ),
+    (
+        "engine_runtime_config.py",
+        include_bytes!("../../../../scripts/research/engine_runtime_config.py"),
+    ),
+    (
+        "persistent_engine.py",
+        include_bytes!("../../../../scripts/research/persistent_engine.py"),
+    ),
+    (
+        "persistent_read_gate.py",
+        include_bytes!("../../../../scripts/research/persistent_read_gate.py"),
+    ),
+    (
+        "relay_read_gate.py",
+        include_bytes!("../../../../scripts/research/relay_read_gate.py"),
+    ),
+    (
+        "https_read_gate.py",
+        include_bytes!("../../../../scripts/research/https_read_gate.py"),
+    ),
+    (
+        "local_engine_gate.py",
+        include_bytes!("../../../../scripts/research/local_engine_gate.py"),
+    ),
+];
 
 fn unavailable() -> Error {
     Error::Invalid("本地引擎未就绪，请检查组件状态与安装指引".into())
@@ -312,9 +382,30 @@ mod tests {
     }
 
     #[test]
+    fn prepared_component_requires_this_builds_exact_runtime_inventory() {
+        let root = tempfile::tempdir().unwrap();
+        let scripts = root.path().join("runtime");
+        std::fs::create_dir(&scripts).unwrap();
+        let python = root.path().join("python.exe");
+        std::fs::write(&python, b"never executed by this discovery test").unwrap();
+        for (name, content) in COMPONENT_SCRIPTS {
+            std::fs::write(scripts.join(name), content).unwrap();
+        }
+        assert!(Runtime::from_paths(python.clone(), Some(root.path().to_owned())).is_ok());
+        let first = scripts.join(COMPONENT_SCRIPTS[0].0);
+        std::fs::write(&first, b"altered script").unwrap();
+        assert!(Runtime::from_paths(python.clone(), Some(root.path().to_owned())).is_err());
+        std::fs::write(&first, COMPONENT_SCRIPTS[0].1).unwrap();
+        std::fs::write(scripts.join("json.py"), b"unexpected import shadow").unwrap();
+        assert!(Runtime::from_paths(python.clone(), Some(root.path().to_owned())).is_err());
+        assert!(Runtime::from_paths(python, Some(PathBuf::from("relative"))).is_err());
+    }
+
+    #[test]
     #[ignore = "Explicit native Python/Docker fixture acceptance; no real platform requests"]
     fn native_worker_reuses_session_and_commits_validated_txt() {
         let mut runtime = Runtime::discover().unwrap();
+        runtime.check().unwrap();
         runtime.fixture = true;
         let root = tempfile::tempdir().unwrap();
         let library = std::sync::Arc::new(

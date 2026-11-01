@@ -276,6 +276,8 @@ mod tests {
                             Err(_) => return,
                         }
                     };
+                    // Accepted sockets can inherit nonblocking mode on Windows.
+                    stream.set_nonblocking(false).unwrap();
                     stream
                         .set_read_timeout(Some(Duration::from_secs(1)))
                         .unwrap();
@@ -320,6 +322,29 @@ mod tests {
     const OK: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
     const BUSY: &[u8] =
         b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+    #[test]
+    fn accepted_socket_waits_for_delayed_http_headers() {
+        use std::io::{Read, Write};
+        let (url, calls, worker) = scripted_server(vec![OK]);
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", url.port().unwrap())).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        stream
+            .write_all(b"GET /delayed HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(
+            response.ends_with("\r\n\r\nok"),
+            "connection closed before the delayed request was served"
+        );
+        drop(stream);
+        worker.join().unwrap();
+        assert_eq!(calls.load(Ordering::Acquire), 1);
+    }
 
     #[test]
     fn unused_tcp_connection_does_not_consume_an_http_fixture() {

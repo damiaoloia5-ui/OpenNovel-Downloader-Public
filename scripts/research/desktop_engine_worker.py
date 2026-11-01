@@ -6,7 +6,7 @@ import sys
 import threading
 
 from persistent_engine import CREATE_FLAGS, EngineSession, EngineStopped, original_fixture
-import run_local_engine_gate as sandbox
+import engine_runtime_config as sandbox
 
 MAX_LINE = 2 * 1024 * 1024
 
