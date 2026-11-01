@@ -23,6 +23,7 @@ pub struct EngineControl {
     enabled: AtomicBool,
     remembered: AtomicBool,
     preference: Option<PathBuf>,
+    choice_revision: Mutex<u64>,
 }
 
 #[derive(Serialize)]
@@ -54,13 +55,35 @@ impl EngineControl {
         self.enabled.load(Ordering::Acquire)
     }
 
-    pub fn require(&self) -> Result<Runtime> {
-        if !self.enabled() {
-            return Err(Error::Invalid(
-                "本地组件尚未启用或未就绪，请在添加小说页检查".into(),
-            ));
+    pub fn remembered(&self) -> bool {
+        self.remembered.load(Ordering::Acquire)
+    }
+
+    pub fn require_ready(&self) -> Result<Runtime> {
+        let (ticket, prepare) = self.activation_ticket()?;
+        let runtime = Runtime::discover()?;
+        if prepare {
+            runtime.prepare()?;
         }
-        Runtime::discover()
+        self.finish_activation(ticket)?;
+        Ok(runtime)
+    }
+
+    fn activation_ticket(&self) -> Result<(u64, bool)> {
+        let revision = self.choice_revision.lock().map_err(|_| unavailable())?;
+        if !self.remembered() {
+            return Err(unavailable());
+        }
+        Ok((*revision, !self.enabled()))
+    }
+
+    fn finish_activation(&self, ticket: u64) -> Result<()> {
+        let revision = self.choice_revision.lock().map_err(|_| unavailable())?;
+        if *revision != ticket || !self.remembered() {
+            return Err(choice_changed());
+        }
+        self.enabled.store(true, Ordering::Release);
+        Ok(())
     }
 
     pub fn status(&self) -> EngineStatus {
@@ -72,6 +95,10 @@ impl EngineControl {
     }
 
     fn checked_status(&self, result: Result<()>) -> EngineStatus {
+        let _revision = self
+            .choice_revision
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let ready = result.is_ok();
         let remembered = self.remembered.load(Ordering::Acquire);
         self.enabled.store(ready && remembered, Ordering::Release);
@@ -97,13 +124,31 @@ impl EngineControl {
 
     pub fn set(&self, enabled: bool) -> Result<EngineStatus> {
         if enabled {
+            let ticket = self.reserve_choice()?;
             Runtime::discover()?.prepare()?;
+            self.commit_choice(ticket, true)?;
+        } else {
+            self.save_choice(false)?;
         }
-        self.save_choice(enabled)?;
         Ok(self.status())
     }
 
     fn save_choice(&self, enabled: bool) -> Result<()> {
+        let ticket = self.reserve_choice()?;
+        self.commit_choice(ticket, enabled)
+    }
+
+    fn reserve_choice(&self) -> Result<u64> {
+        let mut revision = self.choice_revision.lock().map_err(|_| unavailable())?;
+        *revision = revision.wrapping_add(1);
+        Ok(*revision)
+    }
+
+    fn commit_choice(&self, ticket: u64, enabled: bool) -> Result<()> {
+        let revision = self.choice_revision.lock().map_err(|_| unavailable())?;
+        if *revision != ticket {
+            return Err(choice_changed());
+        }
         if let Some(path) = &self.preference {
             let mut file = tempfile::NamedTempFile::new_in(path.parent().ok_or_else(unavailable)?)?;
             serde_json::to_writer(
@@ -120,6 +165,10 @@ impl EngineControl {
         self.enabled.store(enabled, Ordering::Release);
         Ok(())
     }
+}
+
+fn choice_changed() -> Error {
+    Error::Invalid("本地增强选择已变化，已取消旧的准备结果；请按当前状态操作".into())
 }
 
 #[derive(Serialize, Deserialize)]
@@ -151,6 +200,7 @@ impl Runtime {
             && root.join("python").exists()
         {
             let python = verified_bundled_python(root)?;
+            verify_offline_files(root)?;
             return Self::from_paths(python, component);
         }
         let python = std::env::var_os("OPENNOVEL_ENGINE_PYTHON")
@@ -254,7 +304,7 @@ impl Runtime {
         let worker = Worker::spawn(command)?;
         let result = worker.receive(
             &AtomicBool::new(false),
-            Duration::from_secs(if prepare { 90 } else { 35 }),
+            Duration::from_secs(if prepare { 240 } else { 35 }),
         )?;
         if result["ready"] != true {
             return Err(Error::Invalid(
@@ -267,6 +317,15 @@ impl Runtime {
                     }
                     Some("engine_missing") => "本地隔离引擎构建缺失，请按组件安装说明准备",
                     Some("source_changed") => "组件源码校验失败，请重新安装匹配的完整组件",
+                    Some("offline_bundle_pending") => {
+                        "首次使用需要准备内置引擎，请点击启用；无需手工下载镜像或构建"
+                    }
+                    Some("offline_bundle_invalid") => {
+                        "内置离线组件校验失败，请重新安装完整一体化版"
+                    }
+                    Some("offline_import_failed") => {
+                        "内置引擎准备失败，请检查 Docker 和可用空间后重试；已存正文保留"
+                    }
                     _ => "本地组件检查失败，请重新检查或安装匹配组件",
                 }
                 .into(),
@@ -285,6 +344,61 @@ fn verified_bundled_python(root: &std::path::Path) -> Result<PathBuf> {
         manifest["files"].as_object().ok_or_else(unavailable)?,
     )?;
     Ok(root.join("python/python.exe"))
+}
+
+fn verify_offline_files(root: &std::path::Path) -> Result<()> {
+    verify_offline_files_with_lock(
+        root,
+        include_bytes!("../../../../scripts/research/engine_bundle_lock.json"),
+    )
+    .map_err(|_| Error::Invalid("内置离线组件不完整或版本不匹配，请重新安装完整一体化版".into()))
+}
+
+fn verify_offline_files_with_lock(root: &std::path::Path, raw: &[u8]) -> Result<()> {
+    let directory = root.join("offline-engine");
+    if std::fs::read(directory.join("manifest.json"))? != raw {
+        return Err(unavailable());
+    }
+    let lock: Value = serde_json::from_slice(raw)?;
+    let files = lock["files"].as_object().ok_or_else(unavailable)?;
+    if files.len() != 2
+        || !files.contains_key("runtime-image.tar.gz")
+        || !files.contains_key("corresponding-source.tar.gz")
+    {
+        return Err(unavailable());
+    }
+    let entries = std::fs::read_dir(&directory)?.collect::<std::io::Result<Vec<_>>>()?;
+    if entries.len() != 3
+        || entries
+            .iter()
+            .any(|e| !e.file_type().is_ok_and(|t| t.is_file()))
+    {
+        return Err(unavailable());
+    }
+    for (name, expected) in files {
+        let path = directory.join(name);
+        let bytes = expected["bytes"]
+            .as_u64()
+            .filter(|n| *n > 0 && *n <= 300 * 1024 * 1024)
+            .ok_or_else(unavailable)?;
+        if std::fs::metadata(&path)?.len() != bytes {
+            return Err(unavailable());
+        }
+        let mut file = std::fs::File::open(path)?;
+        let mut digest = Sha256::new();
+        let mut buffer = [0u8; 65536];
+        loop {
+            let size = file.read(&mut buffer)?;
+            if size == 0 {
+                break;
+            }
+            digest.update(&buffer[..size]);
+        }
+        if expected["sha256"].as_str() != Some(format!("{:x}", digest.finalize()).as_str()) {
+            return Err(unavailable());
+        }
+    }
+    Ok(())
 }
 
 fn verify_files(
@@ -312,6 +426,14 @@ fn verify_files(
 }
 
 const COMPONENT_SCRIPTS: &[(&str, &[u8])] = &[
+    (
+        "offline_engine_bundle.py",
+        include_bytes!("../../../../scripts/research/offline_engine_bundle.py"),
+    ),
+    (
+        "engine_bundle_lock.json",
+        include_bytes!("../../../../scripts/research/engine_bundle_lock.json"),
+    ),
     (
         "desktop_engine_worker.py",
         include_bytes!("../../../../scripts/research/desktop_engine_worker.py"),
@@ -542,7 +664,7 @@ mod tests {
     fn local_engine_is_disabled_without_a_saved_choice() {
         let control = EngineControl::default();
         assert!(!control.enabled());
-        assert!(control.require().is_err());
+        assert!(control.require_ready().is_err());
     }
 
     #[test]
@@ -586,6 +708,21 @@ mod tests {
     }
 
     #[test]
+    fn disabling_or_newer_choices_invalidate_late_preparation_results() {
+        let root = tempfile::tempdir().unwrap();
+        let control = EngineControl::for_directory(root.path());
+        control.save_choice(true).unwrap();
+        let (ticket, _) = control.activation_ticket().unwrap();
+        control.save_choice(false).unwrap();
+        assert!(control.finish_activation(ticket).is_err());
+        assert!(!control.remembered() && !control.enabled());
+        let old_enable = control.reserve_choice().unwrap();
+        control.save_choice(false).unwrap();
+        assert!(control.commit_choice(old_enable, true).is_err());
+        assert!(!EngineControl::for_directory(root.path()).remembered());
+    }
+
+    #[test]
     fn bundled_resource_discovery_uses_only_the_application_directory() {
         let root = tempfile::tempdir().unwrap();
         assert!(Runtime::adjacent_component(root.path()).is_none());
@@ -610,6 +747,26 @@ mod tests {
         std::fs::write(root.path().join("python.exe"), b"original fixture").unwrap();
         std::fs::create_dir(root.path().join("site-packages")).unwrap();
         assert!(verify_files(root.path(), expected).is_err());
+    }
+
+    #[test]
+    fn offline_archives_and_manifest_cannot_authorize_altered_or_partial_files() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("offline-engine");
+        std::fs::create_dir(&directory).unwrap();
+        let mut files = serde_json::Map::new();
+        for name in ["runtime-image.tar.gz", "corresponding-source.tar.gz"] {
+            let content = format!("original fixture {name}");
+            std::fs::write(directory.join(name), &content).unwrap();
+            files.insert(name.into(), json!({"bytes":content.len(),"sha256":format!("{:x}",Sha256::digest(content.as_bytes()))}));
+        }
+        let raw = serde_json::to_vec(&json!({"files":files})).unwrap();
+        std::fs::write(directory.join("manifest.json"), &raw).unwrap();
+        assert!(verify_offline_files_with_lock(root.path(), &raw).is_ok());
+        std::fs::write(directory.join("runtime-image.tar.gz"), "altered").unwrap();
+        assert!(verify_offline_files_with_lock(root.path(), &raw).is_err());
+        std::fs::write(directory.join("manifest.json"), b"{}").unwrap();
+        assert!(verify_offline_files_with_lock(root.path(), &raw).is_err());
     }
 
     #[test]
@@ -766,10 +923,13 @@ mod tests {
     #[test]
     #[ignore = "Explicit native Python/Docker fixture acceptance; no real platform requests"]
     fn native_worker_reuses_session_and_commits_validated_txt() {
-        let mut runtime = Runtime::discover().unwrap();
-        runtime.check().unwrap();
-        runtime.fixture = true;
         let root = tempfile::tempdir().unwrap();
+        let control = EngineControl::for_directory(root.path());
+        control.save_choice(true).unwrap();
+        let control = EngineControl::for_directory(root.path());
+        let mut runtime = control.require_ready().unwrap();
+        assert!(control.enabled());
+        runtime.fixture = true;
         let library = std::sync::Arc::new(
             opennovel_core::Library::open(root.path().join("library.db")).unwrap(),
         );

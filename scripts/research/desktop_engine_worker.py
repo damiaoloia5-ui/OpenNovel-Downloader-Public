@@ -8,6 +8,7 @@ import time
 
 from persistent_engine import CREATE_FLAGS, EngineSession, EngineStopped, original_fixture
 import engine_runtime_config as sandbox
+import offline_engine_bundle as offline
 
 MAX_LINE = 2 * 1024 * 1024
 
@@ -29,6 +30,20 @@ def check():
             return 'docker_unavailable'
     except (OSError, subprocess.SubprocessError):
         return 'docker_unavailable'
+    if offline.present():
+        try:
+            lock = offline.verify()
+            if not offline.image_ready(lock):
+                return 'offline_bundle_pending'
+            subprocess.run([sandbox.DOCKER, 'run', '--rm', '--pull=never', '--network=none', '--read-only',
+                '--user=10001:10001', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--log-driver=none',
+                lock['image_id'], 'test', '-x', lock['binary_path']], check=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8, creationflags=CREATE_FLAGS)
+            return None
+        except offline.BundleError:
+            return 'offline_bundle_invalid'
+        except (OSError, subprocess.SubprocessError):
+            return 'engine_missing'
     for args in [('image', 'inspect', sandbox.RUST_IMAGE),
                  ('image', 'inspect', 'python:3.12-slim'), ('volume', 'inspect', sandbox.TARGET)]:
         try:
@@ -107,23 +122,28 @@ def serve(fixture=False):
 
 
 def prepare():
-    """Only an explicit user action may start an already-installed Docker Desktop."""
+    """Explicit action only: start installed Desktop and import a verified local image."""
     reason = check()
-    if reason != 'docker_unavailable':
-        return reason
-    try:
-        subprocess.run([sandbox.DOCKER, 'desktop', 'start', '--detach'], check=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8,
-                       creationflags=CREATE_FLAGS)
-    except (OSError, subprocess.SubprocessError):
-        return 'docker_unavailable'
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        reason = check()
-        if reason != 'docker_unavailable':
-            return reason
-        time.sleep(1)
-    return 'docker_unavailable'
+    if reason == 'docker_unavailable':
+        try:
+            subprocess.run([sandbox.DOCKER, 'desktop', 'start', '--detach'], check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8,
+                           creationflags=CREATE_FLAGS)
+        except (OSError, subprocess.SubprocessError):
+            return 'docker_unavailable'
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            reason = check()
+            if reason != 'docker_unavailable':
+                break
+            time.sleep(1)
+    if reason == 'offline_bundle_pending':
+        try:
+            offline.install()
+        except offline.BundleError as error:
+            return error.reason
+        return check()
+    return reason
 
 
 if __name__ == '__main__':

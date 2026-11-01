@@ -1,27 +1,35 @@
 """Explicit Docker-only controlled session checks. Never requests a real platform."""
+import argparse
 import json
 import pathlib
 import threading
 import time
 
 from persistent_engine import EngineSession, EngineStopped, original_fixture
+import offline_engine_bundle as offline
 from run_local_engine_gate import REPO
 
 BOOK, ITEMS = '10000000001', ['10000000002', '10000000003']
 
 
-def main():
+def main(output=None):
+    output = pathlib.Path(output) if output is not None else REPO / '.artifacts/persistent-engine-20261101'
+    if output.exists():
+        raise FileExistsError('preserve existing evidence; choose a new --output directory')
+    bundle = offline.verify() if offline.present() else None
     reports = []
     def record(name, session):
         identifiers = [item['container'] for item in session.evidence]
         for identifier in identifiers:
-            try:
-                session._docker('inspect', identifier)
-            except EngineStopped:
-                pass
-            else:
+            if session._docker('ps', '-a', '--no-trunc', '--filter', 'id=' + identifier, '--format', '{{.ID}}'):
                 raise AssertionError('owned container survived cleanup')
-        reports.append({'case': name, 'requests': session.requests, 'containers_created': len(identifiers), 'cleanup_verified': True})
+        if bundle:
+            assert all(item['image'] == bundle['image_id'] for item in session.evidence)
+            assert all(m['path'] == '/tmp' for m in session.evidence[-1]['mounts'])
+            assert all(m['path'] in {'/review', '/tmp'} for m in session.evidence[0]['mounts'])
+            assert all(not m['rw'] for m in session.evidence[0]['mounts'] if m['path'] == '/review')
+        reports.append({'case': name, 'requests': session.requests, 'containers_created': len(identifiers), 'cleanup_verified': True,
+                        'offline_image': bundle['image_id'] if bundle else None, 'development_volume_mounted': any(m['path'] == '/target' for item in session.evidence for m in item['mounts'])})
 
     started = time.monotonic()
     with EngineSession(BOOK, ITEMS, fixture=original_fixture) as session:
@@ -108,11 +116,12 @@ def main():
     record('dead_process_not_reused', exited)
 
     result = {'controlled_only': True, 'checks_passed': len(reports), 'elapsed_seconds': round(time.monotonic()-started, 3), 'cases': reports}
-    output = REPO / '.artifacts/persistent-engine-20261101'
     output.mkdir(parents=True, exist_ok=True)
     (output / 'controlled-session-checks.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
     print(json.dumps(result))
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output', type=pathlib.Path)
+    main(parser.parse_args().output)

@@ -389,7 +389,7 @@ fn source_capabilities(state: State<'_, AppState>) -> Vec<SourceInfo> {
         id: opennovel_core::sources::LOCAL_ENGINE_SOURCE,
         name: "番茄本地引擎",
         can_inspect: true,
-        can_download: state.engine.enabled(),
+        can_download: state.engine.enabled() || state.engine.remembered(),
         can_search: false,
         note: "默认关闭的隔离实验组件，仅明确免费章；正文逐章验证，不保证全书。与网页书库独立，不合并旧任务。",
         example: "https://fanqienovel.com/page/作品ID",
@@ -573,7 +573,7 @@ async fn update_book(book_id: String, state: State<'_, AppState>) -> Result<Stri
             .find(|book| book.id == book_id)
             .ok_or_else(|| opennovel_core::Error::Invalid("作品不存在".into()))?;
         if book.source == opennovel_core::sources::LOCAL_ENGINE_SOURCE {
-            engine.require()?;
+            engine.require_ready()?;
             let catalog =
                 opennovel_core::sources::Fanqie::new()?.inspect_engine(&book.remote_id)?;
             return library.create_engine_download(
@@ -641,11 +641,6 @@ async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> 
     if snapshot.source == opennovel_core::QIDIAN_SESSION_SOURCE {
         return Err("起点自动任务请在平台账户选择官网会话后继续".into());
     }
-    let engine_runtime = if snapshot.source == opennovel_core::sources::LOCAL_ENGINE_SOURCE {
-        Some(state.engine.require().map_err(|e| e.to_string())?)
-    } else {
-        None
-    };
     if matches!(snapshot.state.as_str(), "partial" | "blocked")
         && snapshot.blocked > 0
         && snapshot.failed == 0
@@ -679,23 +674,43 @@ async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> 
     ) {
         return Err("任务不能继续".into());
     }
-    let mut registrations = state.cancellations.lock().map_err(|_| "任务管理器不可用")?;
-    if registrations.contains_key(job)
-        || registrations
-            .values()
-            .any(|run| run.book_id == snapshot.book_id)
-    {
-        return Err("该作品的任务仍在执行或停止中，请稍候".into());
-    }
     let token = Arc::new(AtomicBool::new(false));
-    registrations.insert(
-        job.to_owned(),
-        ActiveTask {
-            book_id: snapshot.book_id.clone(),
-            token: Arc::clone(&token),
-            account_id: None,
-        },
-    );
+    {
+        let mut registrations = state.cancellations.lock().map_err(|_| "任务管理器不可用")?;
+        if registrations.contains_key(job)
+            || registrations
+                .values()
+                .any(|run| run.book_id == snapshot.book_id)
+        {
+            return Err("该作品的任务仍在执行或停止中，请稍候".into());
+        }
+        registrations.insert(
+            job.to_owned(),
+            ActiveTask {
+                book_id: snapshot.book_id.clone(),
+                token: Arc::clone(&token),
+                account_id: None,
+            },
+        );
+    }
+    // Register preparation too, so cancel/disable cannot miss a pending start.
+    let engine_runtime = if snapshot.source == opennovel_core::sources::LOCAL_ENGINE_SOURCE {
+        let engine = Arc::clone(&state.engine);
+        let prepared = blocking(move || engine.require_ready()).await;
+        if token.load(std::sync::atomic::Ordering::Acquire) || prepared.is_err() {
+            if let Ok(mut entries) = state.cancellations.lock() {
+                entries.remove(job);
+            }
+            return Err(if token.load(std::sync::atomic::Ordering::Acquire) {
+                "本次准备已取消，原进度保留".into()
+            } else {
+                prepared.err().unwrap_or_else(|| "本地组件准备失败".into())
+            });
+        }
+        Some(prepared.map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
     let library = Arc::clone(&state.library);
     let cancellations = Arc::clone(&state.cancellations);
     let job_id = job.to_owned();

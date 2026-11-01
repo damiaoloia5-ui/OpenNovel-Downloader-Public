@@ -10,6 +10,7 @@ import threading
 import time
 
 import engine_runtime_config as sandbox
+import offline_engine_bundle as offline
 from https_read_gate import fetch_with_retries, validate_request
 
 CREATE_FLAGS = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
@@ -47,16 +48,19 @@ class EngineSession:
         sandbox.verify_source()
         try:
             self._check_stop(cancelled)
-            python = self._docker('image', 'inspect', 'python:3.12-slim', '--format', '{{.Id}}')
+            bundle = offline.verify() if offline.present() else None
+            if bundle is not None and not offline.image_ready(bundle):
+                raise EngineStopped('offline component is not prepared; no legacy fallback')
+            python = bundle['image_id'] if bundle is not None else self._docker('image', 'inspect', 'python:3.12-slim', '--format', '{{.Id}}')
             self._check_stop(cancelled)
             self.relay = self._create(python, ['python', '-u', '/review/persistent_read_gate.py'], 'none',
                 [f'type=bind,source={sandbox.SCRIPTS},target=/review,readonly'])
             self._check_stop(cancelled)
             self._docker('start', self.relay)
             self._check_stop(cancelled)
-            self.engine = self._create(sandbox.RUST_IMAGE,
-                ['/target/x86_64-unknown-linux-gnu/debug/examples/opennovel_engine_service'],
-                'container:' + self.relay, [f'type=volume,source={sandbox.TARGET},target=/target,readonly'])
+            self.engine = self._create(bundle['image_id'] if bundle is not None else sandbox.RUST_IMAGE,
+                [bundle['binary_path'] if bundle is not None else '/target/x86_64-unknown-linux-gnu/debug/examples/opennovel_engine_service'],
+                'container:' + self.relay, [] if bundle is not None else [f'type=volume,source={sandbox.TARGET},target=/target,readonly'])
             self._check_stop(cancelled)
             self._child = subprocess.Popen([sandbox.DOCKER, 'start', '-ai', self.engine], env=self.env,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -96,7 +100,7 @@ class EngineSession:
         host = inspect['HostConfig']
         if not host['AutoRemove'] or host['NetworkMode'] != network or not host['ReadonlyRootfs'] or host['PortBindings'] or host['Privileged'] or host['CapAdd'] or host['CapDrop'] != ['ALL'] or host['LogConfig']['Type'] != 'none' or inspect['Config']['User'] != '10001:10001':
             raise EngineStopped('isolation refused')
-        self.evidence.append({'container': identifier, 'network': network, 'user': '10001:10001',
+        self.evidence.append({'container': identifier, 'image': inspect['Image'], 'network': network, 'user': '10001:10001',
                               'mounts': [{'path': m['Destination'], 'rw': m['RW']} for m in inspect['Mounts']]})
         return identifier
 

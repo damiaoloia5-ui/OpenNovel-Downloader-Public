@@ -1,4 +1,24 @@
-# 番茄本地增强：一体化使用与维护
+# 番茄本地增强：离线一体化使用与维护
+
+## v0.3.3 离线组件版，2026-11-01
+
+1. 关闭旧窗口，双击桌面 OpenNovel 快捷方式。
+2. 粘贴番茄作品详情链接，点“开始保存为 TXT”。
+3. 首次按提示启用增强。软件核对内置文件，必要时启动已安装的 Docker Desktop，并从本地包准备引擎；无需自行下载镜像、配置 Python 或构建。完成后自动生成 TXT。
+
+首次准备可能需要几分钟，之后按书库记住选择。继续已暂停的本地引擎任务时，软件也会尝试恢复所需组件。关闭增强会使旧的准备结果失效；取消准备中的任务不会在准备完成后开始保存正文。镜像导入是 Docker 后台操作，取消后仍可能完成缓存导入，但不会因此写入正文或重新启用选择。旧正文、任务和 TXT 保留。
+
+仍需 **Docker Desktop 的 Linux 后端**。软件不安装 Docker，不修改虚拟化，不要求用户手工创建开发构建卷。当前组件仅验证 Windows x64 与 Linux amd64 镜像，不代表干净系统或其他架构通过。
+
+一体化包包含固定 Python、9 个运行文件（含锁定清单）、约 45 MB 的运行镜像归档和约 34 MB 的完整对应源码归档。两个归档与清单在运行前按程序内固定字节/摘要检查；不允许清单自行指定其他程序或远端下载地址。准备时仅本地 `docker image load`，就绪后按固定镜像 ID 使用；无开发卷回退。
+
+独立引擎作为 GPL-3.0 组件提供，对应源码在 `opennovel-engine/offline-engine/corresponding-source.tar.gz`，含上游、封装、228 个 vendored 依赖、许可证及 `REBUILD.py`。Apache-2.0 主程序和第三方组件分别保留许可。
+
+维护者准备流程：固定上游来源后，运行 `scripts/prepare_engine_sources.py --download-missing`（仅维护者显式补齐锁定 crates.io 归档）；运行 `scripts/build_offline_engine.py --revision <新编号>`，在无网容器构建并生成新分发目录。审查构建、许可、摘要与对应源码后，更新 `engine_bundle_lock.json`，再运行 `scripts/prepare_integrated_component.py` 和 `npm run desktop:package:integrated`。应用不会执行这些构建或下载步骤。升级需准备全新资源目录并保留旧版，不拼接不同版本组件。
+
+本轮受控首次导入、原生 TXT、恢复及来源复验以[验证记录](verification/2026-11-01-offline-engine.md)为准。只处理明确免费的正文，不扩大 VIP 或其他平台支持。
+
+## 历史一体化版与开发预览
 
 ## v0.3.2 一体化版，2026-11-01
 

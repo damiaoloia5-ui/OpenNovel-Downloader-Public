@@ -4,7 +4,7 @@
     "resources": {
       "../../../LICENSE": "LICENSE",
       "../../../.artifacts/release/THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt",
-      "../../../.artifacts/integrated-resources/opennovel-engine/": "opennovel-engine/"
+      "../../../.artifacts/offline-resources/opennovel-engine/": "opennovel-engine/"
     }
   }
 }

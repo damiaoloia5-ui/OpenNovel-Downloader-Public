@@ -74,7 +74,7 @@ async function inspect(autoSave=false){
     if(result.source==='fanqie-web'&&result.chapters.some(c=>c.restricted)){
       if(!engineStatus.value||engineStatus.value.remembered&&!engineStatus.value.enabled){try{engineStatus.value=await localEngineStatus();}catch{engineStatus.value=null;}}
       if(disposed||epoch!==navigationEpoch||bookInput.value.trim()!==input)return;
-      if(autoSave&&engineStatus.value?.remembered&&engineStatus.value.installed&&!engineStatus.value.ready){notice.value='正在准备本地增强服务，首次启动可能需要几十秒…';engineStatus.value=await setLocalEngine(true);}
+      if(autoSave&&engineStatus.value?.remembered&&engineStatus.value.installed&&!engineStatus.value.ready){notice.value='正在准备本地增强服务，首次准备可能需要几分钟…';engineStatus.value=await setLocalEngine(true);}
       if(disposed||epoch!==navigationEpoch||bookInput.value.trim()!==input)return;
       if(engineStatus.value?.enabled){result=await inspectBook(input);sourceInfos.value=await sourceCapabilities();}
     }
@@ -123,7 +123,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         <button :class="{ selected: page === 'tools' }" @click="page = 'tools'"><span aria-hidden="true">▣</span>备份与诊断</button>
         </details>
       </nav>
-      <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>综合功能候选版 · 0.3.2</p></div>
+      <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>综合功能候选版 · 0.3.3</p></div>
     </aside>
 
     <main>

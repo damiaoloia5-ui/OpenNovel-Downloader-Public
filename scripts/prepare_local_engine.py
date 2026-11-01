@@ -7,7 +7,8 @@ import shutil
 import sys
 
 RUNTIME_FILES = ('desktop_engine_worker.py', 'engine_runtime_config.py', 'persistent_engine.py',
-                 'persistent_read_gate.py', 'relay_read_gate.py', 'https_read_gate.py', 'local_engine_gate.py')
+                 'persistent_read_gate.py', 'relay_read_gate.py', 'https_read_gate.py', 'local_engine_gate.py',
+                 'offline_engine_bundle.py', 'engine_bundle_lock.json')
 
 
 def assemble(destination, source, inventory, scripts, license_file, executable=None):
