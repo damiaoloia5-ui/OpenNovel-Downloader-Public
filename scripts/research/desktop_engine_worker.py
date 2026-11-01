@@ -4,6 +4,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 
 from persistent_engine import CREATE_FLAGS, EngineSession, EngineStopped, original_fixture
 import engine_runtime_config as sandbox
@@ -17,18 +18,35 @@ def emit(value):
 
 
 def check():
-    sandbox.verify_source()
+    try:
+        sandbox.verify_source()
+    except Exception:
+        return 'source_changed'
+    try:
+        result = subprocess.run([sandbox.DOCKER, 'info', '--format', '{{.OSType}}'], check=True,
+                                capture_output=True, text=True, timeout=5, creationflags=CREATE_FLAGS)
+        if result.stdout.strip() != 'linux':
+            return 'docker_unavailable'
+    except (OSError, subprocess.SubprocessError):
+        return 'docker_unavailable'
     for args in [('image', 'inspect', sandbox.RUST_IMAGE),
                  ('image', 'inspect', 'python:3.12-slim'), ('volume', 'inspect', sandbox.TARGET)]:
-        subprocess.run(['docker', *args], check=True, stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL, timeout=8, creationflags=CREATE_FLAGS)
-    subprocess.run(['docker', 'run', '--rm', '--pull=never', '--network=none', '--read-only',
+        try:
+            subprocess.run([sandbox.DOCKER, *args], check=True, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=5, creationflags=CREATE_FLAGS)
+        except (OSError, subprocess.SubprocessError):
+            return 'engine_missing' if args[0] == 'volume' else 'images_missing'
+    try:
+        subprocess.run([sandbox.DOCKER, 'run', '--rm', '--pull=never', '--network=none', '--read-only',
         '--user=10001:10001', '--cap-drop=ALL', '--security-opt=no-new-privileges',
         '--log-driver=none', '--mount', f'type=volume,source={sandbox.TARGET},target=/target,readonly',
         sandbox.RUST_IMAGE, 'test', '-x',
         '/target/x86_64-unknown-linux-gnu/debug/examples/opennovel_engine_service'],
         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8,
         creationflags=CREATE_FLAGS)
+    except (OSError, subprocess.SubprocessError):
+        return 'engine_missing'
+    return None
 
 
 def serve(fixture=False):
@@ -88,12 +106,32 @@ def serve(fixture=False):
             session.close()
 
 
+def prepare():
+    """Only an explicit user action may start an already-installed Docker Desktop."""
+    reason = check()
+    if reason != 'docker_unavailable':
+        return reason
+    try:
+        subprocess.run([sandbox.DOCKER, 'desktop', 'start', '--detach'], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8,
+                       creationflags=CREATE_FLAGS)
+    except (OSError, subprocess.SubprocessError):
+        return 'docker_unavailable'
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        reason = check()
+        if reason != 'docker_unavailable':
+            return reason
+        time.sleep(1)
+    return 'docker_unavailable'
+
+
 if __name__ == '__main__':
     sys.stdout.reconfigure(encoding='utf-8')
-    if sys.argv[1:] == ['--check']:
+    if sys.argv[1:] in (['--check'], ['--prepare']):
         try:
-            check()
-            emit({'ready': True})
+            reason = prepare() if sys.argv[1:] == ['--prepare'] else check()
+            emit({'ready': reason is None, 'reason': reason})
         except Exception:
             emit({'ready': False})
     elif sys.argv[1:] in ([], ['--fixture']):

@@ -48,7 +48,7 @@ export function historyDetails(id:string):Promise<BookDetails> {return invoke('h
 export function readHistory(id:string,chapterId:string):Promise<ChapterContent> {return invoke('read_history',{id,chapterId});}
 export function exportHistory(id:string,format:'txt'|'epub'):Promise<Receipt> {return invoke('export_history',{id,format});}
 export function sourceCapabilities():Promise<SourceInfo[]> {return invoke('source_capabilities');}
-export interface LocalEngineStatus {enabled:boolean;ready:boolean;message:string}
+export interface LocalEngineStatus {enabled:boolean;ready:boolean;remembered?:boolean;installed?:boolean;message:string}
 export function localEngineStatus():Promise<LocalEngineStatus> {return invoke('local_engine_status');}
 export function setLocalEngine(enabled:boolean):Promise<LocalEngineStatus> {return invoke('set_local_engine',{enabled});}
 export interface ChapterContent {id:string;title:string;paragraphs:string[]}

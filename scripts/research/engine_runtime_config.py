@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import pathlib
+import shutil
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 SCRIPTS = pathlib.Path(__file__).resolve().parent
@@ -19,6 +20,12 @@ RUST_IMAGE = 'sha256:e18a79fc84dfcfc3ab5ba72290398a644c135c97eaa881447fddc354ee4
 CACHE = 'opennovel-engine-review-20261101-cargo'
 TARGET = 'opennovel-engine-review-20261101-target'
 CANDIDATE_COMMIT = '07cfb2249d4fd57d19bf4420af0e97621ec92df9'
+
+# A packaged Windows app must not require Docker on PATH or resolve it from cwd.
+if os.name == 'nt':
+    DOCKER = str(pathlib.Path(os.environ.get('ProgramFiles', r'C:\Program Files')) / 'Docker/Docker/resources/bin/docker.exe')
+else:
+    DOCKER = shutil.which('docker') or 'docker'
 
 
 def verify_source():

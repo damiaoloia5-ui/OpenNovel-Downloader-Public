@@ -13,6 +13,7 @@ coverage/
 *.db-shm
 *.db-wal
 *.db.lock
+local-engine-choice.json
 *.log
 output/playwright/
 apps/desktop/src-tauri/gen/

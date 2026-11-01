@@ -58,7 +58,7 @@ class EngineSession:
                 ['/target/x86_64-unknown-linux-gnu/debug/examples/opennovel_engine_service'],
                 'container:' + self.relay, [f'type=volume,source={sandbox.TARGET},target=/target,readonly'])
             self._check_stop(cancelled)
-            self._child = subprocess.Popen(['docker', 'start', '-ai', self.engine], env=self.env,
+            self._child = subprocess.Popen([sandbox.DOCKER, 'start', '-ai', self.engine], env=self.env,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 creationflags=CREATE_FLAGS)
             self._reader = threading.Thread(target=self._read_responses, daemon=True)
@@ -77,7 +77,7 @@ class EngineSession:
             raise
 
     def _docker(self, *args, input=None):
-        result = subprocess.run(['docker', *args], input=input, text=True, capture_output=True,
+        result = subprocess.run([sandbox.DOCKER, *args], input=input, text=True, capture_output=True,
             encoding='utf-8', errors='replace', timeout=15, env=self.env, creationflags=CREATE_FLAGS)
         if result.returncode:
             raise EngineStopped('isolated engine operation failed')

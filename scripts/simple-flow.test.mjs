@@ -243,6 +243,43 @@ test('failed or late component activation cannot start saving the wrong book',as
     }finally{f.close();}
   }
 });
+test('a restored choice rechecks a stale web catalog and saves without another enable click',async()=>{
+  let inspections=0;const f=await mount(App,{},({state,api})=>{
+    api.localEngineStatus=async()=>({enabled:true,ready:true,remembered:true,message:'已恢复选择'});
+    api.sourceCapabilities=async()=>[{id:'fanqie-web',can_download:true},{id:'fanqie-app-local',can_download:true}];
+    api.inspectBook=async()=>{state.calls.push(['inspect',++inspections]);return {...preview.catalog,source:inspections===1?'fanqie-web':'fanqie-app-local',chapters:preview.catalog.chapters.map((c,i)=>({...c,restricted:inspections===1&&i===1}))};};
+  });try{
+    const input=walk(f.root,true).find(n=>n.props.id==='novel-link');input.value='https://fanqienovel.com/page/10000000001';input.dispatch('input');await flush();
+    walk(f.root,true).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();await flush();
+    assert.equal(inspections,2);const downloads=f.state.calls.filter(c=>c[0]==='download');assert.equal(downloads.length,1);assert.match(downloads[0][4],/2/);
+    assert.equal(f.button('启用本地组件，保存更多免费章节'),undefined);
+  }finally{f.close();}
+});
+test('a remembered unavailable component explains recovery before an explicit web-only fallback',async()=>{
+  const f=await mount(App,{},({api})=>{
+    api.localEngineStatus=async()=>({enabled:false,ready:false,remembered:true,message:'请先启动 Docker Desktop，再重新检查'});
+    api.sourceCapabilities=async()=>[{id:'fanqie-web',can_download:true}];
+    api.inspectBook=async()=>({...preview.catalog,source:'fanqie-web',chapters:preview.catalog.chapters.map((c,i)=>({...c,restricted:i===1}))});
+  });try{
+    const input=walk(f.root,true).find(n=>n.props.id==='novel-link');input.value='https://fanqienovel.com/page/10000000001';input.dispatch('input');await flush();
+    walk(f.root,true).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();await flush();
+    assert.equal(f.state.calls.filter(c=>c[0]==='download').length,0);assert.match(f.root.textContent,/请先启动 Docker Desktop/);
+    await click(f.button('仅保存目录标记开放章（1）'));assert.equal(f.state.calls.filter(c=>c[0]==='download').length,1);
+  }finally{f.close();}
+});
+test('saving with a remembered installed component prepares it and continues in one action',async()=>{
+  let enabled=false;const f=await mount(App,{},({state,api})=>{
+    api.localEngineStatus=async()=>({enabled,ready:enabled,installed:true,remembered:true,message:'隔离服务尚未启动'});
+    api.setLocalEngine=async()=>{state.calls.push(['prepare']);enabled=true;return api.localEngineStatus();};
+    api.sourceCapabilities=async()=>[{id:'fanqie-web',can_download:true},{id:'fanqie-app-local',can_download:enabled}];
+    api.inspectBook=async()=>({...preview.catalog,source:enabled?'fanqie-app-local':'fanqie-web',chapters:preview.catalog.chapters.map((c,i)=>({...c,restricted:!enabled&&i===1}))});
+  });try{
+    const input=walk(f.root,true).find(n=>n.props.id==='novel-link');input.value='https://fanqienovel.com/page/10000000001';input.dispatch('input');await flush();
+    walk(f.root,true).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();await flush();
+    assert.equal(f.state.calls.filter(c=>c[0]==='prepare').length,1);
+    const downloads=f.state.calls.filter(c=>c[0]==='download');assert.equal(downloads.length,1);assert.match(downloads[0][4],/2/);
+  }finally{f.close();}
+});
 test('bookshelf opens the actual automatic TXT record without another export step',async()=>{
   const f=await mount(App,{},({state})=>{state.books=[{...stored,saved_chapters:2}];state.automatic=[{book_id:stored.id,state:'ready',export_id:'original-txt',receipt:{path:'D:/original.txt'}}];});try{
     await click(walk(f.root,true).find(n=>n.tag==='button'&&n.textContent.includes('我的书库')));await click(f.button('打开 TXT 文件夹'));

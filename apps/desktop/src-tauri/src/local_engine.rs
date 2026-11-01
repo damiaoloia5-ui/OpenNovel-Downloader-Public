@@ -3,8 +3,9 @@ use opennovel_core::{
     Error, ImportChapter, Result,
     sources::{ChapterRef, LOCAL_ENGINE_SOURCE, SourceAdapter, parse_engine_chapter},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     io::{BufRead, BufReader, Read, Write},
     path::PathBuf,
@@ -20,16 +21,35 @@ use std::{
 #[derive(Default)]
 pub struct EngineControl {
     enabled: AtomicBool,
+    remembered: AtomicBool,
+    preference: Option<PathBuf>,
 }
 
 #[derive(Serialize)]
 pub struct EngineStatus {
     pub enabled: bool,
     pub ready: bool,
+    pub remembered: bool,
+    pub installed: bool,
     pub message: String,
 }
 
 impl EngineControl {
+    pub fn for_directory(directory: &std::path::Path) -> Self {
+        let preference = directory.join("local-engine-choice.json");
+        let remembered = std::fs::metadata(&preference)
+            .ok()
+            .filter(|m| m.len() <= 128)
+            .and_then(|_| std::fs::read(&preference).ok())
+            .and_then(|raw| serde_json::from_slice::<EngineChoice>(&raw).ok())
+            .is_some_and(|choice| choice.schema_version == 1 && choice.enabled);
+        Self {
+            preference: Some(preference),
+            remembered: AtomicBool::new(remembered),
+            ..Self::default()
+        }
+    }
+
     pub fn enabled(&self) -> bool {
         self.enabled.load(Ordering::Acquire)
     }
@@ -37,34 +57,76 @@ impl EngineControl {
     pub fn require(&self) -> Result<Runtime> {
         if !self.enabled() {
             return Err(Error::Invalid(
-                "本地引擎默认关闭，请在添加小说页主动启用".into(),
+                "本地组件尚未启用或未就绪，请在添加小说页检查".into(),
             ));
         }
         Runtime::discover()
     }
 
     pub fn status(&self) -> EngineStatus {
-        let ready = Runtime::discover().and_then(|r| r.check()).is_ok();
-        if !ready {
-            self.enabled.store(false, Ordering::Release);
-        }
+        let runtime = Runtime::discover();
+        let installed = runtime.is_ok();
+        let mut status = self.checked_status(runtime.and_then(|r| r.check()));
+        status.installed = installed;
+        status
+    }
+
+    fn checked_status(&self, result: Result<()>) -> EngineStatus {
+        let ready = result.is_ok();
+        let remembered = self.remembered.load(Ordering::Acquire);
+        self.enabled.store(ready && remembered, Ordering::Release);
         EngineStatus {
-            enabled: self.enabled(), ready,
+            enabled: self.enabled(),
+            ready,
+            remembered,
+            installed: false,
             message: if ready {
-                "隔离组件可用；仅实验性读取番茄明确免费的章节，每次启动需主动启用。"
+                if remembered {
+                    "本地增强已启用，下次打开软件会自动恢复；粘贴番茄链接即可保存免费章节。".into()
+                } else {
+                    "本地增强已就绪，首次启用后记住选择，无需再配置运行环境。".into()
+                }
             } else {
-                "组件未就绪：需要本地 Python、正在运行的 Docker 和已审查的固定引擎构建。普通网页保存不受影响；安装步骤见 docs/local-engine.md。"
-            }.into(),
+                format!(
+                    "本地增强暂不可用：{}。普通网页保存仍可使用。",
+                    result.unwrap_err()
+                )
+            },
         }
     }
 
     pub fn set(&self, enabled: bool) -> Result<EngineStatus> {
         if enabled {
-            Runtime::discover()?.check()?;
+            Runtime::discover()?.prepare()?;
         }
-        self.enabled.store(enabled, Ordering::Release);
+        self.save_choice(enabled)?;
         Ok(self.status())
     }
+
+    fn save_choice(&self, enabled: bool) -> Result<()> {
+        if let Some(path) = &self.preference {
+            let mut file = tempfile::NamedTempFile::new_in(path.parent().ok_or_else(unavailable)?)?;
+            serde_json::to_writer(
+                &mut file,
+                &EngineChoice {
+                    schema_version: 1,
+                    enabled,
+                },
+            )?;
+            file.as_file().sync_all()?;
+            file.persist(path).map_err(|e| Error::Io(e.error))?;
+        }
+        self.remembered.store(enabled, Ordering::Release);
+        self.enabled.store(enabled, Ordering::Release);
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EngineChoice {
+    schema_version: u8,
+    enabled: bool,
 }
 
 #[derive(Clone)]
@@ -78,14 +140,35 @@ pub struct Runtime {
 
 impl Runtime {
     fn discover() -> Result<Self> {
+        let component = std::env::var_os("OPENNOVEL_ENGINE_ROOT")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|exe| Self::adjacent_component(exe.parent()?))
+            });
+        if let Some(root) = &component
+            && root.join("python").exists()
+        {
+            let python = verified_bundled_python(root)?;
+            return Self::from_paths(python, component);
+        }
         let python = std::env::var_os("OPENNOVEL_ENGINE_PYTHON")
             .map(PathBuf::from)
             .filter(|p| p.is_absolute() && p.is_file())
             .ok_or_else(unavailable)?;
-        Self::from_paths(
-            python,
-            std::env::var_os("OPENNOVEL_ENGINE_ROOT").map(PathBuf::from),
-        )
+        Self::from_paths(python, component)
+    }
+
+    fn adjacent_component(directory: &std::path::Path) -> Option<PathBuf> {
+        let bundled = directory.join("opennovel-engine");
+        if bundled.is_dir() {
+            Some(bundled)
+        } else if directory.join("runtime").is_dir() {
+            Some(directory.to_owned())
+        } else {
+            None
+        }
     }
 
     fn from_paths(python: PathBuf, component: Option<PathBuf>) -> Result<Self> {
@@ -158,14 +241,74 @@ impl Runtime {
     }
 
     fn check(&self) -> Result<()> {
+        self.check_mode(false)
+    }
+
+    fn prepare(&self) -> Result<()> {
+        self.check_mode(true)
+    }
+
+    fn check_mode(&self, prepare: bool) -> Result<()> {
         let mut command = self.command();
-        command.arg("--check");
+        command.arg(if prepare { "--prepare" } else { "--check" });
         let worker = Worker::spawn(command)?;
-        if worker.receive(&AtomicBool::new(false), Duration::from_secs(35))?["ready"] != true {
-            return Err(unavailable());
+        let result = worker.receive(
+            &AtomicBool::new(false),
+            Duration::from_secs(if prepare { 90 } else { 35 }),
+        )?;
+        if result["ready"] != true {
+            return Err(Error::Invalid(
+                match result["reason"].as_str() {
+                    Some("docker_unavailable") => {
+                        "请先启动 Docker Desktop，再点击重新检查；需要 Linux 隔离后端"
+                    }
+                    Some("images_missing") => {
+                        "本地隔离镜像缺失，请按组件安装说明准备；软件不会自动下载"
+                    }
+                    Some("engine_missing") => "本地隔离引擎构建缺失，请按组件安装说明准备",
+                    Some("source_changed") => "组件源码校验失败，请重新安装匹配的完整组件",
+                    _ => "本地组件检查失败，请重新检查或安装匹配组件",
+                }
+                .into(),
+            ));
         }
         Ok(())
     }
+}
+
+fn verified_bundled_python(root: &std::path::Path) -> Result<PathBuf> {
+    let manifest: Value = serde_json::from_str(include_str!(
+        "../../../../third_party/python-embed-lock.json"
+    ))?;
+    verify_files(
+        &root.join("python"),
+        manifest["files"].as_object().ok_or_else(unavailable)?,
+    )?;
+    Ok(root.join("python/python.exe"))
+}
+
+fn verify_files(
+    directory: &std::path::Path,
+    expected: &serde_json::Map<String, Value>,
+) -> Result<()> {
+    let entries = std::fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>()?;
+    if entries.len() != expected.len()
+        || entries
+            .iter()
+            .any(|e| !e.file_type().is_ok_and(|t| t.is_file()))
+    {
+        return Err(unavailable());
+    }
+    for (name, digest) in expected {
+        if name.contains(['/', '\\', ':']) || name == "." || name == ".." {
+            return Err(unavailable());
+        }
+        let actual = format!("{:x}", Sha256::digest(std::fs::read(directory.join(name))?));
+        if digest.as_str() != Some(actual.as_str()) {
+            return Err(unavailable());
+        }
+    }
+    Ok(())
 }
 
 const COMPONENT_SCRIPTS: &[(&str, &[u8])] = &[
@@ -396,10 +539,77 @@ mod tests {
     use super::*;
 
     #[test]
-    fn local_engine_is_disabled_at_every_application_start() {
+    fn local_engine_is_disabled_without_a_saved_choice() {
         let control = EngineControl::default();
         assert!(!control.enabled());
         assert!(control.require().is_err());
+    }
+
+    #[test]
+    fn explicit_choice_survives_restart_and_missing_runtime_without_losing_consent() {
+        let root = tempfile::tempdir().unwrap();
+        let first = EngineControl::for_directory(root.path());
+        assert!(!first.checked_status(Ok(())).enabled);
+        first.save_choice(true).unwrap();
+        let restarted = EngineControl::for_directory(root.path());
+        assert!(!restarted.enabled());
+        let missing = restarted.checked_status(Err(unavailable()));
+        assert!(!missing.enabled && missing.remembered);
+        assert!(restarted.checked_status(Ok(())).enabled);
+        restarted.save_choice(false).unwrap();
+        assert!(
+            !EngineControl::for_directory(root.path())
+                .checked_status(Ok(()))
+                .enabled
+        );
+    }
+
+    #[test]
+    fn malformed_choices_and_failed_writes_do_not_enable_the_component() {
+        let root = tempfile::tempdir().unwrap();
+        let choice = root.path().join("local-engine-choice.json");
+        for raw in [
+            "{\"schema_version\":2,\"enabled\":true}",
+            "{\"schema_version\":1,\"enabled\":true,\"extra\":1}",
+            "invalid",
+        ] {
+            std::fs::write(&choice, raw).unwrap();
+            assert!(
+                !EngineControl::for_directory(root.path())
+                    .checked_status(Ok(()))
+                    .enabled
+            );
+        }
+        let absent = EngineControl::for_directory(&root.path().join("missing-parent"));
+        assert!(absent.save_choice(true).is_err());
+        assert!(!absent.checked_status(Ok(())).enabled);
+    }
+
+    #[test]
+    fn bundled_resource_discovery_uses_only_the_application_directory() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(Runtime::adjacent_component(root.path()).is_none());
+        let bundled = root.path().join("opennovel-engine");
+        std::fs::create_dir(&bundled).unwrap();
+        assert_eq!(
+            Runtime::adjacent_component(root.path()),
+            Some(bundled.clone())
+        );
+        assert!(verified_bundled_python(&bundled).is_err());
+    }
+
+    #[test]
+    fn runtime_integrity_rejects_changed_added_and_nested_python_files() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("python.exe"), b"original fixture").unwrap();
+        let expected = json!({"python.exe":format!("{:x}",Sha256::digest(b"original fixture"))});
+        let expected = expected.as_object().unwrap();
+        assert!(verify_files(root.path(), expected).is_ok());
+        std::fs::write(root.path().join("python.exe"), b"altered").unwrap();
+        assert!(verify_files(root.path(), expected).is_err());
+        std::fs::write(root.path().join("python.exe"), b"original fixture").unwrap();
+        std::fs::create_dir(root.path().join("site-packages")).unwrap();
+        assert!(verify_files(root.path(), expected).is_err());
     }
 
     #[test]

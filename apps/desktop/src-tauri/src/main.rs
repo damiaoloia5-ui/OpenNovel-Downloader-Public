@@ -808,7 +808,7 @@ fn main() {
             )?;
             app.manage(official_reader::OfficialReaderState::default());
             app.manage(AppState {
-                engine: Arc::default(),
+                engine: Arc::new(local_engine::EngineControl::for_directory(directory)),
                 library,
                 auto_txt,
                 source: Arc::default(),

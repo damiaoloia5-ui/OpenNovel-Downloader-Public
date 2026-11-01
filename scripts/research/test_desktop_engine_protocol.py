@@ -11,6 +11,20 @@ import desktop_engine_worker as worker
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_check_reports_docker_unavailable_without_attempting_installation(self):
+        with patch.object(worker.sandbox, 'verify_source'), patch.object(worker.subprocess, 'run', side_effect=OSError('original missing runtime')) as run:
+            self.assertEqual(worker.check(), 'docker_unavailable')
+            self.assertEqual(run.call_count, 1)
+
+    def test_explicit_prepare_starts_only_an_installed_desktop_then_checks_readiness(self):
+        with patch.object(worker, 'check', side_effect=['docker_unavailable', None]), patch.object(worker.subprocess, 'run') as run:
+            self.assertIsNone(worker.prepare())
+            self.assertEqual(run.call_args.args[0], [worker.sandbox.DOCKER, 'desktop', 'start', '--detach'])
+        for reason in [None, 'images_missing', 'engine_missing', 'source_changed']:
+            with patch.object(worker, 'check', return_value=reason), patch.object(worker.subprocess, 'run') as run:
+                self.assertEqual(worker.prepare(), reason)
+                run.assert_not_called()
+
     def setUp(self):
         read_fd, write_fd = os.pipe()
         self.input = os.fdopen(write_fd, 'wb', buffering=0)
