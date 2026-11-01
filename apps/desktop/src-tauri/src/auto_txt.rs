@@ -4,7 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{Arc, Mutex, mpsc},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -30,7 +30,12 @@ impl AutoTxtService {
             .spawn(move || {
                 let mut observed = HashMap::new();
                 let mut forced = HashSet::new();
+                let mut next_file_check = Instant::now() + Duration::from_secs(5);
                 loop {
+                    let check_files = Instant::now() >= next_file_check;
+                    if check_files {
+                        next_file_check = Instant::now() + Duration::from_secs(5);
+                    }
                     if let Ok(snapshot) = library.snapshot() {
                         let mut by_book: HashMap<&str, Vec<_>> = HashMap::new();
                         for job in &snapshot.jobs {
@@ -60,6 +65,7 @@ impl AutoTxtService {
                             let signature = serde_json::to_string(&(book, own)).unwrap_or_default();
                             if !forced.remove(&book.id)
                                 && observed.get(&book.id) == Some(&signature)
+                                && !(check_files && ready_file_missing(&output, &book.id))
                             {
                                 continue;
                             }
@@ -95,6 +101,18 @@ impl AutoTxtService {
             .cloned()
             .collect())
     }
+}
+fn ready_file_missing(statuses: &Mutex<HashMap<String, AutoTxtStatus>>, book: &str) -> bool {
+    let path = statuses.lock().ok().and_then(|values| {
+        values
+            .get(book)
+            .filter(|s| s.state == "ready")
+            .and_then(|s| s.receipt.as_ref())
+            .map(|r| PathBuf::from(&r.path))
+    });
+    // Missing files can be rebuilt safely. Other filesystem errors require an
+    // explicit retry instead of a background loop that repeatedly fails.
+    path.is_some_and(|path| path.try_exists().is_ok_and(|exists| !exists))
 }
 fn set(statuses: &Mutex<HashMap<String, AutoTxtStatus>>, status: AutoTxtStatus) {
     if let Ok(mut values) = statuses.lock() {
@@ -158,12 +176,14 @@ mod tests {
     fn wait(service: &AutoTxtService, book: &str, state: &str) -> AutoTxtStatus {
         let until = Instant::now() + Duration::from_secs(12);
         loop {
-            if let Some(s) = service
-                .snapshot()
-                .unwrap()
-                .into_iter()
-                .find(|s| s.book_id == book && s.state == state)
-            {
+            if let Some(s) = service.snapshot().unwrap().into_iter().find(|s| {
+                s.book_id == book
+                    && s.state == state
+                    && (state != "ready"
+                        || s.receipt
+                            .as_ref()
+                            .is_some_and(|r| std::path::Path::new(&r.path).is_file()))
+            }) {
                 return s;
             }
             assert!(
@@ -172,6 +192,65 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(30));
         }
+    }
+    #[test]
+    fn deleted_ready_file_is_rebuilt_without_another_request_or_download() {
+        let d = tempfile::tempdir().unwrap();
+        let l = Arc::new(Library::open(d.path().join("library.db")).unwrap());
+        let job = l
+            .create_import(include_str!("../../../../examples/local-book.json"))
+            .unwrap();
+        let book = l.run_import(&job, &AtomicBool::new(false)).unwrap().book_id;
+        let service = AutoTxtService::start(Arc::clone(&l), d.path().join("exports")).unwrap();
+        let receipt = wait(&service, &book, "ready").receipt.unwrap();
+        let original = std::fs::read(&receipt.path).unwrap();
+        std::fs::remove_file(&receipt.path).unwrap();
+        let repaired = wait(&service, &book, "ready").receipt.unwrap();
+        assert_eq!(repaired.path, receipt.path);
+        assert_eq!(std::fs::read(&repaired.path).unwrap(), original);
+        assert_eq!(l.book_details(&book).unwrap().exports.len(), 1);
+        assert_eq!(l.job(&job).unwrap().state, "completed");
+        drop(service);
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    #[test]
+    fn explicit_regeneration_preserves_user_edits_and_does_not_loop_on_failure() {
+        let d = tempfile::tempdir().unwrap();
+        let l = Arc::new(Library::open(d.path().join("library.db")).unwrap());
+        let job = l
+            .create_import(include_str!("../../../../examples/local-book.json"))
+            .unwrap();
+        let book = l.run_import(&job, &AtomicBool::new(false)).unwrap().book_id;
+        let service = AutoTxtService::start(Arc::clone(&l), d.path().join("exports")).unwrap();
+        let receipt = wait(&service, &book, "ready").receipt.unwrap();
+        std::fs::write(&receipt.path, "用户原创批注，请保留").unwrap();
+        service.request(&book).unwrap();
+        assert!(
+            wait(&service, &book, "failed")
+                .error
+                .unwrap()
+                .contains("已被修改")
+        );
+        std::thread::sleep(Duration::from_millis(1200));
+        assert_eq!(
+            service
+                .snapshot()
+                .unwrap()
+                .iter()
+                .find(|s| s.book_id == book)
+                .unwrap()
+                .state,
+            "failed"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&receipt.path).unwrap(),
+            "用户原创批注，请保留"
+        );
+        assert_eq!(l.snapshot().unwrap().books[0].saved_chapters, 2);
+        assert_eq!(l.book_details(&book).unwrap().exports.len(), 1);
+        drop(service);
+        std::thread::sleep(Duration::from_millis(100));
     }
     #[test]
     fn background_detects_completion_without_any_frontend_and_recovers_on_restart() {

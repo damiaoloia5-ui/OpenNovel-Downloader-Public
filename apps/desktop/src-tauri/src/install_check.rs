@@ -13,7 +13,8 @@ fn local_roundtrip(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let job = library.create_import(include_str!("../../../../examples/local-book.json"))?;
     let book = library.run_import(&job, &AtomicBool::new(false))?.book_id;
     let service = AutoTxtService::start(library, root.join("sample-exports"))?;
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut original: Option<(PathBuf, String)> = None;
     loop {
         if let Some(status) = service.snapshot()?.into_iter().find(|s| s.book_id == book) {
             if status.state == "failed" {
@@ -23,6 +24,7 @@ fn local_roundtrip(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
                 && status.state == "ready"
                 && !receipt.partial
                 && receipt.saved_chapters == 2
+                && Path::new(&receipt.path).is_file()
             {
                 let path = PathBuf::from(receipt.path);
                 let text = std::fs::read_to_string(&path)?;
@@ -30,7 +32,15 @@ fn local_roundtrip(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
                 {
                     return Err("原创样本 TXT 内容核对失败".into());
                 }
-                return Ok(path);
+                if let Some((expected_path, expected_text)) = &original {
+                    if &path != expected_path || &text != expected_text {
+                        return Err("原创样本 TXT 恢复核对失败".into());
+                    }
+                    return Ok(path);
+                }
+                // Only this newly created original fixture file is removed.
+                original = Some((path.clone(), text));
+                std::fs::remove_file(path)?;
             }
         }
         if Instant::now() >= deadline {
@@ -57,6 +67,7 @@ pub fn run(output: &Path) -> Result<bool, Box<dyn std::error::Error>> {
         "required_checks_passed": passed,
         "webview": {"ready": webview.is_ok(), "result": webview},
         "original_sample_txt": {"ready": local.is_ok(), "result": local},
+        "deleted_sample_txt_recovered": local.is_ok(),
         "optional_local_engine": engine,
         "user_library_opened": false,
         "real_platform_requested": false,
@@ -92,7 +103,7 @@ pub fn run(output: &Path) -> Result<bool, Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn installation_sample_uses_a_new_library_and_generates_complete_txt() {
+    fn installation_sample_uses_a_new_library_and_recovers_complete_txt() {
         let root = tempfile::tempdir().unwrap();
         let txt = super::local_roundtrip(root.path()).unwrap();
         assert!(txt.starts_with(root.path()));

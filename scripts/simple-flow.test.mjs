@@ -50,6 +50,8 @@ await writeFile(entry,`export {default as Account} from ${JSON.stringify(resolve
 await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as Official} from '+JSON.stringify(resolve('apps/desktop/src/OfficialReaderPanel.vue'))+';\n');
 const real=new Set(['AccountPanel.vue','AutoSavePanel.vue','App.vue','OfficialReaderPanel.vue']);
 real.add('LocalEnginePanel.vue');
+real.add('AutomaticTxtPanel.vue');
+await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as AutoTxt} from '+JSON.stringify(resolve('apps/desktop/src/AutomaticTxtPanel.vue'))+';\n');
 await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as Engine} from '+JSON.stringify(resolve('apps/desktop/src/LocalEnginePanel.vue'))+';\n');
 real.add('TxtSupplementPanel.vue');
 await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as Supplement} from '+JSON.stringify(resolve('apps/desktop/src/TxtSupplementPanel.vue'))+';\n');
@@ -62,7 +64,7 @@ await build({configFile:false,logLevel:'error',plugins:[{
     return transformWithOxc(compiled.content,`${id}.ts`,{lang:'ts'});
   },
 }],build:{ssr:entry,outDir:output,emptyOutDir:false,rollupOptions:{output:{entryFileNames:'components.mjs'}}}});
-const {Account,AutoSave,App,Official,Supplement,Engine}=await import(pathToFileURL(join(output,'components.mjs')).href);
+const {Account,AutoSave,App,Official,Supplement,Engine,AutoTxt}=await import(pathToFileURL(join(output,'components.mjs')).href);
 function element(tag,text=''){
   return {tag,tagName:tag.toUpperCase(),children:[],parent:null,props:{},text,listeners:{},value:'',checked:false,selected:false,
     get textContent(){return this.text+this.children.map(n=>n.textContent).join('');},
@@ -124,6 +126,37 @@ async function loginAndRead(f){await click(f.button('打开起点，去登录'))
 async function acknowledge(f){const input=walk(f.root,true).find(n=>n.tag==='input'&&n.type==='checkbox');assert.ok(input);input.checked=true;input.dispatch('change');await flush();}
 
 function openEngineOptions(f){walk(f.root).find(n=>n.tag==='details').props.open=true;}
+const txtReady={state:'ready',export_id:'original-txt',receipt:{path:'D:/original.txt',saved_chapters:2,total_chapters:2,partial:false}};
+test('missing automatic TXT gives a local regeneration action with honest request feedback',async()=>{
+  const f=await mount(AutoTxt,{bookId:'original-book',saved:2,status:txtReady},({state,api})=>{
+    api.revealExport=async id=>{state.calls.push(['reveal',id]);throw '导出文件已移动或删除';};
+    api.retryAutomaticTxt=async id=>{state.calls.push(['regenerate',id]);};
+  });try{
+    await click(f.button('打开 TXT 所在文件夹'));assert.match(f.root.textContent,/导出文件已移动或删除/);
+    await click(f.button('重新生成 TXT'));assert.match(f.root.textContent,/已请求从本地书库重新生成/);
+    assert.deepEqual(f.state.calls,[['reveal','original-txt'],['regenerate','original-book']]);
+  }finally{f.close();}
+});
+test('automatic TXT regeneration is blocked while saving and rejects duplicate requests',async()=>{
+  let finish;const f=await mount(AutoTxt,{bookId:'original-book',saved:2,active:true,status:txtReady},({state,api})=>{
+    api.retryAutomaticTxt=id=>{state.calls.push(['regenerate',id]);return new Promise(resolve=>{finish=resolve;});};
+  });try{
+    const button=f.button('重新生成 TXT');assert.ok(button.props.disabled);button.props.onClick();await flush();assert.deepEqual(f.state.calls,[]);
+    f.props.active=false;await flush();button.props.onClick();button.props.onClick();await flush();
+    assert.deepEqual(f.state.calls,[['regenerate','original-book']]);finish();await flush();
+  }finally{f.close();}
+});
+test('late TXT failures and acknowledgements cannot cross the selected book',async()=>{
+  for(const failed of [false,true]){
+    let finish;const f=await mount(AutoTxt,{bookId:'original-book',saved:2,status:txtReady},({api})=>{
+      api.retryAutomaticTxt=()=>new Promise((resolve,reject)=>{finish=()=>failed?reject('旧书原创失败'):resolve();});
+    });try{
+      await click(f.button('重新生成 TXT'));f.props.bookId='next-book';await flush();finish();await flush();
+      assert.doesNotMatch(f.root.textContent,/旧书原创失败|已请求从本地书库重新生成/);
+    }finally{f.close();}
+  }
+});
+
 test('remembered enhancement can be forgotten even when its runtime is unavailable',async()=>{
   const f=await mount(Engine,{current:{enabled:false,ready:false,installed:false,remembered:true,message:'原创组件失效',issue:'component_unavailable',next_step:'重新安装完整一体化版，原书库无需删除。'}},({state,api})=>{
     api.setLocalEngine=async enabled=>{state.calls.push(['set-engine',enabled]);return {enabled:false,ready:false,remembered:false,message:'原创组件仍未就绪'};};
