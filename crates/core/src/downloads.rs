@@ -6,6 +6,13 @@ use rusqlite::{OptionalExtension, params};
 use std::sync::atomic::{AtomicBool, Ordering};
 use uuid::Uuid;
 
+#[derive(Clone, Copy)]
+pub(crate) enum DownloadAuthorization {
+    Public,
+    QidianSession,
+    LocalEngine,
+}
+
 impl Library {
     /// Persist the catalog and selected remote chapter identities before any text request.
     pub fn create_download(&self, catalog: &Catalog, first: usize, last: usize) -> Result<String> {
@@ -28,7 +35,7 @@ impl Library {
         positions: &[usize],
         batch: Option<(&str, usize, u64)>,
     ) -> Result<String> {
-        self.create_download_authorized(catalog, positions, batch, false)
+        self.create_download_authorized(catalog, positions, batch, DownloadAuthorization::Public)
     }
 
     pub(crate) fn create_download_authorized(
@@ -36,12 +43,23 @@ impl Library {
         catalog: &Catalog,
         positions: &[usize],
         batch: Option<(&str, usize, u64)>,
-        session: bool,
+        authorization: DownloadAuthorization,
     ) -> Result<String> {
         catalog.validate()?;
-        let session_authorized =
-            session && catalog.source == crate::QIDIAN_SESSION_SOURCE && batch.is_none();
-        if !session_authorized && !crate::sources::download_supported(&catalog.source) {
+        let session_authorized = matches!(authorization, DownloadAuthorization::QidianSession)
+            && catalog.source == crate::QIDIAN_SESSION_SOURCE
+            && batch.is_none();
+        let explicitly_authorized = batch.is_none()
+            && match authorization {
+                DownloadAuthorization::QidianSession => {
+                    catalog.source == crate::QIDIAN_SESSION_SOURCE
+                }
+                DownloadAuthorization::LocalEngine => {
+                    catalog.source == crate::sources::LOCAL_ENGINE_SOURCE
+                }
+                DownloadAuthorization::Public => false,
+            };
+        if !explicitly_authorized && !crate::sources::download_supported(&catalog.source) {
             return Err(Error::Invalid(
                 "该来源尚未通过正文下载验收，不能创建下载任务".into(),
             ));

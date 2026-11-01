@@ -251,7 +251,12 @@ impl Library {
             Some(s) => crate::parse_selection(s, catalog.chapters.len())?,
             None => (1..=catalog.chapters.len()).collect(),
         };
-        self.create_download_authorized(&catalog, &positions, None, true)
+        self.create_download_authorized(
+            &catalog,
+            &positions,
+            None,
+            crate::downloads::DownloadAuthorization::QidianSession,
+        )
     }
 
     pub fn register_session_catalog(&self, captured: &SessionCatalog) -> Result<String> {

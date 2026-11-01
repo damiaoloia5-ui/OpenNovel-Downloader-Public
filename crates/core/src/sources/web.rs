@@ -260,7 +260,8 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let observed = Arc::clone(&calls);
         let worker = std::thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(4);
+            // Client initialization can be slow on Windows; retries still share the production budget.
+            let mut deadline = Instant::now() + Duration::from_secs(30);
             for response in responses {
                 let mut stream = loop {
                     match listener.accept() {
@@ -274,13 +275,24 @@ mod tests {
                         Err(_) => return,
                     }
                 };
+                deadline = Instant::now() + Duration::from_secs(8);
                 stream
                     .set_read_timeout(Some(Duration::from_secs(1)))
                     .unwrap();
-                let mut request = [0; 1024];
-                let _ = stream.read(&mut request);
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") && request.len() < 8192 {
+                    let mut byte = [0];
+                    if stream.read(&mut byte).unwrap_or(0) == 0 {
+                        return;
+                    }
+                    request.push(byte[0]);
+                }
                 observed.fetch_add(1, Ordering::AcqRel);
                 let _ = stream.write_all(response);
+                let _ = stream.flush();
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+                // Finish the local response before dropping the Windows socket.
+                let _ = std::io::copy(&mut stream.take(8192), &mut std::io::sink());
             }
         });
         (

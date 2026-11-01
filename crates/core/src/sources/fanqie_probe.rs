@@ -358,8 +358,10 @@ mod tests {
                         let _ = stream.flush();
                         thread::sleep(stall);
                         let _ = stream.write_all(&body);
-                        // Send FIN and let the client finish before dropping the Windows socket.
-                        let _ = stream.shutdown(std::net::Shutdown::Write);
+                        // Header-only fixtures wait for the client; valid bodies finish with FIN.
+                        if !body.is_empty() {
+                            let _ = stream.shutdown(std::net::Shutdown::Write);
+                        }
                         let _ = std::io::copy(&mut stream.take(8192), &mut std::io::sink());
                         stop = Instant::now() + Duration::from_millis(200);
                     }

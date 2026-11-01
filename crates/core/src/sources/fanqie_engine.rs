@@ -4,6 +4,27 @@ use crate::{Error, ImportChapter, ImportDocument, Result};
 use scraper::{Html, Selector};
 use serde::Deserialize;
 
+pub const LOCAL_ENGINE_SOURCE: &str = "fanqie-app-local";
+
+impl crate::Library {
+    /// Explicit experimental path; normal SourceHub, HTTP and batch capabilities stay disabled.
+    pub fn create_engine_download(
+        &self,
+        catalog: &super::Catalog,
+        positions: &[usize],
+    ) -> Result<String> {
+        if catalog.source != LOCAL_ENGINE_SOURCE {
+            return Err(Error::Invalid("本地引擎任务必须使用独立来源身份".into()));
+        }
+        self.create_download_authorized(
+            catalog,
+            positions,
+            None,
+            crate::downloads::DownloadAuthorization::LocalEngine,
+        )
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Envelope {

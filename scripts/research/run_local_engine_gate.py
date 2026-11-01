@@ -99,7 +99,7 @@ def main():
         build, record = create('build', RUST_IMAGE,
             ['env', 'CARGO_HOME=/cargo', 'CARGO_TARGET_DIR=/target', 'CARGO_INCREMENTAL=0',
              'RUSTUP_HOME=/usr/local/rustup', 'sh', '-c',
-             'cargo build --manifest-path /src/rust/Cargo.toml --locked --offline --target x86_64-unknown-linux-gnu --example opennovel_readonly_probe && cargo test --manifest-path /src/rust/Cargo.toml --locked --offline --target x86_64-unknown-linux-gnu --example opennovel_readonly_probe'],
+             'cargo build --manifest-path /src/rust/Cargo.toml --locked --offline --target x86_64-unknown-linux-gnu --examples && cargo test --manifest-path /src/rust/Cargo.toml --locked --offline --target x86_64-unknown-linux-gnu --example opennovel_readonly_probe'],
             mounts=[f'type=bind,source={derived},target=/src,readonly',
                     f'type=bind,source={SCRIPTS / "engine_probe_examples"},target=/src/rust/examples,readonly',
                     f'type=volume,source={CACHE},target=/cargo', f'type=volume,source={TARGET},target=/target'])
