@@ -20,5 +20,5 @@ const topic=ref<'web'|'qidian'|'local'>('web');
   </section>
 </template>
 <style scoped>
-.help-guide{max-width:800px;background:#fffefa;padding:26px;border:1px solid #dfe4d7;border-radius:8px}.guide-tabs{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0}.guide-tabs [aria-pressed=true]{background:#354d32;color:#fff}.help-guide h3{font-size:18px;margin-top:28px}.help-guide li{padding:5px 0;line-height:1.9;font-size:14px}.help-guide p{font-size:13px;color:#526048;line-height:1.9;max-width:72ch}.help-guide details{padding:15px 0;border-top:1px solid #dfe4d7}.help-guide summary{cursor:pointer;font-size:14px;font-weight:600}
+.help-guide{max-width:800px;background:var(--surface);padding:26px;border:1px solid var(--border);border-radius:8px}.guide-tabs{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0}.guide-tabs [aria-pressed=true]{background:var(--accent);color:#fff}.help-guide h3{font-size:18px;margin-top:28px}.help-guide li{padding:5px 0;line-height:1.9;font-size:14px}.help-guide p{font-size:13px;color:var(--muted);line-height:1.9;max-width:72ch}.help-guide details{padding:15px 0;border-top:1px solid var(--border)}.help-guide summary{cursor:pointer;font-size:14px;font-weight:600}
 </style>

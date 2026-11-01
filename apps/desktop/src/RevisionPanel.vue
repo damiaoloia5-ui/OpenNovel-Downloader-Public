@@ -27,5 +27,5 @@ onMounted(()=>{void action(reload);});
   </details>
 </template>
 <style scoped>
-.revision-panel{margin:20px 0;border-top:1px solid #e1e5da;padding-top:18px}summary{cursor:pointer;font-weight:600}.actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.history-list{list-style:none;padding:0}.history-list li{padding:12px 0;border-bottom:1px solid #e1e5da}.history-list small{display:block;color:#748069;margin-top:5px}.history-chapters{display:grid;gap:6px;max-height:280px;overflow:auto;margin:12px 0}.history-chapters button{text-align:left}.reader-text{max-height:460px;overflow:auto}
+.revision-panel{margin:20px 0;border-top:1px solid var(--border);padding-top:18px}summary{cursor:pointer;font-weight:600}.actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.history-list{list-style:none;padding:0}.history-list li{padding:12px 0;border-bottom:1px solid var(--border)}.history-list small{display:block;color:#748069;margin-top:5px}.history-chapters{display:grid;gap:6px;max-height:280px;overflow:auto;margin:12px 0}.history-chapters button{text-align:left}.reader-text{max-height:460px;overflow:auto}
 </style>

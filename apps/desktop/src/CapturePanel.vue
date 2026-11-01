@@ -26,5 +26,5 @@ function save(format:'txt'|'epub'){void action(async()=>{const receipt=await exp
   </details>
 </template>
 <style scoped>
-.capture-panel{margin-top:18px;border-top:1px solid #e1e5da;padding-top:16px}summary{cursor:pointer;font-weight:600}.actions{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0}.footnote{line-height:1.8}.capture-preview{padding:16px;border:1px solid #d4ddca;border-radius:8px}.capture-preview ol,.preview-text{max-height:360px;overflow:auto}.preview-text{line-height:1.9;white-space:pre-wrap;overflow-wrap:anywhere}h4{font-size:17px}
+.capture-panel{margin-top:18px;border-top:1px solid var(--border);padding-top:16px}summary{cursor:pointer;font-weight:600}.actions{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0}.footnote{line-height:1.8}.capture-preview{padding:16px;border:1px solid var(--border);border-radius:8px}.capture-preview ol,.preview-text{max-height:360px;overflow:auto}.preview-text{line-height:1.9;white-space:pre-wrap;overflow-wrap:anywhere}h4{font-size:17px}
 </style>

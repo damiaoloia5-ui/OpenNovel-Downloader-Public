@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppIcon from './AppIcon.vue';
 import {computed,nextTick,onMounted,onUnmounted,ref,watch} from 'vue';
 import {getCurrentWindow} from '@tauri-apps/api/window';
 import LibraryTools from './LibraryTools.vue';
@@ -96,6 +97,7 @@ async function inspect(autoSave=false){
 async function selectSearchResult(input:string){bookInput.value=input;await inspect();}
 async function startDownload(openOnly=false){await action(async()=>{if(!catalogCanDownload.value)throw new Error(catalogSource.value?.note||'该来源暂不支持正文下载');if(bookInput.value.trim()!==inspectedInput.value)throw new Error('链接已改变，请重新读取目录。');const chosen=openOnly?access.value?.selection:selection.value;if(openOnly&&!chosen)throw new Error('当前目录没有标记开放的章节。');const epoch=navigationEpoch;const id=await downloadBook(inspectedInput.value,firstChapter.value,lastChapter.value,chosen);await openCreatedJob(id,epoch);});}
 function sourceLabel(id:string){const info=sourceInfos.value.find(s=>s.id===id);return id==='local-json'?'本地 JSON':info?`${info.name} · 实验性`:id;}
+function coverTone(id:string){let hash=0;for(const char of id)hash=(hash*31+char.charCodeAt(0))>>>0;return ['jade','slate','clay','plum','blue'][hash%5];}
 async function engineChanged(){try{const next=await sourceCapabilities();if(!working.value&&sourceInfos.value.find(s=>s.id==='fanqie-app-local')?.can_download!==next.find(s=>s.id==='fanqie-app-local')?.can_download){catalog.value=null;inspectedInput.value='';}sourceInfos.value=next;}catch(e){error.value=String(e);}}
 async function enableEngineForBook(){const input=inspectedInput.value;const epoch=navigationEpoch;let enabled=false;await action(async()=>{notice.value='正在准备本地增强服务，请稍候…';const current=await setLocalEngine(true);engineStatus.value=current;if(!current.enabled)throw new Error(current.message);sourceInfos.value=await sourceCapabilities();enabled=true;});if(enabled&&!disposed&&epoch===navigationEpoch&&bookInput.value.trim()===input)await inspect(true);}
 async function openEngineBook(input:string){bookInput.value=input;page.value='download';await nextTick();await inspect();}
@@ -107,40 +109,41 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
   <div class="app-shell">
     <aside class="sidebar">
       <a class="brand" href="#" @click.prevent="page = 'library'">
-        <span class="brand-mark" aria-hidden="true">O<span>N</span></span>
+        <span class="brand-mark" aria-hidden="true"><AppIcon name="book" :size="25" /></span>
         <span>OpenNovel<small>属于你的本地书库</small></span>
       </a>
       <div class="nav-label">开始使用</div>
       <nav aria-label="主导航">
-        <button :class="{ selected: page === 'download' }" @click="page = 'download'"><span aria-hidden="true">＋</span>添加小说</button>
-        <button :class="{ selected: page === 'library' || page === 'book' }" @click="page = 'library'"><span aria-hidden="true">▤</span>我的书库<b>{{ data.books.length }}</b></button>
-        <button :class="{ selected: page === 'tasks' }" @click="page = 'tasks'"><span aria-hidden="true">↓</span>保存进度<b v-if="active">{{ active }}</b></button>
-        <button :class="{ selected: page === 'help' }" @click="page='help'"><span aria-hidden="true">?</span>使用指引</button>
+        <button :class="{ selected: page === 'download' }" :aria-current="page==='download'?'page':undefined" @click="page = 'download'"><AppIcon name="plus" />添加小说</button>
+        <button :class="{ selected: page === 'library' || page === 'book' }" :aria-current="['library','book'].includes(page)?'page':undefined" @click="page = 'library'"><AppIcon name="library" />我的书库<b>{{ data.books.length }}</b></button>
+        <button :class="{ selected: page === 'tasks' }" :aria-current="page==='tasks'?'page':undefined" @click="page = 'tasks'"><AppIcon name="download" />保存进度<b v-if="active">{{ active }}</b></button>
+        <button :class="{ selected: page === 'help' }" :aria-current="page==='help'?'page':undefined" @click="page='help'"><AppIcon name="help" />使用指引</button>
         <details class="nav-more" :open="['sources','accounts','tools'].includes(page)">
 <summary>更多功能</summary>
-        <button :class="{ selected: page === 'sources' }" @click="page = 'sources'"><span aria-hidden="true">◎</span>小说来源</button>
-        <button :class="{ selected: page === 'accounts' }" @click="page='accounts'"><span aria-hidden="true">◉</span>平台账户</button>
-        <button :class="{ selected: page === 'tools' }" @click="page = 'tools'"><span aria-hidden="true">▣</span>备份与诊断</button>
+        <button :class="{ selected: page === 'sources' }" @click="page = 'sources'"><AppIcon name="globe" />小说来源</button>
+        <button :class="{ selected: page === 'accounts' }" @click="page='accounts'"><AppIcon name="user" />平台账户</button>
+        <button :class="{ selected: page === 'tools' }" @click="page = 'tools'"><AppIcon name="archive" />备份与诊断</button>
         </details>
       </nav>
-      <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>综合功能候选版 · 0.3.6</p></div>
+      <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>综合功能候选版 · 0.3.7</p></div>
     </aside>
 
     <main>
-      <header class="topbar"><span>个人工作空间 / {{ page==='book'?'作品工作台':page==='help'?'使用指引':page === 'download' ? '添加小说' : page === 'library' ? '书库' : page === 'tasks' ? '任务' : page==='tools' ? '备份与诊断' : page==='accounts'?'账户':'来源' }}</span><button class="help-entry" @click="page='help'">不会操作？查看指引</button></header>
+      <header class="topbar"><span class="breadcrumb"><span>个人工作空间</span><span aria-hidden="true">/</span><strong>{{ page==='book'?'作品工作台':page==='help'?'使用指引':page === 'download' ? '添加小说' : page === 'library' ? '书库' : page === 'tasks' ? '任务' : page==='tools' ? '备份与诊断' : page==='accounts'?'账户':'来源' }}</strong></span><button class="help-entry" @click="page='help'"><AppIcon name="help" :size="16" />不会操作？查看指引</button></header>
       <div class="main-content">
         <div v-if="!desktopAvailable" class="message warning" role="status">当前是浏览器界面预览。请运行桌面应用以使用本地书库和导出功能。</div>
         <div v-if="error" class="message failure" role="alert">{{ error }}<button aria-label="关闭错误提示" @click="error = ''">×</button></div>
         <div v-if="notice" class="message success" role="status">{{ notice }}<button aria-label="关闭提示" @click="notice = ''">×</button></div>
         <div v-if="page!=='book'" class="page-heading">
           <div><h1 ref="pageHeading" tabindex="-1">{{ page==='help'?'使用指引':page === 'download' ? '添加小说' : page === 'library' ? '我的书库' : page === 'tasks' ? '保存进度' : page==='accounts'?'登录与保存正文':page==='tools'?'备份与诊断':'小说来源' }}</h1><p class="intro">{{ page==='help'?'从添加到导出，按步骤完成。':page === 'download' ? '只需粘贴小说链接，软件会带你完成，最后得到 TXT。' : page === 'library' ? '选择作品，阅读或导出已经保存的正文。' : page === 'tasks' ? '查看保存进度，继续中断的任务。' : page==='accounts'?'起点按步骤引导；刺猬猫、飞卢和咪咕可在官网登录后识别当前页。':page==='tools'?'创建书库备份、恢复副本，查看诊断信息。':'查看各个平台已验证的支持范围。' }}</p></div>
-          <button v-if="page==='library'" class="primary" @click="page='download'">添加一本小说</button>
+          <button v-if="page==='library'" class="primary" @click="page='download'"><AppIcon name="plus" :size="18" />添加一本小说</button>
           <input ref="fileInput" type="file" accept=".json,application/json" class="file-input" aria-label="选择 JSON 书籍文件" @change="chooseFile" />
         </div>
 
         <template v-if="page === 'download'">
           <ol class="quick-path" aria-label="基本操作步骤"><li><b>1</b> 粘贴链接</li><li><b>2</b> 按提示操作</li><li><b>3</b> 拿到 TXT</li></ol>
-          <form class="download-panel" @submit.prevent="inspect(true)">
+          <form class="download-panel link-entry" @submit.prevent="inspect(true)">
+            <span class="entry-symbol"><AppIcon name="link" :size="26" /></span>
             <label for="novel-link">粘贴小说的官网作品链接</label>
             <div class="link-row"><input id="novel-link" v-model="bookInput" type="text" placeholder="粘贴官网作品链接，例如纵横、17K、番茄、七猫、晋江或起点" :disabled="working" required /><button class="primary" :disabled="!desktopAvailable || working || !bookInput.trim()">{{ working ? '正在识别，请稍等…' : '开始保存为 TXT' }}</button></div>
             <p class="footnote">免费网页会直接开始保存；起点会提示你登录。完成后自动生成 TXT，不需要手动选格式。</p><p class="footnote">不知道复制哪个链接？打开小说的作品介绍页，复制浏览器顶部地址，粘贴到这里。书旗目前只能读取目录。</p>
@@ -167,16 +170,16 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
           </section>
           <div class="section-heading"><h2>我的书架</h2><select v-model="archiveFilter" aria-label="书架范围"><option value="active">书架</option><option value="archived">已归档</option><option value="all">全部作品</option></select><input v-model="filter" type="search" placeholder="搜索书名、作者或标签" aria-label="搜索书库" /></div>
           <section v-if="books.length" class="book-grid" aria-label="书籍列表">
-            <article v-for="book in visibleBooks" :key="book.id" class="book-card">
-              <div class="book-cover"><span>LOCAL COLLECTION</span><h3>{{ book.title }}</h3><p>{{ book.author || '未标注作者' }}</p><i aria-hidden="true"></i></div>
+            <article v-for="book in visibleBooks" :key="book.id" class="book-card" :data-tone="coverTone(book.id)">
+              <div class="book-cover"><span class="cover-source">{{ sourceInfos.find(s=>s.id===book.source)?.name||(book.source==='local-json'?'本地作品':'本地收藏') }}</span><h3 :title="book.title">{{ book.title }}</h3><p>{{ book.author || '未标注作者' }}</p><div class="cover-signature"><AppIcon name="book" :size="17" /><span>OpenNovel</span></div></div>
               <div class="book-info">
-<span class="source-tag">{{ sourceLabel(book.source) }}</span><h3>{{ book.title }}</h3><p>{{ book.saved_chapters }} / {{ book.total_chapters }} 章<span>{{ book.saved_chapters === book.total_chapters ? '完整保存' : '部分保存' }}</span></p>
+<span class="source-tag">{{ sourceLabel(book.source) }}</span><h3 :title="book.title">{{ book.title }}</h3><p>{{ book.saved_chapters }} / {{ book.total_chapters }} 章<span class="coverage-badge" :class="{complete:book.saved_chapters===book.total_chapters}">{{ book.saved_chapters === book.total_chapters ? '完整保存' : '部分保存' }}</span></p><progress class="book-progress" :value="book.saved_chapters" :max="book.total_chapters" :aria-label="`${book.title}全书保存进度`"></progress>
                 <p v-if="preferencesByBook.get(book.id)?.tags.length" class="footnote">{{ preferencesByBook.get(book.id)?.tags.join(' · ') }}</p>
                 <div class="book-actions"><button :disabled="working" @click="showBook(book.id)">查看进度与正文</button><button v-if="automaticFiles.some(f=>f.book_id===book.id&&f.state==='ready'&&f.export_id)" class="primary" :disabled="working" @click="openTxt(book.id)">打开 TXT 文件夹</button></div>
 </div>
             </article>
           </section>
-          <div v-else class="empty-state"><span class="empty-icon" aria-hidden="true">▤</span><h2>{{ filter ? '没有找到这本书' : archiveFilter === 'archived' ? '还没有归档作品' : '从第一本书开始' }}</h2><p>{{ filter ? '试试其他书名、作者或标签。' : archiveFilter === 'archived' ? '在作品详情中归档后，会显示在这里。' : '点“添加一本小说”，粘贴官网链接，按提示保存即可。' }}</p><p v-if="!filter && archiveFilter !== 'archived'" class="muted">保存完成后会自动生成 TXT，点“打开 TXT 文件夹”即可找到。</p></div>
+          <div v-else class="empty-state"><span class="empty-icon" aria-hidden="true"><AppIcon name="library" :size="35" /></span><h2>{{ filter ? '没有找到这本书' : archiveFilter === 'archived' ? '还没有归档作品' : '从第一本书开始' }}</h2><p>{{ filter ? '试试其他书名、作者或标签。' : archiveFilter === 'archived' ? '在作品详情中归档后，会显示在这里。' : '点“添加一本小说”，粘贴官网链接，按提示保存即可。' }}</p><p v-if="!filter && archiveFilter !== 'archived'" class="muted">保存完成后会自动生成 TXT，点“打开 TXT 文件夹”即可找到。</p></div>
           <nav v-if="books.length" class="list-pagination" aria-label="书库分页"><span>共 {{ books.length }} 本 · 第 {{ bookPage }} / {{ bookPages }} 页</span><button :disabled="bookPage <= 1" @click="bookPage = 1">首页</button><button :disabled="bookPage <= 1" @click="bookPage--">上一页</button><button :disabled="bookPage >= bookPages" @click="bookPage++">下一页</button><button :disabled="bookPage >= bookPages" @click="bookPage = bookPages">末页</button></nav>
         </template>
 
@@ -185,7 +188,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
           <div class="section-heading"><h2>保存记录 <span>{{ data.jobs.length }}</span></h2><select v-model="taskFilter" aria-label="任务筛选"><option value="all">全部任务</option><option value="active">进行中与暂停</option><option value="attention">失败、部分或受限</option><option value="completed">已完成</option></select><button class="subtle" :disabled="!desktopAvailable" @click="refresh">刷新状态</button></div>
           <div v-if="!data.jobs.length" class="empty-state"><span class="empty-icon" aria-hidden="true">↓</span><h2>还没有任务</h2><p>添加小说链接或导入本地内容，任务进度会保存在书库中。</p></div>
           <p v-else-if="!filteredJobs.length" class="footnote">当前筛选下没有任务。</p>
-          <article v-for="job in visibleJobs" :key="job.id" class="task-card">
+          <article v-for="job in visibleJobs" :key="job.id" class="task-card" :data-state="job.state">
             <div class="task-heading"><h3>{{ job.title }}</h3><span class="state-tag">{{ labels[job.state] || job.state }}</span></div>
             <progress :value="job.saved" :max="job.total" :aria-label="`${job.title}保存进度`"></progress>
             <div class="task-bottom"><span>本次范围已保存 {{ job.saved }} / {{ job.total }} 章 · 受限 {{ job.blocked }} · 失败 {{ job.failed }}</span><div class="task-controls"><button v-if="job.state === 'running' || job.state === 'queued'" :disabled="working" @click="action(() => pauseJob(job.id))">暂停</button><button v-if="['running','queued','paused'].includes(job.state)" :disabled="working" @click="action(() => cancelJob(job.id))">取消任务</button><button v-if="job.source==='qidian-session' && !['running','queued','completed'].includes(job.state)" :disabled="working" @click="openAccountBook(job.book_id)">继续保存</button><button v-if="job.source!=='qidian-session' && !['running','queued','completed','blocked'].includes(job.state) && (job.state !== 'partial' || job.failed || job.saved + job.blocked < job.total)" :disabled="working" @click="action(() => resumeJob(job.id))">继续 / 重试</button></div></div>

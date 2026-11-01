@@ -23,5 +23,5 @@ onMounted(()=>{if(desktopAvailable&&props.current===undefined)void check();});on
   </details>
 </template>
 <style scoped>
-.engine-options{border-top:1px solid #d4ddca;padding-top:16px;margin-top:18px}.engine-options p{font-size:13px;line-height:1.8;color:#526048;max-width:75ch}.engine-options summary{cursor:pointer;font-size:13px;line-height:1.8}.actions{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}.engine-enabled{font-weight:600}
+.engine-options{border-top:1px solid var(--border);padding-top:16px;margin-top:18px}.engine-options p{font-size:13px;line-height:1.8;color:var(--muted);max-width:75ch}.engine-options summary{cursor:pointer;font-size:13px;line-height:1.8}.actions{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}.engine-enabled{font-weight:600}
 </style>

@@ -29,5 +29,5 @@ onMounted(()=>{void refresh();timer=setInterval(()=>void refresh(),1000);});onUn
   </section>
 </template>
 <style scoped>
-textarea{display:block;width:100%;resize:vertical;border:1px solid #dfe4d6;border-radius:6px;background:#fffefa;padding:12px;font:inherit;color:#334431;margin:10px 0}h2{margin-bottom:12px}.batch{padding:12px 0;border-bottom:1px solid #e4e8dd}.batch small{display:block;color:#748069;overflow-wrap:anywhere}.batch li{padding:7px 0;overflow-wrap:anywhere}.batch-actions{display:flex;gap:8px;margin-top:12px}
+textarea{display:block;width:100%;resize:vertical;border:1px solid var(--border);border-radius:6px;background:var(--surface);padding:12px;font:inherit;color:var(--ink);margin:10px 0}h2{margin-bottom:12px}.batch{padding:12px 0;border-bottom:1px solid #e4e8dd}.batch small{display:block;color:#748069;overflow-wrap:anywhere}.batch li{padding:7px 0;overflow-wrap:anywhere}.batch-actions{display:flex;gap:8px;margin-top:12px}
 </style>

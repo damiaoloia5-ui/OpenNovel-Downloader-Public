@@ -42,5 +42,5 @@ async function confirm(){
 </template>
 
 <style scoped>
-.txt-supplement{margin:22px 0;padding:20px;border:1px solid #bdc9b1;border-radius:8px;background:#f3f6ed}.txt-supplement h3{margin-top:0}.txt-supplement label{display:grid;gap:8px}.txt-supplement p{line-height:1.8}.txt-supplement input{max-width:100%}[role=alert]{color:#9a3024}
+.txt-supplement{margin:22px 0;padding:20px;border:1px solid var(--border);border-radius:8px;background:#f3f6ed}.txt-supplement h3{margin-top:0}.txt-supplement label{display:grid;gap:8px}.txt-supplement p{line-height:1.8}.txt-supplement input{max-width:100%}[role=alert]{color:#9a3024}
 </style>

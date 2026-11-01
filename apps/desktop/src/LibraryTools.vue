@@ -34,5 +34,5 @@ function save(){void action(async()=>{notice.value=`已保存本次预览的诊�
   </section>
 </template>
 <style scoped>
-.path-result{overflow-wrap:anywhere;font-size:13px;line-height:1.8}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f6ef;padding:16px;border-radius:6px;font-size:12px}h2{margin-bottom:12px}.link-row input{min-width:0}
+.path-result{overflow-wrap:anywhere;font-size:13px;line-height:1.8}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--surface-soft);padding:16px;border-radius:6px;font-size:12px}h2{margin-bottom:12px}.link-row input{min-width:0}
 </style>

@@ -18,5 +18,5 @@ async function search(){if(working.value||props.busy)return;error.value='';worki
   </details>
 </template>
 <style scoped>
-summary{cursor:pointer;font-size:16px;font-weight:600}label{font-size:13px}select{margin:0 0 12px 12px;padding:6px;max-width:100%}.results{list-style:none;padding:0}.results li{display:flex;gap:16px;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid #e4e8dd}.results small{display:block;color:#748069;margin-top:5px}.results button{flex-shrink:0}
+summary{cursor:pointer;font-size:16px;font-weight:600}label{font-size:13px}select{margin:0 0 12px 12px;padding:6px;max-width:100%}.results{list-style:none;padding:0}.results li{display:flex;gap:16px;justify-content:space-between;align-items:center;flex-wrap:wrap;padding:12px 0;border-bottom:1px solid var(--border)}.results li>div{min-width:0;overflow-wrap:anywhere}.results small{display:block;color:var(--muted);margin-top:5px}.results button{flex-shrink:0}
 </style>
