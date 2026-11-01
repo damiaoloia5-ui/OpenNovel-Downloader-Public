@@ -78,7 +78,7 @@ def serve(fixture=False):
                 emit({'op': 'chapter', 'sequence': sequence, 'envelope': result})
     except EngineStopped as error:
         if not stopped.is_set():
-            emit({'op': 'error', 'kind': error.kind})
+            emit({'op': 'error', 'kind': error.kind, **error.details})
     except Exception:
         if not stopped.is_set():
             emit({'op': 'error', 'kind': 'stopped'})

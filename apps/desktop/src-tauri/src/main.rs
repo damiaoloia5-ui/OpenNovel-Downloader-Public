@@ -4,6 +4,7 @@ mod account_download;
 mod accounts;
 mod auto_txt;
 mod capture;
+mod install_check;
 mod local_engine;
 mod official_reader;
 use account_download::{account_download_jobs, resume_account_download, start_account_download};
@@ -779,6 +780,18 @@ async fn export_book(
 }
 
 fn main() {
+    let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if args.first().is_some_and(|a| a == "--check-installation") {
+        let code = match args.as_slice() {
+            [_, output] => match install_check::run(&PathBuf::from(output)) {
+                Ok(true) => 0,
+                Ok(false) => 1,
+                Err(_) => 2,
+            },
+            _ => 2,
+        };
+        std::process::exit(code);
+    }
     tauri::Builder::default()
         .setup(|app| {
             let args = std::env::args().skip(1).collect::<Vec<_>>();

@@ -66,6 +66,9 @@ class PreparationTests(unittest.TestCase):
         self.assertIn('OPENNOVEL_ENGINE_ROOT=%~dp0', launch)
         self.assertIn('preview-library\\library.db', launch)
         self.assertEqual(manifest['application_sha256'], hashlib.sha256(executable.read_bytes()).hexdigest())
+        checks = (self.destination / 'Check-Installation.cmd').read_text(encoding='utf-8')
+        self.assertIn('--check-installation', checks)
+        self.assertNotIn('--database', checks)
 
 
 if __name__ == '__main__':

@@ -19,6 +19,7 @@ class ProtocolTests(unittest.TestCase):
         self.entered = threading.Event()
         self.slow = False
         self.failure_kind = None
+        self.failure_details = {}
         owner = self
 
         class Session:
@@ -31,7 +32,7 @@ class ProtocolTests(unittest.TestCase):
                 self.calls.append(item)
                 owner.entered.set()
                 if owner.failure_kind:
-                    raise worker.EngineStopped('private upstream detail never exposed', owner.failure_kind)
+                    raise worker.EngineStopped('private upstream detail never exposed', owner.failure_kind, owner.failure_details)
                 if owner.slow:
                     if not cancelled.wait(3):
                         raise AssertionError('cancel not delivered')
@@ -116,6 +117,15 @@ class ProtocolTests(unittest.TestCase):
         self.configure()
         self.send({'op': 'read', 'item_id': '10000000002', 'sequence': 1})
         self.assertEqual(self.events.get(timeout=3), {'op': 'error', 'kind': 'access_challenge'})
+        self.thread.join(3)
+        self.assertTrue(self.sessions[0].closed)
+
+    def test_rate_limit_keeps_bounded_delay_and_strips_arbitrary_details(self):
+        self.failure_kind = 'rate_limited'
+        self.failure_details = {'retry_after_seconds': 7, 'outcome': 'rate_limited', 'content': 'private fixture', 'headers': ['secret']}
+        self.configure()
+        self.send({'op': 'read', 'item_id': '10000000002', 'sequence': 1})
+        self.assertEqual(self.events.get(timeout=3), {'op': 'error', 'kind': 'rate_limited', 'retry_after_seconds': 7, 'outcome': 'rate_limited'})
         self.thread.join(3)
         self.assertTrue(self.sessions[0].closed)
 

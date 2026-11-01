@@ -49,6 +49,7 @@ const entry=join(output,'entry.mjs');
 await writeFile(entry,`export {default as Account} from ${JSON.stringify(resolve('apps/desktop/src/AccountPanel.vue'))};\nexport {default as AutoSave} from ${JSON.stringify(resolve('apps/desktop/src/AutoSavePanel.vue'))};\nexport {default as App} from ${JSON.stringify(resolve('apps/desktop/src/App.vue'))};`);
 await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as Official} from '+JSON.stringify(resolve('apps/desktop/src/OfficialReaderPanel.vue'))+';\n');
 const real=new Set(['AccountPanel.vue','AutoSavePanel.vue','App.vue','OfficialReaderPanel.vue']);
+real.add('LocalEnginePanel.vue');
 real.add('TxtSupplementPanel.vue');
 await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as Supplement} from '+JSON.stringify(resolve('apps/desktop/src/TxtSupplementPanel.vue'))+';\n');
 await build({configFile:false,logLevel:'error',plugins:[{
@@ -93,6 +94,7 @@ function fixture(){
     accountDownloadJobs:async()=>structuredClone(state.jobs),pauseJob:async()=>{state.jobs[0].state='paused';},resumeAccountDownload:async(...args)=>{state.calls.push(['resume',...args]);if(state.resumeError)throw state.resumeError;state.jobs[0].state='running';},
     focusAccount:async(id)=>{state.calls.push(['focus',id]);},
     cancelJob:async()=>{},preferences:async()=>[],automaticTxtSnapshot:async()=>structuredClone(state.automatic),sourceCapabilities:async()=>[{id:'qimao-web',can_download:true}],
+    localEngineStatus:async()=>({enabled:false,ready:false,message:'原创组件未安装'}),
     inspectBook:async()=>{state.calls.push(['inspect']);return {...preview.catalog,source:'qimao-web'};},
     downloadBook:async(...args)=>{state.calls.push(['download',...args]);return 'public-job';},jobDetails:async()=>({job:{book_id:stored.id},items:[]}),
     revealExport:async(id)=>{state.calls.push(['reveal',id]);},
@@ -193,6 +195,51 @@ test('public links save directly and an existing public book is reused without a
       const input=walk(f.root,true).find(n=>n.props.id==='novel-link');input.value='https://www.qimao.com/shuku/123/';input.dispatch('input');await flush();
       walk(f.root,true).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();await flush();
       assert.equal(f.state.calls.filter(c=>c[0]==='download').length,existing?0:1);assert.ok(walk(f.root).find(n=>n.props['data-stub']==='BookWorkspace.vue'&&n.textContent===stored.id));
+    }finally{f.close();}
+  }
+});
+test('a ready local component requires explicit activation before saving App-only free chapters',async()=>{
+  const f=await mount(App,{},({state,api})=>{
+    state.engineEnabled=false;
+    api.localEngineStatus=async()=>({enabled:state.engineEnabled,ready:true,message:'原创组件就绪'});
+    api.setLocalEngine=async(enabled)=>{state.calls.push(['enable-engine',enabled]);state.engineEnabled=enabled;return api.localEngineStatus();};
+    api.sourceCapabilities=async()=>[{id:'fanqie-web',can_download:true},{id:'fanqie-app-local',can_download:state.engineEnabled}];
+    api.inspectBook=async()=>{state.calls.push(['inspect',state.engineEnabled]);return {...preview.catalog,source:state.engineEnabled?'fanqie-app-local':'fanqie-web',chapters:preview.catalog.chapters.map((c,i)=>({...c,restricted:!state.engineEnabled&&i===1}))};};
+  });try{
+    const input=walk(f.root,true).find(n=>n.props.id==='novel-link');input.value='https://fanqienovel.com/page/10000000001';input.dispatch('input');await flush();
+    walk(f.root,true).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();await flush();
+    assert.equal(f.state.calls.filter(c=>c[0]==='download').length,0);
+    await click(f.button('启用本地组件，保存更多免费章节'));await flush();await flush();
+    assert.equal(f.state.calls.filter(c=>c[0]==='enable-engine').length,1);
+    const downloads=f.state.calls.filter(c=>c[0]==='download');assert.equal(downloads.length,1);assert.match(downloads[0][4],/2/);
+    assert.deepEqual(f.state.calls.filter(c=>c[0]==='inspect'),[['inspect',false],['inspect',true]]);
+  }finally{f.close();}
+});
+test('unavailable components leave the ordinary web save usable',async()=>{
+  const f=await mount(App,{},({api})=>{
+    api.sourceCapabilities=async()=>[{id:'fanqie-web',can_download:true}];
+    api.inspectBook=async()=>({...preview.catalog,source:'fanqie-web',chapters:preview.catalog.chapters.map((c,i)=>({...c,restricted:i===1}))});
+  });try{
+    const input=walk(f.root,true).find(n=>n.props.id==='novel-link');input.value='https://fanqienovel.com/page/10000000001';input.dispatch('input');await flush();
+    walk(f.root,true).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();await flush();
+    assert.equal(f.state.calls.filter(c=>c[0]==='download').length,1);
+    assert.equal(f.button('启用本地组件，保存更多免费章节'),undefined);
+  }finally{f.close();}
+});
+test('failed or late component activation cannot start saving the wrong book',async()=>{
+  for(const late of [false,true]){
+    let finish;const f=await mount(App,{},({api})=>{
+      api.localEngineStatus=async()=>({enabled:false,ready:true,message:'原创组件就绪'});
+      api.sourceCapabilities=async()=>[{id:'fanqie-web',can_download:true}];
+      api.inspectBook=async()=>({...preview.catalog,source:'fanqie-web',chapters:preview.catalog.chapters.map((c,i)=>({...c,restricted:i===1}))});
+      api.setLocalEngine=()=>late?new Promise(resolve=>{finish=resolve;}):Promise.reject('原创组件检查失败');
+    });try{
+      const input=walk(f.root,true).find(n=>n.props.id==='novel-link');input.value='https://fanqienovel.com/page/10000000001';input.dispatch('input');await flush();
+      walk(f.root,true).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();await flush();
+      await click(f.button('启用本地组件，保存更多免费章节'));
+      if(late){input.value='https://fanqienovel.com/page/10000000002';input.dispatch('input');await flush();finish({enabled:true,ready:true,message:'原创组件就绪'});await flush();await flush();}
+      else assert.match(f.root.textContent,/原创组件检查失败/);
+      assert.equal(f.state.calls.filter(c=>c[0]==='download').length,0);
     }finally{f.close();}
   }
 });

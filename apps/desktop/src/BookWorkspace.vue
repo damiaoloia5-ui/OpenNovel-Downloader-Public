@@ -12,7 +12,7 @@ import {saveMode,workbenchStatus,publicAccessLimited,type WorkbenchTab} from './
 import {saveRecovery} from './workflow';
 
 const props=defineProps<{bookId:string;initialTab?:WorkbenchTab;accountId?:string;sources:SourceInfo[];jobs:Job[];summary?:Book;preference?:BookPreferences;automatic?:AutoTxtStatus}>();
-const emit=defineEmits<{changed:[];back:[];tasks:[];help:[]}>();
+const emit=defineEmits<{changed:[];back:[];tasks:[];help:[];engine:[input:string]}>();
 const tab=ref<WorkbenchTab>(props.initialTab||'save');
 const selectedAccount=ref(props.accountId||'');
 const detail=ref<BookDetails|null>(null);const busy=ref(false);const error=ref('');const notice=ref('');
@@ -126,6 +126,7 @@ onUnmounted(()=>{disposed=true;loadSequence++;readSequence++;jobSequence++;});
             <button v-if="mode==='public'&&!pending&&!recoverable&&!limited&&book.saved_chapters<book.total_chapters" class="primary" :disabled="busy||pending" @click="fillMissing">检查目录并保存缺章</button>
             <article v-if="currentJob&&(active||book.saved_chapters<book.total_chapters)" class="workspace-task"><h3>{{ labels[currentJob.state]||currentJob.state }}</h3><p>本次任务范围已保存 {{ currentJob.saved }}/{{ currentJob.total }} 章，受限 {{ currentJob.blocked }}，失败 {{ currentJob.failed }}。</p><progress :value="currentJob.saved" :max="currentJob.total" aria-label="当前任务范围进度"></progress><p v-if="currentJob.error" class="recovery">下一步：{{ recovery }}</p><div class="actions"><button v-if="['queued','running'].includes(currentJob.state)" :disabled="busy" @click="control(currentJob,'pause')">暂停本书任务</button><button v-if="recoverable&&mode!=='unavailable'" class="primary" :disabled="busy||active" @click="control(currentJob,'resume')">继续保存</button></div></article>
           </template>
+          <section v-if="book.source==='fanqie-web'&&book.saved_chapters<book.total_chapters" class="workspace-advanced"><h3>尝试保存更多免费章节</h3><p>可查看本地组件是否就绪，主动启用后重新核对免费目录；使用独立来源保存，原网页版本保留。</p><button :disabled="busy||pending" @click="emit('engine',`https://fanqienovel.com/page/${encodeURIComponent(book.remote_id)}`)">查看本地组件保存方式</button></section>
           <TxtSupplementPanel v-if="book.source==='fanqie-web'&&book.saved_chapters<book.total_chapters" :key="book.id" :book-id="book.id" :disabled="busy||pending" @saved="exported" />
           <details class="workspace-advanced"><summary>为什么有些章节没保存？</summary><AvailabilityPanel :chapters="detail.chapters" :busy="busy" @save="selectTab('save')" @read="readSaved" @job="relatedJob" /></details>
           <details class="workspace-advanced" :open="!!openedJob">

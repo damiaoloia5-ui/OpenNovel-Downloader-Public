@@ -43,6 +43,11 @@ def assemble(destination, source, inventory, scripts, license_file, executable=N
                  'set "OPENNOVEL_ENGINE_ROOT=%~dp0"',
                  r'start "" "%~dp0OpenNovel-Preview.exe" --database "%~dp0preview-library\library.db"']
         (destination / 'Start-Isolated-Preview.cmd').write_bytes(('\r\n'.join(lines) + '\r\n').encode('utf-8'))
+        checks = ['@echo off', f'set "OPENNOVEL_ENGINE_PYTHON={sys.executable}"',
+                  'set "OPENNOVEL_ENGINE_ROOT=%~dp0"',
+                  r'start "" /wait "%~dp0OpenNovel-Preview.exe" --check-installation "%~dp0installation-checks"',
+                  r'if exist "%~dp0installation-checks" start "" "%~dp0installation-checks"']
+        (destination / 'Check-Installation.cmd').write_bytes(('\r\n'.join(checks) + '\r\n').encode('utf-8'))
     (destination / 'component.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
     return manifest
 

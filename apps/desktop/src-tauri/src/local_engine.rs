@@ -350,12 +350,33 @@ impl SourceAdapter for EngineAdapter {
                     "来源要求验证或拒绝访问，已停止；请核对官网提示后再继续".into(),
                 ),
                 Some("rate_limited") => {
-                    Error::Network("来源限流，已停止；请等待后继续原任务".into())
+                    let seconds = value["retry_after_seconds"]
+                        .as_u64()
+                        .unwrap_or(60)
+                        .clamp(1, 86400);
+                    Error::Network(format!(
+                        "来源限流，请至少等待 {seconds} 秒后继续原任务；进度已保留"
+                    ))
                 }
                 Some("permission_changed") => {
                     Error::AccessChallenge("本章阅读权限变化，未保存；请先核对官网免费状态".into())
                 }
-                _ => stopped(),
+                _ => match value["outcome"].as_str() {
+                    Some("empty_response") => Error::Network(
+                        "官方接口连续返回空内容，已停止；进度保留，可稍后继续原任务".into(),
+                    ),
+                    Some("transport_failed") => Error::Network(
+                        "官方接口连接或传输暂时失败，有限重试后已停止；请稍后继续".into(),
+                    ),
+                    Some("oversized" | "redirect_refused") => Error::SourceChanged(
+                        "官方响应大小或地址不符合约定，已停止；未保存异常正文".into(),
+                    ),
+                    Some("http_error") => Error::Network(format!(
+                        "官方服务返回 HTTP {}，已停止；进度保留",
+                        value["http_status"].as_u64().unwrap_or(502)
+                    )),
+                    _ => stopped(),
+                },
             });
         }
         if value["op"] != "chapter" || value["sequence"].as_u64() != Some(worker.sequence) {
@@ -399,6 +420,137 @@ mod tests {
         std::fs::write(scripts.join("json.py"), b"unexpected import shadow").unwrap();
         assert!(Runtime::from_paths(python.clone(), Some(root.path().to_owned())).is_err());
         assert!(Runtime::from_paths(python, Some(PathBuf::from("relative"))).is_err());
+    }
+
+    #[test]
+    #[ignore = "Manual real-source acceptance only; explicit public book URL and new output directory required"]
+    fn manual_free_book_acceptance() {
+        let input =
+            std::env::var("OPENNOVEL_ACCEPT_BOOK").expect("explicit public book URL required");
+        let directory = PathBuf::from(
+            std::env::var_os("OPENNOVEL_ACCEPT_OUTPUT").expect("new acceptance directory required"),
+        );
+        let resume = std::env::var("OPENNOVEL_ACCEPT_RESUME").as_deref() == Ok("1");
+        assert!(
+            directory.is_absolute()
+                && if resume {
+                    directory.is_dir()
+                } else {
+                    !directory.exists()
+                },
+            "use a new absolute acceptance directory, or explicitly resume its original job"
+        );
+        let runtime = Runtime::discover().unwrap();
+        runtime.check().unwrap();
+        let catalog = opennovel_core::sources::Fanqie::new()
+            .unwrap()
+            .inspect_engine(&input)
+            .unwrap();
+        assert!(
+            catalog.chapters.len() <= 200,
+            "manual acceptance request budget exceeded"
+        );
+        assert!(
+            catalog.chapters.iter().all(|c| !c.restricted),
+            "this acceptance case requires an explicitly free catalog"
+        );
+        std::fs::create_dir_all(&directory).unwrap();
+        let library = std::sync::Arc::new(
+            opennovel_core::Library::open(directory.join("library.db")).unwrap(),
+        );
+        let job = if resume {
+            let jobs = library.snapshot().unwrap().jobs;
+            assert_eq!(
+                jobs.len(),
+                1,
+                "acceptance resume requires exactly one original job"
+            );
+            let previous = &jobs[0];
+            let book = library.book_details(&previous.book_id).unwrap().book;
+            assert_eq!(book.source, catalog.source);
+            assert_eq!(book.remote_id, catalog.remote_id);
+            assert_eq!(
+                library
+                    .job_details(&previous.id)
+                    .unwrap()
+                    .items
+                    .iter()
+                    .map(|i| i.chapter_id.as_str())
+                    .collect::<Vec<_>>(),
+                catalog
+                    .chapters
+                    .iter()
+                    .map(|c| c.id.as_str())
+                    .collect::<Vec<_>>(),
+                "catalog changed; preserve the original acceptance instead of silently changing scope"
+            );
+            previous.id.clone()
+        } else {
+            library
+                .create_engine_download(&catalog, &(1..=catalog.chapters.len()).collect::<Vec<_>>())
+                .unwrap()
+        };
+        let saved_before = library.job(&job).unwrap().saved;
+        let automatic = crate::auto_txt::AutoTxtService::start(
+            std::sync::Arc::clone(&library),
+            directory.join("exports"),
+        )
+        .unwrap();
+        let client = EngineAdapter::new(
+            runtime,
+            catalog.remote_id.clone(),
+            catalog.chapters.iter().map(|c| c.id.clone()).collect(),
+        );
+        let started = Instant::now();
+        let result = library.run_job(&job, &client, &AtomicBool::new(false));
+        drop(client);
+        let snapshot = library.job(&job).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let receipt = loop {
+            if let Some(status) = automatic.snapshot().unwrap().into_iter().find(|s| {
+                s.book_id == snapshot.book_id
+                    && (s.state == "failed"
+                        || (s.state == "empty" && snapshot.saved == 0)
+                        || (s.state == "ready"
+                            && s.receipt.as_ref().is_some_and(|r| {
+                                r.saved_chapters == snapshot.saved
+                                    && r.total_chapters == snapshot.total
+                            })))
+            }) {
+                break status;
+            }
+            assert!(Instant::now() < deadline, "automatic TXT deadline exceeded");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let details = library.job_details(&job).unwrap();
+        let failures: Vec<_> = details.items.iter().filter(|i| i.state != "completed").map(|i| json!({"position":i.position,"chapter_id":i.chapter_id,"state":i.state,"error_kind":i.error_kind,"error":i.error})).collect();
+        let report = json!({"job_id":job,"saved_before":saved_before,"book_id":catalog.remote_id,"title":catalog.title,"source":catalog.source,
+            "total":snapshot.total,"saved":snapshot.saved,"blocked":snapshot.blocked,"failed":snapshot.failed,
+            "state":snapshot.state,"elapsed_seconds":started.elapsed().as_secs_f64(),"automatic_txt":receipt,
+            "run_error":result.err().map(|e|e.to_string()),"missing":failures,"real_source_requested":true,
+            "account_used":false,"local_text_imported":false});
+        std::fs::write(
+            directory.join(if resume {
+                format!("acceptance-resume-{}.json", uuid::Uuid::new_v4())
+            } else {
+                "acceptance.json".into()
+            }),
+            serde_json::to_vec_pretty(&report).unwrap(),
+        )
+        .unwrap();
+        println!(
+            "{}",
+            json!({"saved":snapshot.saved,"total":snapshot.total,"state":snapshot.state})
+        );
+        drop(automatic);
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(
+            snapshot.state, "completed",
+            "see acceptance.json; saved content retained"
+        );
+        assert_eq!(snapshot.saved, snapshot.total);
+        assert_eq!(report["automatic_txt"]["state"], "ready");
+        assert_eq!(report["automatic_txt"]["receipt"]["partial"], false);
     }
 
     #[test]

@@ -52,13 +52,17 @@ pub fn parse_engine_chapter(
     if value.schema_version != 1
         || value.book_id != expected_book
         || value.item_id != expected_item
-        || clean(&value.title) != clean(expected_title)
         || expected_book.is_empty()
         || expected_item.is_empty()
         || expected_title.trim().is_empty()
         || !(1..=200_000).contains(&value.word_number)
     {
         return Err(changed());
+    }
+    if clean(&value.title) != clean(expected_title) {
+        return Err(Error::SourceChanged(
+            "本地引擎正文标题与目录不一致，未保存本章".into(),
+        ));
     }
     if value.need_pay != 0 {
         return Err(Error::Restricted("本地引擎返回需付费章节，未保存".into()));
@@ -68,13 +72,17 @@ pub fn parse_engine_chapter(
         .chars()
         .any(|c| matches!(c, '\u{e000}'..='\u{f8ff}' | '\u{fffd}'))
     {
-        return Err(changed());
+        return Err(Error::SourceChanged(
+            "本地引擎正文含未识别字形，未保存本章".into(),
+        ));
     }
     let html = Html::parse_fragment(&value.content);
     let forbidden = Selector::parse("script,style,img,iframe,canvas,svg,audio,video,[hidden]")
         .expect("static selector");
     if html.select(&forbidden).next().is_some() {
-        return Err(changed());
+        return Err(Error::SourceChanged(
+            "本地引擎正文含隐藏、受保护或异常结构，未保存本章".into(),
+        ));
     }
     let paragraphs = html
         .select(&Selector::parse("p").expect("static selector"))
@@ -85,14 +93,32 @@ pub fn parse_engine_chapter(
         .iter()
         .map(|p| clean(p).chars().count())
         .sum::<usize>();
-    if count != value.word_number
-        || paragraphs.iter().any(|p| {
-            ["订阅本章", "试读结束", "请完成验证"]
-                .iter()
-                .any(|m| p.contains(m))
+    // Official word metadata can lag tiny additions to a complete long chapter.
+    // Missing text is never tolerated; preserve every received character.
+    let small_complete_addition = value.word_number >= 1000
+        && count > value.word_number
+        && count - value.word_number <= (value.word_number / 1000).clamp(3, 20)
+        && ["header", "article", "footer"].iter().all(|tag| {
+            html.select(&Selector::parse(tag).expect("static tag"))
+                .count()
+                == 1
         })
-    {
-        return Err(changed());
+        && value.content.contains("</article>")
+        && value.content.contains("</footer>");
+    if count != value.word_number && !small_complete_addition {
+        return Err(Error::SourceChanged(format!(
+            "本地引擎正文长度未通过校验（实际 {count}，声明 {}），未保存本章",
+            value.word_number
+        )));
+    }
+    if paragraphs.iter().any(|p| {
+        ["订阅本章", "试读结束", "请完成验证"]
+            .iter()
+            .any(|m| p.contains(m))
+    }) {
+        return Err(Error::SourceChanged(
+            "本地引擎正文含订阅、试读或验证提示，未保存本章".into(),
+        ));
     }
     let document = ImportDocument {
         id: value.book_id,
@@ -124,6 +150,33 @@ mod tests {
             check(&fixture()).unwrap().paragraphs,
             ["山间的小屋亮起一盏灯。"]
         );
+    }
+    #[test]
+    fn complete_long_document_keeps_small_additions_but_never_accepts_missing_text() {
+        let mut value = fixture();
+        let original = "山间的小屋亮起一盏灯。".repeat(100);
+        value["word_number"] = json!(1100);
+        value["content"] = json!(format!(
+            "<header>原创章</header><article><p>{original}补字甲</p></article><footer></footer>"
+        ));
+        let parsed = check(&value).unwrap();
+        assert_eq!(parsed.paragraphs, [format!("{original}补字甲")]);
+        for body in [
+            original.chars().take(1099).collect::<String>(),
+            format!("{original}补字甲乙丙"),
+        ] {
+            value["content"] = json!(format!(
+                "<header>原创章</header><article><p>{body}</p></article><footer></footer>"
+            ));
+            assert!(check(&value).is_err());
+        }
+        value["content"] = json!(format!("<p>{original}补字甲</p>"));
+        assert!(check(&value).is_err());
+        value["word_number"] = json!(11);
+        value["content"] = json!(
+            "<header>原创章</header><article><p>山间的小屋亮起一盏灯。补字甲</p></article><footer></footer>"
+        );
+        assert!(check(&value).is_err());
     }
     #[test]
     fn identities_permissions_types_and_schema_are_mandatory() {

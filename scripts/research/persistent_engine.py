@@ -10,15 +10,25 @@ import threading
 import time
 
 import engine_runtime_config as sandbox
-from https_read_gate import fetch_once, validate_request
+from https_read_gate import fetch_with_retries, validate_request
 
 CREATE_FLAGS = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
 
 class EngineStopped(RuntimeError):
-    def __init__(self, message, kind='stopped'):
+    def __init__(self, message, kind='stopped', details=None):
         super().__init__(message)
         self.kind = kind if kind in {'stopped', 'access_challenge', 'rate_limited', 'permission_changed'} else 'stopped'
+        self.details = {}
+        for key, value in (details or {}).items():
+            if key == 'outcome' and value in {'access_challenge', 'rate_limited', 'redirect_refused', 'http_error', 'oversized', 'empty_response', 'transport_failed', 'cancelled'}:
+                self.details[key] = value
+            elif key == 'http_status' and type(value) is int and 100 <= value <= 599:
+                self.details[key] = value
+            elif key == 'attempts' and type(value) is int and 0 <= value <= 2:
+                self.details[key] = value
+            elif key == 'retry_after_seconds' and type(value) is int and 1 <= value <= 86400:
+                self.details[key] = value
 
 
 class EngineSession:
@@ -149,12 +159,12 @@ class EngineSession:
             def transfer():
                 try:
                     if self._closed.is_set() or (cancelled is not None and cancelled.is_set()):
-                        delivered.put_nowait({'status': 503, 'headers': [], 'body': ''})
+                        delivered.put_nowait(({'status': 503, 'headers': [], 'body': ''}, {'outcome': 'cancelled'}))
                         return
-                    result = fetch_once(request, item_id)[0] if self.live else self.fixture(item_id)
+                    result = fetch_with_retries(request, item_id, stop_requested=lambda: self._closed.is_set() or (cancelled is not None and cancelled.is_set())) if self.live else (self.fixture(item_id), {})
                     delivered.put_nowait(result)
                 except Exception:
-                    delivered.put_nowait({'status': 502, 'headers': [], 'body': ''})
+                    delivered.put_nowait(({'status': 502, 'headers': [], 'body': ''}, {'outcome': 'transport_failed'}))
             threading.Thread(target=transfer, daemon=True).start()
             deadline = time.monotonic() + 20
             while True:
@@ -162,13 +172,13 @@ class EngineSession:
                 if time.monotonic() >= deadline:
                     raise EngineStopped('transfer deadline exceeded')
                 try:
-                    result = delivered.get(timeout=0.03)
+                    result, report = delivered.get(timeout=0.03)
                     break
                 except queue.Empty:
                     continue
             if result['status'] != 200:
-                kind = 'access_challenge' if result['status'] in (401, 403) else 'rate_limited' if result['status'] == 429 else 'stopped'
-                raise EngineStopped('upstream restricted or failed; session stopped', kind)
+                kind = 'rate_limited' if report.get('outcome') == 'rate_limited' or result['status'] == 429 else 'access_challenge' if result['status'] in (401, 403) else 'stopped'
+                raise EngineStopped('upstream restricted or failed; session stopped', kind, report)
             self._check_stop(cancelled)
             self._write_mail(f'response-{sequence}', result)
             deadline = time.monotonic() + 5

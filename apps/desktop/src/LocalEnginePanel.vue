@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import {onMounted,onUnmounted,ref} from 'vue';
+import {onMounted,onUnmounted,ref,watch} from 'vue';
 import {desktopAvailable,localEngineStatus,setLocalEngine,type LocalEngineStatus} from './api';
-const props=defineProps<{disabled?:boolean}>();
-const emit=defineEmits<{changed:[]}>();
+const props=defineProps<{disabled?:boolean;current?:LocalEngineStatus|null}>();
+const emit=defineEmits<{changed:[];checked:[status:LocalEngineStatus]}>();
 const status=ref<LocalEngineStatus|null>(null);const busy=ref(false);const error=ref('');let disposed=false;
-async function check(){if(busy.value)return;busy.value=true;error.value='';try{const value=await localEngineStatus();if(!disposed){status.value=value;emit('changed');}}catch(e){if(!disposed)error.value=String(e);}finally{busy.value=false;}}
-async function toggle(){if(busy.value||!status.value||props.disabled)return;busy.value=true;error.value='';try{const value=await setLocalEngine(!status.value.enabled);if(!disposed){status.value=value;emit('changed');}}catch(e){if(!disposed)error.value=String(e);}finally{busy.value=false;}}
+async function check(){if(busy.value)return;busy.value=true;error.value='';try{const value=await localEngineStatus();if(!disposed){status.value=value;emit('checked',value);emit('changed');}}catch(e){if(!disposed)error.value=String(e);}finally{busy.value=false;}}
+async function toggle(){if(busy.value||!status.value||props.disabled)return;busy.value=true;error.value='';try{const value=await setLocalEngine(!status.value.enabled);if(!disposed){status.value=value;emit('checked',value);emit('changed');}}catch(e){if(!disposed)error.value=String(e);}finally{busy.value=false;}}
+watch(()=>props.current,value=>{if(value)status.value=value;});
 onMounted(()=>{if(desktopAvailable)void check();});onUnmounted(()=>{disposed=true;});
 </script>
 <template>
@@ -15,7 +16,7 @@ onMounted(()=>{if(desktopAvailable)void check();});onUnmounted(()=>{disposed=tru
     <p role="status">{{ busy?'正在检查，请稍候…':status?.message||'请运行桌面应用查看组件状态。' }}</p>
     <div class="actions"><button type="button" :disabled="!desktopAvailable||busy||disabled" @click="check">重新检查组件</button><button v-if="status?.ready" type="button" :aria-pressed="status.enabled" :disabled="busy||disabled" @click="toggle">{{ status.enabled?'关闭本地引擎':'启用本地引擎实验' }}</button></div>
     <p v-if="status?.enabled" class="engine-enabled">已启用：在上方粘贴番茄作品链接，点“开始保存为 TXT”。暂停后可在本书进度继续；重启软件后需重新启用。</p>
-    <p>引擎结果作为独立来源入库，与已有网页版本分开保存。遇到付费、验证或正文校验失败会停止，不自动购买或处理滑块。尚未完成多作品、全书及独立安装环境验收。</p>
+    <p>引擎结果作为独立来源入库，与已有网页版本分开保存。遇到付费、验证或正文校验失败会停止，不自动购买或处理滑块。已有一本免费作品全目录 102 章实测通过；多作品、全站和独立安装环境仍待验收。</p>
     <details><summary>组件未就绪怎么办？</summary><p>当前为开发预览接入，尚未随安装包分发引擎。维护者请按项目 docs/local-engine.md 准备固定构建、配置 Python 后启动新版程序；普通网页功能可以继续使用。</p></details>
     <p v-if="error" class="message failure" role="alert">{{ error }}</p>
   </details>
