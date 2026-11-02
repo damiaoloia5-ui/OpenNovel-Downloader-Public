@@ -1,5 +1,11 @@
 # 番茄本地增强：离线一体化使用与维护
 
+## v0.3.8 当前 Windows 一体化版
+
+增强已改为独立 Windows 原生引擎，无需 Docker 或另外安装 Python。首次启用后记住选择；组件在 AppContainer 中运行，不能直接联网或读取书库。完整操作、构建与限制见 [Windows 一体化组件](windows-native-component.md)。
+
+以下 v0.3.6 及更早章节为历史实现记录，其中镜像、Docker、开发卷说明不适用于 v0.3.8 原生一体化包。
+
 ## v0.3.6 当前维护入口
 
 一体化包的准备与验收以[构建与交付](BUILD_AND_RELEASE.md)为准：必须显式提供固定离线组件目录，可从对应源码归档恢复已审查输入，不再要求历史审查目录、开发镜像或 Cargo 卷。`prepare_integrated_component.py` 现在要求 `--distribution`；下文旧版命令和目录仅保留当时的验证上下文。用户日常操作仍是首次按提示启用，之后直接保存。

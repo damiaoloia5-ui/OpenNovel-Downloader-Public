@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "backend": "windows-appcontainer",
+  "candidate_commit": "07cfb2249d4fd57d19bf4420af0e97621ec92df9",
+  "binary_license": "GPL-3.0",
+  "target": "x86_64-pc-windows-msvc",
+  "rust": "1.96",
+  "wrapper_sha256": "d230ea6549539b508e77a0063697b5b52ed0f8faeaa12b7a8c6e0890594e0fc5",
+  "vendored_packages": 228,
+  "files": {
+    "corresponding-source.tar.gz": {
+      "bytes": 33749693,
+      "sha256": "b6380bff77d7b6d8e0befe5578d7ec52f1d60c80b24bad63be4fb181877e14fa"
+    },
+    "engine.exe": {
+      "bytes": 1008128,
+      "sha256": "7169845795e63714458c4633ef5fe7805c472301a10358d00aeb6319d4452a24"
+    }
+  }
+}

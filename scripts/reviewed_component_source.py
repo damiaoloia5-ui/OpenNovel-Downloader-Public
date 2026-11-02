@@ -6,6 +6,7 @@ import tarfile
 
 PREFIX = 'opennovel-engine-source/upstream/'
 WRAPPER = 'rust/examples/opennovel_engine_service.rs'
+NATIVE_WRAPPER = 'rust/examples/opennovel_native_service.rs'
 
 
 def _relative(name):
@@ -65,7 +66,7 @@ def recover_source(archive, expected_archive, inventory, destination):
             if not member.name.startswith(PREFIX) or member.isdir():
                 continue
             name = member.name[len(PREFIX):]
-            if name == WRAPPER:
+            if name in (WRAPPER, NATIVE_WRAPPER):
                 continue
             if name not in expected or name in recovered:
                 raise ValueError('unexpected or duplicate reviewed file')

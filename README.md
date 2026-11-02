@@ -10,7 +10,7 @@
 2. 在“添加小说”粘贴官网作品链接，点“开始保存为 TXT”。
 3. 等任务结束，点“打开 TXT 所在文件夹”。再次打开同一本书可继续原进度。
 
-普通功能无需 Node、Rust、Python 或 Docker，需要 Windows WebView2。基础包提供网页与本地功能；**一体化包**另附默认关闭的番茄本地增强、Python、固定引擎镜像及对应源码，首次主动启用后记住选择，该增强仍需 Docker Desktop Linux 后端。
+**给普通用户使用 Windows x64 一体化安装包。** 已内置 Python、独立 Windows 引擎、对应源码和 WebView2 离线安装器，无需另外安装 Docker、Python、Rust 或 Node。番茄本地增强首次默认关闭，主动启用后记住选择；其他平台能力仍以[来源说明](docs/sources.md)为准。基础包只提供网页与本地功能。不要只复制 EXE，须保留随包组件目录。
 
 保存中先暂停再退出。TXT 缺失时可从本地书库重新生成，已有编辑版不会被覆盖；重新生成不能补出没有保存的章节。操作步骤见[第一次使用](docs/QUICK_START.md)和[完整指南](docs/USER_GUIDE.md)。
 

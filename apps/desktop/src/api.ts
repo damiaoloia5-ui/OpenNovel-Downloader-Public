@@ -48,7 +48,7 @@ export function historyDetails(id:string):Promise<BookDetails> {return invoke('h
 export function readHistory(id:string,chapterId:string):Promise<ChapterContent> {return invoke('read_history',{id,chapterId});}
 export function exportHistory(id:string,format:'txt'|'epub'):Promise<Receipt> {return invoke('export_history',{id,format});}
 export function sourceCapabilities():Promise<SourceInfo[]> {return invoke('source_capabilities');}
-export type LocalEngineIssue='component_unavailable'|'docker_missing'|'docker_unavailable'|'docker_windows_mode'|'images_missing'|'engine_missing'|'source_changed'|'offline_bundle_pending'|'offline_bundle_invalid'|'offline_import_failed'|'check_failed';
+export type LocalEngineIssue='component_unavailable'|'docker_missing'|'docker_unavailable'|'docker_windows_mode'|'images_missing'|'engine_missing'|'source_changed'|'offline_bundle_pending'|'offline_bundle_invalid'|'offline_import_failed'|'native_bundle_invalid'|'native_sandbox_failed'|'check_failed';
 export interface LocalEngineStatus {enabled:boolean;ready:boolean;remembered?:boolean;installed?:boolean;message:string;issue?:LocalEngineIssue|null;next_step?:string}
 export function localEngineStatus():Promise<LocalEngineStatus> {return invoke('local_engine_status');}
 export function setLocalEngine(enabled:boolean):Promise<LocalEngineStatus> {return invoke('set_local_engine',{enabled});}

@@ -21,7 +21,9 @@ def prepare_resources(repo, distribution, destination=None, python_archive=None)
     expected_lock = json.loads((repo / 'third_party/python-embed-lock.json').read_text(encoding='utf-8'))
     if python_lock != expected_lock:
         raise ValueError('reviewed Python runtime lock mismatch')
-    lock_path = scripts / 'engine_bundle_lock.json'
+    native = json.loads((distribution / 'manifest.json').read_text(encoding='utf-8')).get('backend') == 'windows-appcontainer'
+    folder = 'native-engine' if native else 'offline-engine'
+    lock_path = scripts / ('native_engine_lock.json' if native else 'engine_bundle_lock.json')
     engine_lock = json.loads(lock_path.read_text(encoding='utf-8'))
     if json.loads((distribution / 'manifest.json').read_text(encoding='utf-8')) != engine_lock:
         raise ValueError('offline build differs from reviewed runtime lock')
@@ -46,11 +48,11 @@ def prepare_resources(repo, distribution, destination=None, python_archive=None)
                          'python': 'python/python.exe', 'python_bundled': True, 'python_version': VERSION,
                          'engine_binary_bundled': True, 'runtime_ready_checked': False,
                          'engine_binary_license': 'GPL-3.0',
-                         'corresponding_source': 'offline-engine/corresponding-source.tar.gz'}
+                         'corresponding_source': folder + '/corresponding-source.tar.gz'}
     if not destination.exists():
         assemble(destination, source, inventory_path, scripts, repo / 'LICENSE')
         shutil.copytree(python, destination / 'python')
-        offline = destination / 'offline-engine'
+        offline = destination / folder
         offline.mkdir()
         for name in engine_lock['files']:
             shutil.copy2(distribution / name, offline / name)
@@ -60,19 +62,19 @@ def prepare_resources(repo, distribution, destination=None, python_archive=None)
         manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
         manifest.update(python='python/python.exe', python_bundled=True, python_version=VERSION,
                         engine_binary_bundled=True, engine_binary_license='GPL-3.0',
-                        corresponding_source='offline-engine/corresponding-source.tar.gz')
+                        corresponding_source=folder + '/corresponding-source.tar.gz')
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
     expected = {'inventory.json', 'OPENNOVEL-LICENSE.txt', 'component.json'}
     if (json.loads((destination / 'component.json').read_text(encoding='utf-8')) != expected_manifest
             or (destination / 'inventory.json').read_bytes() != inventory_path.read_bytes()
             or (destination / 'OPENNOVEL-LICENSE.txt').read_bytes() != (repo / 'LICENSE').read_bytes()):
         raise ValueError('prepared component metadata or notices changed; refusing overwrite')
-    expected.add('offline-engine/manifest.json')
-    if (destination / 'offline-engine/manifest.json').read_bytes() != lock_path.read_bytes():
+    expected.add(folder + '/manifest.json')
+    if (destination / folder / 'manifest.json').read_bytes() != lock_path.read_bytes():
         raise ValueError('offline manifest changed')
     for name, entry in engine_lock['files'].items():
-        expected.add('offline-engine/' + name)
-        path = destination / 'offline-engine' / name
+        expected.add(folder + '/' + name)
+        path = destination / folder / name
         if path.stat().st_size != entry['bytes'] or hashlib.sha256(path.read_bytes()).hexdigest() != entry['sha256']:
             raise ValueError('prepared offline component changed')
     for name in RUNTIME_FILES:
@@ -91,7 +93,7 @@ def prepare_resources(repo, distribution, destination=None, python_archive=None)
     if actual != expected or any(p.is_symlink() for p in destination.rglob('*')):
         raise ValueError('unexpected generated resource; refusing to bundle')
     return {'prepared': True, 'python_bundled': True, 'files': len(actual),
-            'engine_binary_bundled': True, 'development_volumes_required': False, 'docker_required': True,
+            'engine_binary_bundled': True, 'development_volumes_required': False, 'docker_required': not native,
             'output': str(destination)}
 
 
@@ -99,7 +101,7 @@ def main():
     repo = pathlib.Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--distribution', type=pathlib.Path, required=True,
-                        help='local folder containing the pinned manifest and two engine archives')
+                        help='local folder containing the pinned native or legacy container distribution')
     parser.add_argument('--python-archive', type=pathlib.Path, help='pinned official embedded Python ZIP')
     parser.add_argument('--output', type=pathlib.Path, help='absolute component output; default uses package version')
     args = parser.parse_args()

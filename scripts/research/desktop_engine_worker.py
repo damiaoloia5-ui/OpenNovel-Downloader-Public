@@ -9,6 +9,7 @@ import time
 from persistent_engine import CREATE_FLAGS, EngineSession, EngineStopped, original_fixture
 import engine_runtime_config as sandbox
 import offline_engine_bundle as offline
+import native_engine as native
 
 MAX_LINE = 2 * 1024 * 1024
 
@@ -23,6 +24,8 @@ def check():
         sandbox.verify_source()
     except Exception:
         return 'source_changed'
+    if native.present():
+        return native.check()
     try:
         result = subprocess.run([sandbox.DOCKER, 'info', '--format', '{{.OSType}}'], check=True,
                                 capture_output=True, text=True, timeout=5, creationflags=CREATE_FLAGS)
@@ -96,7 +99,8 @@ def serve(fixture=False):
             raise ValueError('configuration refused')
         if fixture and (config['book_id'] != '10000000001' or any(x not in ['10000000002', '10000000003'] for x in config['items'])):
             raise ValueError('fixture identities refused')
-        session = EngineSession(config['book_id'], config['items'], live=not fixture,
+        factory = native.NativeSession if native.present() else EngineSession
+        session = factory(config['book_id'], config['items'], live=not fixture,
                                 fixture=original_fixture if fixture else None, cancelled=stopped)
         if stopped.is_set():
             return

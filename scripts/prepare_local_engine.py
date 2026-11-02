@@ -8,7 +8,8 @@ import sys
 
 RUNTIME_FILES = ('desktop_engine_worker.py', 'engine_runtime_config.py', 'persistent_engine.py',
                  'persistent_read_gate.py', 'relay_read_gate.py', 'https_read_gate.py', 'local_engine_gate.py',
-                 'offline_engine_bundle.py', 'engine_bundle_lock.json')
+                 'offline_engine_bundle.py', 'engine_bundle_lock.json',
+                 'native_engine.py', 'native_engine_lock.json', 'windows_engine_sandbox.py')
 
 
 def assemble(destination, source, inventory, scripts, license_file, executable=None):

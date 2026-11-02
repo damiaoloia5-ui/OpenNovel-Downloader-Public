@@ -50,6 +50,8 @@ pub enum EngineIssue {
     OfflineBundlePending,
     OfflineBundleInvalid,
     OfflineImportFailed,
+    NativeBundleInvalid,
+    NativeSandboxFailed,
     CheckFailed,
 }
 
@@ -65,6 +67,8 @@ impl EngineIssue {
             Some("offline_bundle_pending") => Self::OfflineBundlePending,
             Some("offline_bundle_invalid") => Self::OfflineBundleInvalid,
             Some("offline_import_failed") => Self::OfflineImportFailed,
+            Some("native_bundle_invalid") => Self::NativeBundleInvalid,
+            Some("native_sandbox_failed") => Self::NativeSandboxFailed,
             _ => Self::CheckFailed,
         }
     }
@@ -81,6 +85,8 @@ impl EngineIssue {
             Self::OfflineBundlePending => "内置引擎尚未完成首次准备",
             Self::OfflineBundleInvalid => "内置离线组件校验失败",
             Self::OfflineImportFailed => "内置引擎导入失败",
+            Self::NativeBundleInvalid => "内置 Windows 引擎完整性检查未通过",
+            Self::NativeSandboxFailed => "Windows 隔离引擎启动或自检失败",
             Self::CheckFailed => "本地增强检查未完成",
         }
     }
@@ -102,12 +108,18 @@ impl EngineIssue {
             Self::OfflineImportFailed => {
                 "检查 Docker Desktop 和磁盘可用空间，再点“重新准备本地增强”；已保存正文保留。"
             }
-            Self::ComponentUnavailable | Self::SourceChanged | Self::OfflineBundleInvalid => {
+            Self::ComponentUnavailable
+            | Self::SourceChanged
+            | Self::OfflineBundleInvalid
+            | Self::NativeBundleInvalid => {
                 "重新安装完整的一体化版，保留随包资源目录；不要只复制 EXE。原书库无需删除。"
             }
             Self::ImagesMissing => "使用完整一体化安装包；开发版请按组件说明准备固定镜像。",
             Self::EngineMissing | Self::CheckFailed => {
                 "确认 Docker Desktop 的 Linux 服务正常，点“重新检查组件”；仍失败时重新安装完整一体化版。"
+            }
+            Self::NativeSandboxFailed => {
+                "点“重新检查组件”；仍失败时重新安装完整一体化版，并检查系统或安全软件是否阻止引擎启动。无需安装 Docker 或 Python。"
             }
         }
     }
@@ -436,11 +448,44 @@ fn verified_bundled_python(root: &std::path::Path) -> Result<PathBuf> {
 }
 
 fn verify_offline_files(root: &std::path::Path) -> Result<()> {
+    if root.join("native-engine").exists() {
+        return verify_native_files(root);
+    }
     verify_offline_files_with_lock(
         root,
         include_bytes!("../../../../scripts/research/engine_bundle_lock.json"),
     )
     .map_err(|_| Error::Invalid("内置离线组件不完整或版本不匹配，请重新安装完整一体化版".into()))
+}
+
+fn verify_native_files(root: &std::path::Path) -> Result<()> {
+    let raw = include_bytes!("../../../../scripts/research/native_engine_lock.json");
+    let directory = root.join("native-engine");
+    if std::fs::read(directory.join("manifest.json"))? != raw {
+        return Err(unavailable());
+    }
+    let lock: Value = serde_json::from_slice(raw)?;
+    let files = lock["files"].as_object().ok_or_else(unavailable)?;
+    if files.len() != 2
+        || !files.contains_key("engine.exe")
+        || !files.contains_key("corresponding-source.tar.gz")
+    {
+        return Err(unavailable());
+    }
+    let mut expected = serde_json::Map::new();
+    for (name, entry) in files {
+        if std::fs::metadata(directory.join(name))?.len()
+            != entry["bytes"].as_u64().ok_or_else(unavailable)?
+        {
+            return Err(unavailable());
+        }
+        expected.insert(name.clone(), entry["sha256"].clone());
+    }
+    expected.insert(
+        "manifest.json".into(),
+        Value::String(format!("{:x}", Sha256::digest(raw))),
+    );
+    verify_files(&directory, &expected)
 }
 
 fn verify_offline_files_with_lock(root: &std::path::Path, raw: &[u8]) -> Result<()> {
@@ -515,6 +560,18 @@ fn verify_files(
 }
 
 const COMPONENT_SCRIPTS: &[(&str, &[u8])] = &[
+    (
+        "native_engine.py",
+        include_bytes!("../../../../scripts/research/native_engine.py"),
+    ),
+    (
+        "native_engine_lock.json",
+        include_bytes!("../../../../scripts/research/native_engine_lock.json"),
+    ),
+    (
+        "windows_engine_sandbox.py",
+        include_bytes!("../../../../scripts/research/windows_engine_sandbox.py"),
+    ),
     (
         "offline_engine_bundle.py",
         include_bytes!("../../../../scripts/research/offline_engine_bundle.py"),
