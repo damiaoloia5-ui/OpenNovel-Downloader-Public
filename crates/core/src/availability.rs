@@ -47,7 +47,11 @@ pub(crate) fn annotate(
             (
                 "restricted",
                 item.and_then(|i| i.2.as_ref()).map_or_else(
-                    || "最近确认目录标记受限；可能为付费、锁定或渠道限制，请核对官网".to_owned(),
+                    || if source == "qimao-web" {
+                        "当前七猫网页渠道未开放此章；App 可读范围请在官方 App 核对，不代表需要付费".to_owned()
+                    } else {
+                        "最近确认目录标记受限；可能为付费、锁定或渠道限制，请核对官网".to_owned()
+                    },
                     |reason| format!("最近确认目录标记受限；最近任务原因：{reason}"),
                 ),
             )

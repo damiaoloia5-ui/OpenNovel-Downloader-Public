@@ -113,6 +113,35 @@ fn qimao_catalog_requires_complete_order_identity_and_known_permissions() {
 }
 
 #[test]
+fn qimao_catalog_accepts_a_cached_latest_link_only_when_it_matches_a_known_chapter() {
+    let (html, data) = qimao_fixture();
+    // The public page can report the full count while its latest-chapter widget
+    // lags behind the complete API directory. Use original synthetic content.
+    let cached = html
+        .replace("-103/", "-102/")
+        .replace(">原创第3章</a>", "> 原创第2章 </a>");
+    let catalog = Qimao::parse_catalog(&cached, &data.to_string(), BOOK).unwrap();
+    assert_eq!(catalog.chapters.len(), 3);
+    assert_eq!(catalog.chapters.last().unwrap().id, "103");
+    assert!(catalog.chapters[1].restricted);
+    assert!(!catalog.chapters[2].restricted);
+
+    for invalid in [
+        cached.replace("-102/", "-999/"),
+        cached.replace(&format!("{BOOK}-102/"), "999-102/"),
+        cached.replace("https://www.qimao.com/shuku/", "https://other.test/shuku/"),
+        cached.replace(" 原创第2章 ", "另一章"),
+        cached.replace("3章", "4章"),
+        html.replace(">原创第3章</a>", ">另一章</a>"),
+    ] {
+        assert!(Qimao::parse_catalog(&invalid, &data.to_string(), BOOK).is_err());
+    }
+    let mut unknown_permission = data.clone();
+    unknown_permission["data"]["chapters"][1]["is_vip"] = Value::Null;
+    assert!(Qimao::parse_catalog(&cached, &unknown_permission.to_string(), BOOK).is_err());
+}
+
+#[test]
 fn qimao_only_reads_the_requested_main_chapter_and_rejects_previews() {
     let (html, paragraph) = chapter_fixture();
     let chapter = qimao_catalog().chapters.remove(0);
@@ -128,10 +157,11 @@ fn qimao_only_reads_the_requested_main_chapter_and_rejects_previews() {
         assert!(Qimao::parse_chapter(&invalid, BOOK, &chapter).is_err());
     }
     let vip = qimao_catalog().chapters.remove(1);
-    assert!(matches!(
-        Qimao::parse_chapter(&html, BOOK, &vip),
-        Err(Error::Restricted(_))
-    ));
+    let Err(Error::Restricted(reason)) = Qimao::parse_chapter(&html, BOOK, &vip) else {
+        panic!("non-public chapters must remain restricted on the web channel");
+    };
+    assert!(reason.contains("网页渠道"));
+    assert!(!reason.contains("需订阅"));
 }
 
 #[test]

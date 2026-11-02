@@ -39,7 +39,7 @@ static SOURCES: [SourceInfo; 10] = [
         name: "七猫官网网页",
         can_download: true,
         can_search: false,
-        note: "仅目录明确免订阅的完整网页正文；VIP 标记不按 App 广告免费解释。",
+        note: "仅保存官网网页开放正文；部分章节引导到官方 App 免费阅读，当前尚未接入 App 通道。",
         example: "https://www.qimao.com/shuku/作品ID/",
     },
     SourceInfo {

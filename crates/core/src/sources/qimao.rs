@@ -87,12 +87,28 @@ impl Qimao {
             });
         }
         let latest = page::one(&document, ".book-information .update-chapter-title a")?;
-        let expected = format!(
-            "https://www.qimao.com/shuku/{book}-{}/",
-            chapters.last().expect("nonempty list").id
-        );
-        if latest.value().attr("href") != Some(expected.as_str()) {
-            return Err(changed("七猫目录最新章节与作品页身份不符，请重新读取"));
+        // The latest-chapter widget may lag behind the complete directory even
+        // when the page's declared count is current. Bind it to a known chapter
+        // of this exact book instead of requiring it to be the final chapter.
+        let prefix = format!("https://www.qimao.com/shuku/{book}-");
+        let latest_id = latest
+            .value()
+            .attr("href")
+            .and_then(|href| href.strip_prefix(&prefix))
+            .and_then(|path| path.strip_suffix('/'))
+            .filter(|id| page::numeric(id));
+        let linked = chapters
+            .iter()
+            .find(|chapter| Some(chapter.id.as_str()) == latest_id)
+            .ok_or_else(|| changed("七猫作品页最新章节不在本书完整目录中，请重新读取"))?;
+        if latest
+            .text()
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<String>()
+            != linked.title.split_whitespace().collect::<String>()
+        {
+            return Err(changed("七猫作品页最新章节标题与目录不符，请重新读取"));
         }
         let catalog = Catalog {
             source: "qimao-web".into(),
@@ -109,7 +125,8 @@ impl Qimao {
     pub fn parse_chapter(html: &str, book: &str, chapter: &ChapterRef) -> Result<ImportChapter> {
         if chapter.restricted {
             return Err(Error::Restricted(
-                "七猫目录标记该章需订阅，当前仅支持明确免订阅正文".into(),
+                "七猫网页渠道未标记本章为开放正文；请在官方 App 核对免费阅读，不能据此认定需要付费"
+                    .into(),
             ));
         }
         if !page::numeric(book) || !page::numeric(&chapter.id) {
@@ -187,7 +204,9 @@ impl SourceAdapter for Qimao {
         stop: &AtomicBool,
     ) -> Result<ImportChapter> {
         if chapter.restricted {
-            return Err(Error::Restricted("七猫目录标记该章需订阅".into()));
+            return Err(Error::Restricted(
+                "七猫网页渠道未标记本章为开放正文；当前尚未接入七猫 App 免费阅读通道".into(),
+            ));
         }
         if !page::numeric(book) || !page::numeric(&chapter.id) {
             return Err(changed("七猫章节身份无效"));

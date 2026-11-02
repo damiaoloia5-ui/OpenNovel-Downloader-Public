@@ -1,6 +1,6 @@
 # OpenNovel 使用指南
 
-对应 0.3.10 Windows 一体化候选版，2026-11-02。先看 [第一次使用](QUICK_START.md)。未验收的能力见 [来源状态](sources.md) 与 [阶段清单](REMAINING_PHASES.md)。
+对应 0.3.11 Windows 一体化候选版，2026-11-02。先看 [第一次使用](QUICK_START.md)。未验收的能力见 [来源状态](sources.md) 与 [阶段清单](REMAINING_PHASES.md)。
 
 ## 默认自动得到 TXT
 
