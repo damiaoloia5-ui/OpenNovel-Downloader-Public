@@ -6,15 +6,6 @@ use serde::Deserialize;
 
 pub const LOCAL_ENGINE_SOURCE: &str = "fanqie-app-local";
 
-// Observed upstream metadata counts ASCII, Han and Chinese punctuation, but not
-// every Unicode scalar (e.g. middle dots, circled numbers and arrows). This is
-// only a comparison metric: never remove those characters from saved content.
-fn metadata_character(c: char) -> bool {
-    c.is_ascii_graphic()
-        || matches!(c, '\u{4e00}'..='\u{9fff}' | '\u{3000}'..='\u{303f}'
-            | '\u{ff00}'..='\u{ffef}' | '—' | '‘' | '’' | '“' | '”' | '…')
-}
-
 impl crate::Library {
     /// Explicit experimental path; normal SourceHub, HTTP and batch capabilities stay disabled.
     pub fn create_engine_download(
@@ -64,7 +55,7 @@ pub fn parse_engine_chapter(
         || expected_book.is_empty()
         || expected_item.is_empty()
         || expected_title.trim().is_empty()
-        || !(1..=200_000).contains(&value.word_number)
+        || value.word_number == 0
     {
         return Err(changed());
     }
@@ -93,8 +84,31 @@ pub fn parse_engine_chapter(
             "本地引擎正文含隐藏、受保护或异常结构，未保存本章".into(),
         ));
     }
-    let paragraphs = html
-        .select(&Selector::parse("p").expect("static selector"))
+    let article_selector = Selector::parse("article").expect("static selector");
+    let articles = html.select(&article_selector).collect::<Vec<_>>();
+    let framed = !articles.is_empty();
+    if framed
+        && (articles.len() != 1
+            || !["header", "footer"].iter().all(|tag| {
+                html.select(&Selector::parse(tag).expect("static tag"))
+                    .count()
+                    == 1
+            })
+            || !value.content.contains("</article>")
+            || !value.content.contains("</footer>"))
+    {
+        return Err(Error::SourceChanged(
+            "本地引擎正文结构不完整，未保存本章".into(),
+        ));
+    }
+    let paragraph_selector = Selector::parse("p").expect("static selector");
+    let elements = if let Some(article) = articles.first() {
+        article.select(&paragraph_selector).collect::<Vec<_>>()
+    } else {
+        html.select(&paragraph_selector).collect::<Vec<_>>()
+    };
+    let paragraphs = elements
+        .into_iter()
         .map(|p| p.text().collect::<String>().trim().to_owned())
         .filter(|p| !p.is_empty())
         .collect::<Vec<_>>();
@@ -102,24 +116,15 @@ pub fn parse_engine_chapter(
         .iter()
         .map(|p| clean(p).chars().count())
         .sum::<usize>();
-    let metadata_count = paragraphs
-        .iter()
-        .flat_map(|p| p.chars())
-        .filter(|c| !c.is_whitespace() && metadata_character(*c))
-        .count();
-    // A different counting convention needs a complete framed response. An
-    // unexplained extra/missing character is not accepted via percentage slack.
-    let framed_metadata_match = metadata_count == value.word_number
-        && ["header", "article", "footer"].iter().all(|tag| {
-            html.select(&Selector::parse(tag).expect("static tag"))
-                .count()
-                == 1
-        })
-        && value.content.contains("</article>")
-        && value.content.contains("</footer>");
-    if count != value.word_number && !framed_metadata_match {
+    // Word metadata is an estimate with an undocumented counting convention,
+    // not a checksum or a quota. Preserve every character and impose no upper
+    // ratio. Framing plus a lower-bound heuristic detects obvious previews;
+    // neither claims to prove every character of the original is present.
+    if (framed && (count as u128) * 5 < (value.word_number as u128) * 4)
+        || (!framed && count != value.word_number)
+    {
         return Err(Error::SourceChanged(format!(
-            "本地引擎正文长度未通过校验（实际 {count}，平台口径 {metadata_count}，声明 {}），未保存本章",
+            "本地引擎正文疑似截断或缺少完整结构（实际 {count}，声明 {}），未保存本章",
             value.word_number
         )));
     }
@@ -164,7 +169,7 @@ mod tests {
         );
     }
     #[test]
-    fn platform_count_preserves_symbols_without_accepting_missing_or_extra_text() {
+    fn framed_body_preserves_symbols_and_metadata_differences_but_rejects_obvious_truncation() {
         let mut value = fixture();
         let original = "山间的小屋亮起一盏灯。".repeat(100);
         value["word_number"] = json!(1100);
@@ -173,15 +178,11 @@ mod tests {
         ));
         let parsed = check(&value).unwrap();
         assert_eq!(parsed.paragraphs, [format!("{original}·①②③→Ⅹ∯のᗜ\u{200c}")]);
-        for body in [
-            format!("{}····", original.chars().take(1099).collect::<String>()),
-            format!("{original}补·"),
-        ] {
-            value["content"] = json!(format!(
-                "<header>原创章</header><article><p>{body}</p></article><footer></footer>"
-            ));
-            assert!(check(&value).is_err());
-        }
+        value["content"] = json!(format!(
+            "<header>原创章</header><article><p>{}</p></article><footer></footer>",
+            original.chars().take(879).collect::<String>()
+        ));
+        assert!(check(&value).is_err());
         value["content"] = json!(format!("<p>{original}·</p>"));
         assert!(check(&value).is_err());
         value["content"] = json!(format!(
@@ -190,7 +191,7 @@ mod tests {
         assert!(check(&value).is_err());
     }
     #[test]
-    fn exact_platform_count_handles_the_reported_four_symbol_difference() {
+    fn metadata_is_not_a_checksum_or_a_maximum_length() {
         let mut value = fixture();
         let body = format!("{}····", "山".repeat(3027));
         value["word_number"] = json!(3027);
@@ -198,11 +199,25 @@ mod tests {
             "<header>原创章</header><article><p>{body}</p></article><footer></footer>"
         ));
         assert_eq!(check(&value).unwrap().paragraphs, [body]);
-        // The previous tiny-addition rule also falsely accepted ordinary extra text.
+        // A revised chapter can legitimately exceed stale metadata. Keep its text.
         value["content"] = json!(format!(
             "<header>原创章</header><article><p>{}多</p></article><footer></footer>",
             "山".repeat(3027)
         ));
+        assert_eq!(check(&value).unwrap().paragraphs[0].chars().count(), 3028);
+        let body = format!("{}·····", "山".repeat(2032));
+        value["word_number"] = json!(2030);
+        value["content"] = json!(format!(
+            "<header><p>章节标题</p></header><article><p>{body}</p></article><footer><p>站点尾注</p></footer>"
+        ));
+        assert_eq!(check(&value).unwrap().paragraphs, [body]);
+        let body = "山".repeat(200_001);
+        value["word_number"] = json!(1000);
+        value["content"] = json!(format!(
+            "<header>原创章</header><article><p>{body}</p></article><footer></footer>"
+        ));
+        assert_eq!(check(&value).unwrap().paragraphs, [body]);
+        value["word_number"] = json!(usize::MAX);
         assert!(check(&value).is_err());
     }
     #[test]

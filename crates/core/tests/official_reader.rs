@@ -113,3 +113,16 @@ fn page_txt_marks_visible_scope_never_overwrites_and_revalidates_mutated_fields(
     p.status = "protected".into();
     assert!(p.save_txt(dir.path()).is_err());
 }
+#[test]
+fn readable_page_keeps_long_text_without_a_membership_or_word_quota() {
+    let mut raw = original();
+    raw["paragraphs"] = json!(["山".repeat(200_001)]);
+    raw["declared_words"] = json!(1000);
+    let page =
+        OfficialPage::parse(&raw.to_string(), "faloo", "https://b.faloo.com/123_10.html").unwrap();
+    assert_eq!(page.paragraphs[0].chars().count(), 200_001);
+    raw["declared_words"] = json!(200001);
+    assert!(
+        OfficialPage::parse(&raw.to_string(), "faloo", "https://b.faloo.com/123_10.html").is_ok()
+    );
+}

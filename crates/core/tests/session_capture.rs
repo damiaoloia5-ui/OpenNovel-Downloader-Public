@@ -17,6 +17,14 @@ struct BrowserReader {
     navigation_error: AtomicBool,
     wrong_title: bool,
 }
+#[test]
+fn account_reader_has_no_two_hundred_thousand_word_quota() {
+    let text = "山".repeat(200_001);
+    let raw = json!({"url":"https://www.qidian.com/chapter/123/456/","title":"原创长章","paragraphs":[text],"declared_words":200001});
+    let chapter =
+        SessionChapter::parse(&raw.to_string(), "https://www.qidian.com/chapter/123/456/").unwrap();
+    assert_eq!(chapter.chapter.paragraphs[0].chars().count(), 200_001);
+}
 impl SourceAdapter for BrowserReader {
     fn source_id(&self) -> &str {
         "qidian-session"

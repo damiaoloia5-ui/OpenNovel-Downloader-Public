@@ -43,6 +43,7 @@ onUnmounted(()=>{disposed=true;readEpoch++;window.removeEventListener('focus',re
   <details v-else-if="!embedded"><summary>刺猬猫、飞卢、咪咕：登录后识别当前页</summary><OfficialReaderPanel /></details>
   <section v-if="!officialBookPlatform(initialUrl||'')" class="account-panel" aria-label="起点保存引导">
     <h2>{{ embedded?'保存这本书':'跟着提示保存小说' }} <small>起点 · 实验性</small></h2>
+    <p>可连续保存账号实际能完整阅读的章节，软件不按会员等级设置字数或每日下载配额。VIP 身份、包月和单章订阅的范围不同，以这本书在官网的实际阅读权益为准。</p>
     <ol v-if="!embedded" class="flow-steps" aria-label="起点保存步骤"><li :aria-current="step===1?'step':undefined"><b>1</b>登录起点</li><li :aria-current="step===2?'step':undefined"><b>2</b>核对这本书</li><li :aria-current="step===3?'step':undefined"><b>3</b>保存并得到 TXT</li></ol>
     <label v-if="!embedded&&!qidianBookLink(bookUrl)">这本书的起点官网链接<input v-model="bookUrl" type="url" :disabled="busy" placeholder="从起点复制作品链接，粘贴到这里" /></label>
     <label v-if="qidianAccounts.length>1">使用哪个起点账号？<select v-model="chosen" :disabled="busy"><option v-for="row in qidianAccounts" :key="row.account.id" :value="row.account.id">{{ row.account.label }}</option></select></label>

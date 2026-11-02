@@ -45,3 +45,7 @@ test('Ciwemo standalone human verification is recognized without reading or solv
   f.ids.J_ManMachineVerify.style={};f.context.location.pathname='/book/123';
   assert.notEqual(f.run().status,'verification');
 });
+test('visible text is not cut off by a two-hundred-thousand-character quota',()=>{
+  const f=fixture();f.text.childNodes[0].textContent='山'.repeat(200001);
+  const result=f.run();assert.equal(result.status,'text');assert.equal(result.paragraphs[0].length,200001);
+});

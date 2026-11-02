@@ -145,6 +145,11 @@ fn qimao_catalog_accepts_a_cached_latest_link_only_when_it_matches_a_known_chapt
 fn qimao_only_reads_the_requested_main_chapter_and_rejects_previews() {
     let (html, paragraph) = chapter_fixture();
     let chapter = qimao_catalog().chapters.remove(0);
+    let stale = html.replace(
+        &format!("<dd>{}</dd>", paragraph.chars().count()),
+        "<dd>10</dd>",
+    );
+    assert!(Qimao::parse_chapter(&stale, BOOK, &chapter).is_ok());
     let parsed = Qimao::parse_chapter(&html, BOOK, &chapter).unwrap();
     assert_eq!(parsed.paragraphs, [paragraph]);
     for invalid in [

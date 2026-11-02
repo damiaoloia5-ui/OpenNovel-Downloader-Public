@@ -164,28 +164,23 @@ impl OfficialPage {
             .iter()
             .map(|p| p.chars().filter(|c| !c.is_whitespace()).count())
             .sum();
-        if count > 200_000
-            || paragraphs.iter().any(|p| {
-                p.chars()
-                    .any(|c| matches!(c, '\u{e000}'..='\u{f8ff}' | '\u{fffd}'))
-                    || [
-                        "订阅本章",
-                        "试读结束",
-                        "购买本章",
-                        "解锁本章",
-                        "本章为付费章节",
-                    ]
-                    .iter()
-                    .any(|s| p.contains(s))
-            })
-        {
+        if paragraphs.iter().any(|p| {
+            p.chars()
+                .any(|c| matches!(c, '\u{e000}'..='\u{f8ff}' | '\u{fffd}'))
+                || [
+                    "订阅本章",
+                    "试读结束",
+                    "购买本章",
+                    "解锁本章",
+                    "本章为付费章节",
+                ]
+                .iter()
+                .any(|s| p.contains(s))
+        }) {
             return Err(Error::Restricted("正文含限制提示或未知字形".into()));
         }
         if let Some(words) = self.declared_words
-            && (words == 0
-                || words > 200_000
-                || count * 100 < words as usize * 80
-                || count * 100 > words as usize * 150)
+            && (words == 0 || count * 100 < words as usize * 80)
         {
             return Err(Error::Restricted("正文与官网声明长度不符，未保存".into()));
         }

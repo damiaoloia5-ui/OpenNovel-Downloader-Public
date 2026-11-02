@@ -282,7 +282,6 @@ impl Jinjiang {
         let actual = paragraphs.iter().map(|s| s.chars().count()).sum::<usize>();
         if words == 0
             || actual as u128 * 100 < words as u128 * 80
-            || actual as u128 * 100 > words as u128 * 150
             || paragraphs.iter().any(|s| {
                 s.contains('\u{fffd}') || s.chars().any(|c| ('\u{e000}'..='\u{f8ff}').contains(&c))
             })

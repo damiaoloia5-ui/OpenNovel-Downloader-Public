@@ -59,7 +59,7 @@
     if (reader.querySelector('img,canvas,iframe,svg')) return finish('protected');
     result.paragraphs = Array.from(reader.querySelectorAll('p')).filter(shown).map(text).filter(Boolean);
     if (!result.book_title || !result.chapter_title || !result.paragraphs.length) return finish('unsupported');
-    if (result.paragraphs.length > 10000 || result.paragraphs.join('').length > 200000) return finish('unsupported');
+    if (result.paragraphs.length > 10000) return finish('unsupported');
     return finish('text');
   } catch { return finish('unsupported'); }
 })();

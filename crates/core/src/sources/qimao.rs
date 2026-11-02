@@ -170,7 +170,6 @@ impl Qimao {
             .collect::<Vec<_>>();
         let actual = paragraphs.iter().map(|p| p.chars().count()).sum::<usize>();
         if (actual as u128) * 100 < (words as u128) * 80
-            || (actual as u128) * 100 > (words as u128) * 150
             || paragraphs
                 .iter()
                 .flat_map(|p| p.chars())

@@ -42,6 +42,7 @@ fn only_explicit_body_with_matching_identity_title_and_length_is_saved() {
     let parsed = Jinjiang::parse_chapter(body, "123", &c.chapters[0], 19).unwrap();
     assert_eq!(parsed.paragraphs.len(), 2);
     assert!(!parsed.paragraphs.join("").contains("评论"));
+    assert!(Jinjiang::parse_chapter(body, "123", &c.chapters[0], 10).is_ok());
     for b in [
         body.replace("value=\"123\"", "value=\"999\""),
         body.replace("第一章", "错误标题"),

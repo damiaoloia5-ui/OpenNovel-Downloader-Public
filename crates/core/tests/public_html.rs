@@ -110,6 +110,28 @@ fn public_bodies_require_identity_known_permission_title_and_full_length() {
     }
 }
 #[test]
+fn public_chapter_words_are_not_limited_by_catalog_chapter_capacity() {
+    for zh in [false, true] {
+        let c = PublicHtml::parse_catalog(&catalog(zh), "123", zh).unwrap();
+        let body = "山".repeat(20_001);
+        let raw = chapter(zh)
+            .replace("山间有风，旅人向前行。", &body)
+            .replace("10字", "20001字")
+            .replace("本章字数：10", "本章字数：20001");
+        assert_eq!(
+            PublicHtml::parse_chapter(&raw, "123", &c.chapters[0], zh)
+                .unwrap()
+                .paragraphs,
+            [body]
+        );
+        let stale = raw.replace("20001", "10000");
+        assert!(PublicHtml::parse_chapter(&stale, "123", &c.chapters[0], zh).is_ok());
+        assert!(
+            PublicHtml::parse_catalog(&catalog(zh).replace("2章", "10001章"), "123", zh).is_err()
+        );
+    }
+}
+#[test]
 fn source_links_and_planned_capabilities_do_not_enable_downloads() {
     for (url, id) in [
         ("https://www.zongheng.com/detail/123", "zongheng-web"),

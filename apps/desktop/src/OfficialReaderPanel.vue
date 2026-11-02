@@ -22,6 +22,7 @@ onUnmounted(()=>{disposed=true;epoch++;});
   <section class="official-reader" aria-label="其他平台登录与识别">
     <h2>登录官网，识别当前页 <small>实验性</small></h2>
     <p>先在官网登录，再打开你能正常阅读的一章。此入口只采集当前页可见文字，不会自动保存全书。</p>
+    <p>已购或会员权益内的章节也按官网实际可读正文识别，不另设会员下载配额。仅有 VIP 标志不代表所有作品均可阅读；各平台的全书自动保存需要独立适配。</p>
     <label>小说平台<select v-model="platform" :disabled="busy"><option value="ciweimao">刺猬猫</option><option value="faloo">飞卢</option><option value="migu">咪咕悦看</option></select></label>
     <label>作品链接<input v-model="bookUrl" :disabled="busy" type="url" :placeholder="platform==='migu'?'https://www.cmread.com/yuekan/novel/作品ID.html':'复制官网作品详情页地址'" /></label>
     <div class="actions"><button :disabled="busy" @click="open(true)">打开{{ name }}，去登录</button><button :disabled="busy||!bookUrl.trim()" @click="open(false)">打开这本书</button><button class="primary" :disabled="busy||!opened" @click="inspect">{{ busy?'正在处理…':'我已登录，识别当前页' }}</button></div>

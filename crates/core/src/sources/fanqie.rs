@@ -200,10 +200,7 @@ impl Fanqie {
             .and_then(|v| v.parse::<usize>().ok())
             .ok_or_else(|| changed("正文字数字段变化"))?;
         let actual = paragraphs.iter().map(|p| p.chars().count()).sum::<usize>();
-        if declared == 0
-            || (actual as u128) * 100 < (declared as u128) * 80
-            || (actual as u128) * 100 > (declared as u128) * 150
-        {
+        if declared == 0 || (actual as u128) * 100 < (declared as u128) * 80 {
             return Err(changed("返回正文与声明长度不符，疑似截断或提示页"));
         }
         let output = ImportChapter {

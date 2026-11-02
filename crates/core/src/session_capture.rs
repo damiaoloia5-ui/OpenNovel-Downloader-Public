@@ -155,12 +155,9 @@ impl SessionChapter {
         let page: ChapterPage = parse_page(raw)?;
         let (book, chapter) = same_page(&page.url, expected_url)?;
         let chapter = chapter.ok_or_else(|| Error::Invalid("请先打开一章完整正文".into()))?;
-        if page.declared_words == 0
-            || page.declared_words > 200_000
-            || page.paragraphs.len() > 10_000
-        {
+        if page.declared_words == 0 || page.paragraphs.len() > 10_000 {
             return Err(Error::SourceChanged(
-                "正文标注字数缺失或超过单章限制".into(),
+                "正文标注字数缺失或段落数量超过处理容量".into(),
             ));
         }
         let text_len = page
@@ -168,7 +165,7 @@ impl SessionChapter {
             .iter()
             .map(|p| p.chars().filter(|c| !c.is_whitespace()).count())
             .sum::<usize>();
-        if text_len > 200_000 || text_len * 5 < page.declared_words as usize * 4 {
+        if text_len as u128 * 5 < page.declared_words as u128 * 4 {
             return Err(Error::Restricted(
                 "正文少于标注字数的 80%，可能是试读或尚未加载完整，未保存".into(),
             ));

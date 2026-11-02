@@ -1101,6 +1101,87 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Explicit bounded live regression on a marked disposable library copy only"]
+    fn manual_resume_length_regression_copy() {
+        use opennovel_core::sources::{ChapterRef, SourceAdapter};
+        use std::sync::atomic::AtomicUsize;
+        let root = PathBuf::from(
+            std::env::var_os("OPENNOVEL_ACCEPT_COPY").expect("copy directory required"),
+        );
+        assert!(root.is_absolute() && root.join("COPY_ONLY").is_file());
+        let root = std::fs::canonicalize(root).unwrap();
+        let original = std::fs::read_to_string(root.join("COPY_ONLY")).unwrap();
+        assert_ne!(
+            root.join("library.db"),
+            std::fs::canonicalize(original.trim()).unwrap()
+        );
+        let job = std::env::var("OPENNOVEL_ACCEPT_JOB").expect("explicit job required");
+        let library = opennovel_core::Library::open(root.join("library.db")).unwrap();
+        let before = library.job_details(&job).unwrap();
+        assert_eq!(before.job.source, "fanqie-app-local");
+        let book = library.book_details(&before.job.book_id).unwrap().book;
+        let runtime = Runtime::discover().unwrap();
+        runtime.check().unwrap();
+        struct Bounded {
+            inner: EngineAdapter,
+            requests: AtomicUsize,
+        }
+        impl SourceAdapter for Bounded {
+            fn source_id(&self) -> &str {
+                "fanqie-app-local"
+            }
+            fn fetch_chapter(
+                &self,
+                book: &str,
+                chapter: &ChapterRef,
+                stop: &AtomicBool,
+            ) -> opennovel_core::Result<opennovel_core::ImportChapter> {
+                if self.requests.fetch_add(1, Ordering::AcqRel) >= 3 {
+                    return Err(opennovel_core::Error::Cancelled);
+                }
+                self.inner.fetch_chapter(book, chapter, stop)
+            }
+        }
+        let reader = Bounded {
+            inner: EngineAdapter::new(
+                runtime,
+                book.remote_id,
+                before.items.iter().map(|i| i.chapter_id.clone()).collect(),
+            ),
+            requests: AtomicUsize::new(0),
+        };
+        let result = library.run_job(&job, &reader, &AtomicBool::new(false));
+        drop(reader);
+        let after = library.job_details(&job).unwrap();
+        let previously_failed: Vec<_> = before
+            .items
+            .iter()
+            .filter(|i| i.state == "failed")
+            .map(|i| i.chapter_id.clone())
+            .collect();
+        let repaired = after
+            .items
+            .iter()
+            .filter(|i| previously_failed.contains(&i.chapter_id) && i.state == "completed")
+            .count();
+        let receipt = library
+            .export(
+                &before.job.book_id,
+                root.join("exports"),
+                opennovel_core::ExportFormat::Txt,
+            )
+            .unwrap();
+        let report = json!({"saved_before":before.job.saved,"saved_after":after.job.saved,"total":after.job.total,"repaired_failed_chapters":repaired,"state":after.job.state,"request_budget":3,"txt":receipt,"run_error":result.err().map(|e|e.to_string()),"original_library_written":false});
+        std::fs::write(
+            root.join("acceptance.json"),
+            serde_json::to_vec_pretty(&report).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(after.job.saved, before.job.saved + 3, "see acceptance.json");
+        assert!(repaired > 0);
+    }
+
+    #[test]
     #[ignore = "Explicit native Python/Docker fixture acceptance; no real platform requests"]
     fn native_worker_reuses_session_and_commits_validated_txt() {
         let root = tempfile::tempdir().unwrap();

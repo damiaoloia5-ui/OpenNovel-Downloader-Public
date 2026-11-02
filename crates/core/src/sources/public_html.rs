@@ -15,12 +15,16 @@ fn digits_after(text: &str, prefix: &str) -> Result<usize> {
         .ok_or_else(|| page::changed("官网声明数量缺失"))?
         .1
         .trim_start();
-    page::count(
-        &value
-            .chars()
-            .take_while(char::is_ascii_digit)
-            .collect::<String>(),
-    )
+    let count = value
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .parse::<usize>()
+        .map_err(|_| page::changed("官网声明数量无效"))?;
+    if count == 0 {
+        return Err(page::changed("官网声明数量为空"));
+    }
+    Ok(count)
 }
 fn field(html: &str, name: &str) -> Result<String> {
     let doc = Html::parse_document(html);
@@ -98,10 +102,14 @@ impl PublicHtml {
         let declared = doc
             .select(&page::selector(counts))
             .map(|e| {
-                digits_after(
+                let count = digits_after(
                     &e.text().collect::<String>(),
                     if zongheng { "共" } else { "已更新" },
-                )
+                )?;
+                if count > crate::MAX_CHAPTERS {
+                    return Err(page::changed("官网目录超过处理容量"));
+                }
+                Ok(count)
             })
             .collect::<Result<Vec<_>>>()?;
         if declared.is_empty() {
@@ -300,8 +308,7 @@ impl PublicHtml {
             },
         )?;
         let actual = paragraphs.iter().map(|p| p.chars().count()).sum::<usize>();
-        if actual * 100 < words * 80
-            || actual * 100 > words * 150
+        if actual as u128 * 100 < words as u128 * 80
             || paragraphs.iter().any(|p| {
                 p.chars()
                     .any(|c| c == '\u{fffd}' || ('\u{e000}'..='\u{f8ff}').contains(&c))
