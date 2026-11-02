@@ -177,9 +177,23 @@ pub struct JobSnapshot {
 }
 
 impl BookSummary {
+    pub fn platform_name(&self) -> &str {
+        match self.source.as_str() {
+            "fanqie-web" | "fanqie-app-local" => "番茄小说",
+            "qimao-web" => "七猫小说",
+            "shuqi-web" => "书旗小说",
+            "jinjiang-web" => "晋江文学城",
+            "zongheng-web" => "纵横中文网",
+            "17k-web" => "17K小说网",
+            "qidian-session" => "起点中文网",
+            "local-json" => "本地导入",
+            _ => &self.source,
+        }
+    }
     pub fn source_label(&self) -> &str {
         match self.source.as_str() {
             "fanqie-web" => "番茄公开网页",
+            "fanqie-app-local" => "番茄本地引擎（免费内容）",
             "qimao-web" => "七猫公开网页",
             "shuqi-web" => "书旗官网目录",
             "jinjiang-web" => "晋江官网免费章节",
@@ -198,7 +212,9 @@ impl BookSummary {
             )),
             "17k-web" => Some(format!("https://www.17k.com/book/{}.html", self.remote_id)),
             "qidian-session" => Some(format!("https://www.qidian.com/book/{}/", self.remote_id)),
-            "fanqie-web" => Some(format!("https://fanqienovel.com/page/{}", self.remote_id)),
+            "fanqie-web" | "fanqie-app-local" => {
+                Some(format!("https://fanqienovel.com/page/{}", self.remote_id))
+            }
             "qimao-web" => Some(format!("https://www.qimao.com/shuku/{}/", self.remote_id)),
             "jinjiang-web" => Some(format!(
                 "https://www.jjwxc.net/onebook.php?novelid={}",
@@ -286,6 +302,7 @@ pub struct BookDetails {
 
 pub(crate) struct BookContent {
     pub summary: BookSummary,
+    pub description: String,
     pub chapters: Vec<ImportChapter>,
     pub modified: String,
 }

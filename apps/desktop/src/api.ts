@@ -60,6 +60,10 @@ export interface BookDetails {book:Book;description:string;acquired_at:string;ch
 export interface Receipt { path: string; saved_chapters: number; total_chapters: number; partial: boolean }
 export interface AutoTxtStatus {book_id:string;state:string;receipt:Receipt|null;export_id:string|null;error:string|null}
 export function automaticTxtSnapshot():Promise<AutoTxtStatus[]> {return invoke('automatic_txt_snapshot');}
+export interface ExportDestination {directory:string;custom:boolean;filename:string}
+export function bookExportDestination(bookId:string):Promise<ExportDestination> {return invoke('book_export_destination',{bookId});}
+export function chooseBookExportDirectory(bookId:string):Promise<ExportDestination|null> {return invoke('choose_book_export_directory',{bookId});}
+export function setBookExportDirectory(bookId:string,directory:string|null):Promise<ExportDestination> {return invoke('set_book_export_directory',{bookId,directory});}
 export function retryAutomaticTxt(bookId:string):Promise<void> {return invoke('retry_automatic_txt',{bookId});}
 export interface BookPreferences {book_id:string;tags:string[];archived:boolean}
 export interface MaintenanceReceipt {id:string;path:string;books:number;chapters:number}

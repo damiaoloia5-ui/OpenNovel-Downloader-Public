@@ -365,6 +365,7 @@ impl Library {
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(BookContent {
+            description: cat.description,
             summary: BookSummary {
                 id: book,
                 title: cat.title,

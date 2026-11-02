@@ -4,6 +4,8 @@ mod account_download;
 mod accounts;
 mod auto_txt;
 mod capture;
+mod export_destination;
+mod folder_dialog;
 mod install_check;
 mod local_engine;
 mod official_reader;
@@ -185,7 +187,12 @@ async fn export_history(
     let format = ExportFormat::parse(&format).map_err(|e| e.to_string())?;
     let library = Arc::clone(&state.library);
     let directory = state.exports.clone();
-    blocking(move || library.export_history(&id, directory, format)).await
+    blocking(move || {
+        let book = library.history_details(&id)?.book.id;
+        let output = library.export_destination(&book, directory)?;
+        library.export_history(&id, output.directory, format)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -518,7 +525,12 @@ async fn export_job(
     let format = ExportFormat::parse(&format).map_err(|e| e.to_string())?;
     let library = Arc::clone(&state.library);
     let directory = state.exports.clone();
-    blocking(move || library.export_job(&job_id, directory, format)).await
+    blocking(move || {
+        let book = library.job(&job_id)?.book_id;
+        let output = library.export_destination(&book, directory)?;
+        library.export_job(&job_id, output.directory, format)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -791,7 +803,11 @@ async fn export_book(
     let format = ExportFormat::parse(&format).map_err(|error| error.to_string())?;
     let library = Arc::clone(&state.library);
     let directory = state.exports.clone();
-    blocking(move || library.export(&book_id, directory, format)).await
+    blocking(move || {
+        let output = library.export_destination(&book_id, directory)?;
+        library.export(&book_id, output.directory, format)
+    })
+    .await
 }
 
 fn main() {
@@ -817,10 +833,8 @@ fn main() {
             };
             let directory = database.parent().ok_or("书库目录无效")?;
             let library = Arc::new(Library::open(&database)?);
-            let auto_txt = auto_txt::AutoTxtService::start(
-                Arc::clone(&library),
-                directory.join("exports").join("automatic-txt"),
-            )?;
+            let auto_txt =
+                auto_txt::AutoTxtService::start(Arc::clone(&library), directory.join("exports"))?;
             app.manage(official_reader::OfficialReaderState::default());
             app.manage(AppState {
                 engine: Arc::new(local_engine::EngineControl::for_directory(directory)),
@@ -851,6 +865,9 @@ fn main() {
                     official_reader::save_official_reader,
                     official_reader::reveal_official_reader,
                     official_reader::close_official_reader,
+                    export_destination::book_export_destination,
+                    export_destination::set_book_export_directory,
+                    export_destination::choose_book_export_directory,
                     auto_txt::automatic_txt_snapshot,
                     auto_txt::retry_automatic_txt,
                     account_list,

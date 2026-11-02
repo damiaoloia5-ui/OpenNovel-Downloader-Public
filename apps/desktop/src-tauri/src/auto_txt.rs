@@ -62,7 +62,25 @@ impl AutoTxtService {
                             {
                                 continue;
                             }
-                            let signature = serde_json::to_string(&(book, own)).unwrap_or_default();
+                            let destination = library.export_destination(&book.id, &directory);
+                            let destination = match destination {
+                                Ok(value) => PathBuf::from(value.directory),
+                                Err(error) => {
+                                    set(
+                                        &output,
+                                        AutoTxtStatus {
+                                            book_id: book.id.clone(),
+                                            state: "failed".into(),
+                                            receipt: None,
+                                            export_id: None,
+                                            error: Some(error.to_string()),
+                                        },
+                                    );
+                                    continue;
+                                }
+                            };
+                            let signature = serde_json::to_string(&(book, own, &destination))
+                                .unwrap_or_default();
                             if !forced.remove(&book.id)
                                 && observed.get(&book.id) == Some(&signature)
                                 && !(check_files && ready_file_missing(&output, &book.id))
@@ -70,7 +88,7 @@ impl AutoTxtService {
                                 continue;
                             }
                             observed.insert(book.id.clone(), signature);
-                            process(&library, &directory, &book.id, &output);
+                            process(&library, &destination, &book.id, &output);
                         }
                     }
                     match receiver.recv_timeout(Duration::from_secs(1)) {
@@ -193,6 +211,46 @@ mod tests {
             std::thread::sleep(Duration::from_millis(30));
         }
     }
+    #[test]
+    fn changing_one_books_directory_regenerates_locally_and_survives_restart() {
+        let d = tempfile::tempdir().unwrap();
+        let l = Arc::new(Library::open(d.path().join("library.db")).unwrap());
+        let job = l
+            .create_import(include_str!("../../../../examples/local-book.json"))
+            .unwrap();
+        let book = l.run_import(&job, &AtomicBool::new(false)).unwrap().book_id;
+        let service = AutoTxtService::start(Arc::clone(&l), d.path().join("exports")).unwrap();
+        let original = wait(&service, &book, "ready").receipt.unwrap();
+        let chosen = d.path().join("chosen");
+        std::fs::create_dir(&chosen).unwrap();
+        l.set_export_directory(&book, Some(&chosen)).unwrap();
+        service.request(&book).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(12);
+        let updated = loop {
+            let receipt = wait(&service, &book, "ready").receipt.unwrap();
+            if std::path::Path::new(&receipt.path).parent() == Some(chosen.as_path()) {
+                break receipt;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(30));
+        };
+        assert_eq!(
+            std::fs::read(&original.path).unwrap(),
+            std::fs::read(&updated.path).unwrap()
+        );
+        assert_eq!(l.snapshot().unwrap().jobs.len(), 1);
+        assert_eq!(l.job(&job).unwrap().state, "completed");
+        drop(service);
+        std::thread::sleep(Duration::from_millis(100));
+        let restarted = AutoTxtService::start(Arc::clone(&l), d.path().join("exports")).unwrap();
+        assert_eq!(
+            wait(&restarted, &book, "ready").receipt.unwrap().path,
+            updated.path
+        );
+        drop(restarted);
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
     #[test]
     fn deleted_ready_file_is_rebuilt_without_another_request_or_download() {
         let d = tempfile::tempdir().unwrap();

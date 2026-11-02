@@ -12,6 +12,7 @@ test('actual automatic TXT panel distinguishes empty, active, ready, partial and
   const {default:Panel}=await import(pathToFileURL(join(output,'panel.mjs')).href);
   const render=props=>renderToString(createSSRApp(Panel,{bookId:'original-book',saved:0,...props}));
   const empty=await render({});assert.match(empty,/无需选格式或手动导出/);assert.doesNotMatch(empty,/TXT 已生成/);
+  assert.match(empty,/本书保存位置/);assert.match(empty,/选择文件夹/);assert.match(empty,/应用并记住/);
   const active=await render({saved:1,active:true});assert.match(active,/任务结束后自动生成/);assert.doesNotMatch(active,/TXT 已生成/);
   const receipt={path:'D:/original/<测试>.txt',saved_chapters:1,total_chapters:3,partial:true};
   const ready=await render({saved:1,status:{state:'ready',receipt,export_id:'record'}});assert.match(ready,/TXT 已生成/);assert.match(ready,/1\/3/);assert.match(ready,/部分内容/);assert.match(ready,/打开 TXT 所在文件夹/);assert.match(ready,/&lt;测试&gt;/);

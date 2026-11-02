@@ -173,7 +173,7 @@ impl Library {
         let manifest: BackupManifest = serde_json::from_slice(&std::fs::read(manifest_path)?)?;
         if manifest.format != 1
             || manifest.application != "OpenNovel Downloader"
-            || !(1..=8).contains(&manifest.schema)
+            || !(1..=9).contains(&manifest.schema)
         {
             return Err(Error::Invalid("备份格式或版本不受支持".into()));
         }
@@ -205,7 +205,13 @@ impl Library {
             return Err(Error::Invalid("备份清单与数据库不一致".into()));
         }
         drop(db);
-        Self::open(path)
+        let restored = Self::open(path)?;
+        // A restored copy must not automatically write into the original library's
+        // chosen folders. Export records remain available for reference.
+        restored
+            .connection()?
+            .execute("DELETE FROM export_directories", [])?;
+        Ok(restored)
     }
     pub fn diagnostics(&self) -> Result<DiagnosticReport> {
         let db = self.connection()?;

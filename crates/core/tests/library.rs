@@ -66,7 +66,8 @@ fn cancel_preserves_partial_content_and_resumes_without_duplicates() {
         .export(&result.book_id, directory.path(), ExportFormat::Txt)
         .unwrap();
     assert!(receipt.partial);
-    assert!(receipt.path.ends_with("-partial-1-of-2.txt"));
+    assert!(receipt.path.ends_with(".txt"));
+    assert!(!receipt.path.contains(&result.book_id));
     assert!(
         std::fs::read_to_string(receipt.path)
             .unwrap()
@@ -244,12 +245,12 @@ fn newer_schema_is_rejected_without_migration_or_version_change() {
     let directory = tempdir().unwrap();
     let path = directory.path().join("future.db");
     let connection = rusqlite::Connection::open(&path).unwrap();
-    connection.pragma_update(None, "user_version", 9).unwrap();
+    connection.pragma_update(None, "user_version", 10).unwrap();
     assert!(Library::open(&path).is_err());
     let version: u32 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
     let tables: u32 = connection
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",

@@ -283,7 +283,7 @@ fn qimao_uses_the_shared_cancellation_resume_and_append_only_export_workflow() {
     let old = library
         .export(&result.book_id, temp.path(), ExportFormat::Epub)
         .unwrap();
-    assert!(old.path.ends_with("complete-3.epub"));
+    assert!(old.path.ends_with(".epub"));
     catalog.chapters.push(ChapterRef {
         id: "104".into(),
         title: "原创新增第4章".into(),
@@ -300,6 +300,7 @@ fn qimao_uses_the_shared_cancellation_resume_and_append_only_export_workflow() {
     let new = library
         .export(&result.book_id, temp.path(), ExportFormat::Epub)
         .unwrap();
-    assert!(new.path.ends_with("complete-4.epub"));
+    assert!(new.path.ends_with("（2）.epub"));
+    assert_ne!(old.path, new.path);
     assert!(std::path::Path::new(&old.path).exists());
 }

@@ -12,6 +12,9 @@ fn local_roundtrip(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let library = Arc::new(Library::open(root.join("sample-library.db"))?);
     let job = library.create_import(include_str!("../../../../examples/local-book.json"))?;
     let book = library.run_import(&job, &AtomicBool::new(false))?.book_id;
+    let chosen = root.join("chosen-book-folder");
+    std::fs::create_dir(&chosen)?;
+    library.set_export_directory(&book, Some(&chosen))?;
     let service = AutoTxtService::start(library, root.join("sample-exports"))?;
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut original: Option<(PathBuf, String)> = None;
@@ -27,6 +30,15 @@ fn local_roundtrip(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
                 && Path::new(&receipt.path).is_file()
             {
                 let path = PathBuf::from(receipt.path);
+                if path.parent() != Some(chosen.as_path())
+                    || !path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .contains('－')
+                {
+                    return Err("本书导出位置或文件名核对失败".into());
+                }
                 let text = std::fs::read_to_string(&path)?;
                 if !text.contains("清晨的阳光落在书架上") || !text.contains("雨停之后")
                 {
@@ -59,15 +71,21 @@ pub fn run(output: &Path) -> Result<bool, Box<dyn std::error::Error>> {
     std::fs::create_dir(&root)?;
     let webview = tauri::webview_version().map_err(|e| e.to_string());
     let local = local_roundtrip(&root).map_err(|e| e.to_string());
+    #[cfg(windows)]
+    let folder_dialog = crate::folder_dialog::check(&root);
+    #[cfg(not(windows))]
+    let folder_dialog: Result<(), String> = Ok(());
     // Optional readiness only: no enabling, chapter requests, image pulls or installation.
     let engine = EngineControl::default().status();
-    let passed = webview.is_ok() && local.is_ok();
+    let passed = webview.is_ok() && local.is_ok() && folder_dialog.is_ok();
     let report = json!({
         "schema_version": 1, "version": env!("CARGO_PKG_VERSION"),
         "required_checks_passed": passed,
         "webview": {"ready": webview.is_ok(), "result": webview},
         "original_sample_txt": {"ready": local.is_ok(), "result": local},
         "deleted_sample_txt_recovered": local.is_ok(),
+        "chosen_directory_and_simple_filename_checked": local.is_ok(),
+        "native_folder_dialog_initialization": folder_dialog,
         "optional_local_engine": engine,
         "user_library_opened": false,
         "real_platform_requested": false,

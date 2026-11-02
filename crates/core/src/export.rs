@@ -27,20 +27,8 @@ impl Library {
         book_id: &str,
         directory: impl AsRef<Path>,
     ) -> Result<ExportReceipt> {
-        let mut content = self.content(book_id)?;
+        let content = self.content(book_id)?;
         let digest = txt_digest(&content)?;
-        let title: String = content
-            .summary
-            .title
-            .chars()
-            .filter(|c| !c.is_control() && !"<>:\"/\\|?*".contains(*c))
-            .take(20)
-            .collect();
-        content.summary.id = format!(
-            "auto-{}-{book_id}-{}",
-            title.trim_end_matches([' ', '.']),
-            &digest[..16]
-        );
         self.persist_export_inner(
             book_id,
             None,
@@ -119,75 +107,90 @@ impl Library {
         format: ExportFormat,
         automatic_digest: Option<&str>,
     ) -> Result<ExportReceipt> {
+        let _guard = self
+            .export_lock
+            .lock()
+            .map_err(|_| Error::Conflict("导出锁失效，请重启程序".into()))?;
         std::fs::create_dir_all(directory)?;
+        let directory = std::path::absolute(directory)?;
+        let directory_identity = std::fs::canonicalize(&directory)?;
         let partial = content.summary.saved_chapters != content.summary.total_chapters;
         let extension = match format {
             ExportFormat::Txt => "txt",
             ExportFormat::Epub => "epub",
         };
-        let suffix = if partial {
-            format!(
-                "-partial-{}-of-{}",
-                content.summary.saved_chapters, content.summary.total_chapters
-            )
-        } else if crate::sources::download_supported(&content.summary.source) {
-            format!("-complete-{}", content.summary.total_chapters)
+        let automatic = automatic_digest.is_some();
+        let mut temporary = None;
+        let digest = if let Some(expected) = automatic_digest {
+            expected.to_owned()
         } else {
-            String::new()
+            let file = render_file(&directory, &content, format)?;
+            let digest = file_digest(file.path())?;
+            temporary = Some(file);
+            digest
         };
-        let prefix = if job_id.is_some() { "job-" } else { "" };
-        let has_history: bool = self.connection()?.query_row(
-            "SELECT EXISTS(SELECT 1 FROM catalog_history WHERE book_id=?1)",
-            [book_id],
-            |r| r.get(0),
-        )?;
-        let revision = if has_history && content.summary.id == book_id {
-            use sha2::{Digest, Sha256};
-            let identity = serde_json::to_vec(&(
-                &content.summary.title,
-                &content.summary.author,
-                content.summary.total_chapters,
-                &content.chapters,
-            ))?;
-            format!("-v{}", &format!("{:x}", Sha256::digest(identity))[..16])
-        } else {
-            String::new()
-        };
-        let path = std::path::absolute(directory.join(format!(
-            "{prefix}{}{revision}{suffix}.{extension}",
-            content.summary.id
-        )))?;
-        if path.try_exists()? && automatic_digest.is_none() {
-            return Err(export_exists(&path));
-        }
-        if !path.try_exists()? {
-            let mut temporary = NamedTempFile::new_in(directory)?;
-            match format {
-                ExportFormat::Txt => write_txt(&mut temporary, &content)?,
-                ExportFormat::Epub => write_epub(temporary.as_file_mut(), &content)?,
+        let known = self.connection()?.prepare("SELECT path FROM exports WHERE book_id=?1 AND format=?2 AND automatic=?3 AND content_hash=?4 AND job_id IS ?5 ORDER BY rowid DESC")?
+            .query_map(rusqlite::params![book_id,extension,automatic,digest,job_id], |r| r.get::<_,String>(0))?
+            .collect::<std::result::Result<Vec<_>,_>>()?
+            .into_iter().map(std::path::PathBuf::from)
+            .find(|p| p.parent().and_then(|d| std::fs::canonicalize(d).ok()).as_ref() == Some(&directory_identity));
+        let path = if let Some(path) = known {
+            if path.try_exists()? {
+                if !automatic {
+                    return Err(export_exists(&path));
+                }
+                if file_digest(&path)? != digest {
+                    return Err(Error::Conflict(
+                        "自动 TXT 的目标文件已被修改，已保留；请先移走该文件或选择其他文件夹再重试"
+                            .into(),
+                    ));
+                }
             }
-            temporary.as_file_mut().flush()?;
-            temporary.as_file().sync_all()?;
-            if let Err(error) = temporary.persist_noclobber(&path)
-                && (automatic_digest.is_none() || !path.try_exists()?)
-            {
-                return Err(if path.try_exists()? {
+            path
+        } else {
+            let stem = crate::export_settings::book_filename(&self.book_summary(book_id)?);
+            let mut selected = None;
+            for number in 1..=10000 {
+                let suffix = if number == 1 {
+                    String::new()
+                } else {
+                    format!("（{number}）")
+                };
+                let path = directory.join(format!("{stem}{suffix}.{extension}"));
+                if !path.try_exists()? {
+                    selected = Some(path);
+                    break;
+                }
+                let recorded: bool = self.connection()?.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM exports WHERE path=?1)",
+                    [path.to_string_lossy()],
+                    |r| r.get(0),
+                )?;
+                // Reconcile an orphan created just before a database write failure.
+                if automatic && !recorded && path.is_file() && file_digest(&path)? == digest {
+                    selected = Some(path);
+                    break;
+                }
+            }
+            selected.ok_or_else(|| Error::Conflict("同名版本过多，请选择其他文件夹".into()))?
+        };
+        if !path.try_exists()? {
+            let file = match temporary {
+                Some(file) => file,
+                None => render_file(&directory, &content, format)?,
+            };
+            if file_digest(file.path())? != digest {
+                return Err(Error::Conflict("导出内容生成校验失败".into()));
+            }
+            file.persist_noclobber(&path).map_err(|error| {
+                if path.exists() {
                     export_exists(&path)
                 } else {
                     Error::Io(error.error)
-                });
-            }
+                }
+            })?;
         }
-        if let Some(expected) = automatic_digest {
-            let mut hash = HashWriter::default();
-            std::io::copy(&mut std::fs::File::open(&path)?, &mut hash)?;
-            if hash.finish() != expected {
-                return Err(Error::Conflict(
-                    "自动 TXT 的目标文件已被修改，已保留；请先移走该文件再重试".into(),
-                ));
-            }
-        }
-        self.connection()?.execute("INSERT INTO exports (id,book_id,job_id,path,format,saved,total,partial) SELECT ?1,?2,?3,?4,?5,?6,?7,?8 WHERE NOT EXISTS (SELECT 1 FROM exports WHERE book_id=?2 AND path=?4)",rusqlite::params![uuid::Uuid::new_v4().to_string(),book_id,job_id,path.to_string_lossy(),extension,content.summary.saved_chapters,content.summary.total_chapters,partial])?;
+        self.connection()?.execute("INSERT INTO exports (id,book_id,job_id,path,format,saved,total,partial,content_hash,automatic) SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10 WHERE NOT EXISTS (SELECT 1 FROM exports WHERE book_id=?2 AND path=?4)",rusqlite::params![uuid::Uuid::new_v4().to_string(),book_id,job_id,path.to_string_lossy(),extension,content.summary.saved_chapters,content.summary.total_chapters,partial,digest,automatic])?;
         Ok(ExportReceipt {
             path: path.to_string_lossy().into_owned(),
             saved_chapters: content.summary.saved_chapters,
@@ -221,6 +224,27 @@ fn txt_digest(content: &BookContent) -> Result<String> {
     Ok(hash.finish())
 }
 
+fn file_digest(path: &Path) -> Result<String> {
+    let mut hash = HashWriter::default();
+    std::io::copy(&mut std::fs::File::open(path)?, &mut hash)?;
+    Ok(hash.finish())
+}
+
+fn render_file(
+    directory: &Path,
+    content: &BookContent,
+    format: ExportFormat,
+) -> Result<NamedTempFile> {
+    let mut file = NamedTempFile::new_in(directory)?;
+    match format {
+        ExportFormat::Txt => write_txt(&mut file, content)?,
+        ExportFormat::Epub => write_epub(file.as_file_mut(), content)?,
+    }
+    file.as_file_mut().flush()?;
+    file.as_file().sync_all()?;
+    Ok(file)
+}
+
 fn export_exists(path: &Path) -> Error {
     Error::Conflict(format!(
         "导出文件已存在，已保留原文件；请打开已有导出或选择其他目录：{}",
@@ -250,6 +274,15 @@ fn write_txt(output: &mut impl Write, content: &BookContent) -> Result<()> {
         content.summary.source_label(),
         content.summary.source_url().unwrap_or_default(),
         coverage(content)
+    )?;
+    writeln!(
+        output,
+        "作品简介：\n{}\n",
+        if content.description.trim().is_empty() {
+            "来源未提供简介"
+        } else {
+            &content.description
+        }
     )?;
     for chapter in &content.chapters {
         writeln!(output, "{}\n", chapter.title)?;
@@ -281,8 +314,28 @@ fn write_epub(output: &mut std::fs::File, content: &BookContent) -> Result<()> {
     let mut manifest = String::from(
         "<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>",
     );
-    let mut spine = String::new();
-    let mut navigation = String::new();
+    archive.start_file("EPUB/about.xhtml", compressed)?;
+    let description = if content.description.trim().is_empty() {
+        "来源未提供简介"
+    } else {
+        &content.description
+    };
+    write!(
+        archive,
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><html xmlns=\"http://www.w3.org/1999/xhtml\" lang=\"zh-CN\" xml:lang=\"zh-CN\"><head><title>作品信息</title></head><body><h1>{title}</h1><p>作者：{}</p><p>来源：{}</p><p>{}</p><p>{}</p><h2>作品简介</h2>{}</body></html>",
+        xml(&content.summary.author),
+        xml(content.summary.source_label()),
+        xml(&content.summary.source_url().unwrap_or_default()),
+        xml(&coverage(content)),
+        description
+            .lines()
+            .map(|p| format!("<p>{}</p>", xml(p)))
+            .collect::<String>()
+    )?;
+    manifest
+        .push_str("<item id=\"about\" href=\"about.xhtml\" media-type=\"application/xhtml+xml\"/>");
+    let mut spine = String::from("<itemref idref=\"about\"/>");
+    let mut navigation = String::from("<li><a href=\"about.xhtml\">作品信息与简介</a></li>");
     for (index, chapter) in content.chapters.iter().enumerate() {
         let name = format!("chapter-{index}.xhtml");
         manifest.push_str(&format!(
@@ -339,7 +392,7 @@ fn write_epub(output: &mut std::fs::File, content: &BookContent) -> Result<()> {
         archive,
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?><package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"book-id\"><metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:identifier id=\"book-id\">urn:uuid:{}</dc:identifier><dc:title>{title}</dc:title>{creator}{source}<dc:language>zh-CN</dc:language><dc:description>{}</dc:description><meta property=\"dcterms:modified\">{modified}</meta></metadata><manifest>{manifest}</manifest><spine>{spine}</spine></package>",
         identifier,
-        xml(&coverage(content))
+        xml(&format!("{}\n{}", coverage(content), description))
     )?;
     archive.finish()?;
     Ok(())

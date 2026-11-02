@@ -48,7 +48,7 @@ fn online_backup_restores_content_tags_and_exports_in_a_new_directory_only() {
         .unwrap();
     let backup = d.path().join("bundle");
     let m = l.backup(&backup).unwrap();
-    assert_eq!((m.schema, m.books, m.chapters), (8, 1, 2));
+    assert_eq!((m.schema, m.books, m.chapters), (9, 1, 2));
     assert!(l.backup(&backup).is_err());
     let restored = Library::restore(&backup, d.path().join("restored")).unwrap();
     assert_eq!(restored.preferences().unwrap(), l.preferences().unwrap());
@@ -109,11 +109,11 @@ fn schema_four_migrates_with_backup_and_keeps_book_data() {
     let (l, _) = imported(&path);
     drop(l);
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.execute_batch("DROP TABLE accounts; DROP TABLE job_history; DROP TABLE history_chapters; DROP TABLE catalog_history; DROP TABLE content_blobs; DROP TABLE batch_items; DROP TABLE batches; DROP TABLE book_preferences; PRAGMA user_version=4;")
+    db.execute_batch("DROP INDEX exports_content; DROP TABLE export_directories; ALTER TABLE exports DROP COLUMN content_hash; ALTER TABLE exports DROP COLUMN automatic; DROP TABLE accounts; DROP TABLE job_history; DROP TABLE history_chapters; DROP TABLE catalog_history; DROP TABLE content_blobs; DROP TABLE batch_items; DROP TABLE batches; DROP TABLE book_preferences; PRAGMA user_version=4;")
         .unwrap();
     drop(db);
     let l = Library::open(&path).unwrap();
-    assert_eq!(l.diagnostics().unwrap().schema, 8);
+    assert_eq!(l.diagnostics().unwrap().schema, 9);
     assert_eq!(l.diagnostics().unwrap().saved_chapters, 2);
     assert!(std::fs::read_dir(d.path()).unwrap().any(|e| {
         e.unwrap()
