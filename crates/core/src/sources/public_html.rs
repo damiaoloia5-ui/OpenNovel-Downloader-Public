@@ -180,7 +180,18 @@ impl PublicHtml {
             remote_id: book.into(),
             title,
             author,
-            description: String::new(),
+            // 17K's identity-checked catalogue includes the book synopsis. The
+            // Zongheng catalogue description is SEO text, not a book synopsis.
+            description: if zongheng {
+                String::new()
+            } else {
+                page::one(&doc, "meta[property=\"og:description\"]")
+                    .ok()
+                    .and_then(|meta| meta.value().attr("content"))
+                    .unwrap_or_default()
+                    .trim()
+                    .to_owned()
+            },
             chapters,
         };
         catalog.validate()?;

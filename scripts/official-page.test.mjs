@@ -35,3 +35,13 @@ test('Ciwemo protected rendering is refused and Migu detail is metadata-only',()
   const c=fixture('ciweimao');c.ids.J_BookImage=element();assert.equal(c.run().status,'protected');assert.deepEqual(c.run().paragraphs,[]);
   const m=fixture('migu');assert.equal(m.run().status,'book');assert.equal(m.run().book_id,'123');assert.deepEqual(m.run().paragraphs,[]);
 });
+test('Ciwemo standalone human verification is recognized without reading or solving it',()=>{
+  const f=fixture('ciweimao');
+  f.context.location.pathname='/signup/man_machine_verify';
+  f.ids.J_ManMachineVerify=element();
+  assert.equal(f.run().status,'verification');assert.deepEqual(f.run().paragraphs,[]);
+  f.ids.J_ManMachineVerify.style={display:'none'};
+  assert.equal(f.run().status,'unsupported');
+  f.ids.J_ManMachineVerify.style={};f.context.location.pathname='/book/123';
+  assert.notEqual(f.run().status,'verification');
+});

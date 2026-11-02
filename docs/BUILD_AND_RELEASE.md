@@ -17,6 +17,18 @@ Git 检出会记录实际提交和脏状态；不含 `.git` 的源码 ZIP 会明
 
 `--offline` 仅限制 Cargo 使用已有缓存，不能把整个构建称为离线。检查不自动安装缺失开发依赖；缺项以失败明确报告。原生自检会在独立样本目录生成并删除一次自己创建的原创 TXT，验证恢复，不打开用户书库。
 
+## 来源兼容巡检（维护者手动启用）
+
+普通 CI 不请求小说平台。维护者需要检查当前官网变化时，先构建 CLI，再显式运行：
+
+```powershell
+python scripts/verify_sources.py --live --executable "D:\OpenNovel\target\release\opennovel.exe" --output "D:\OpenNovel\.artifacts\source-check-new"
+```
+
+请替换为实际绝对路径；输出目录必须尚不存在。固定样本覆盖番茄、七猫、晋江、纵横、17K、书旗，每来源两部作品。保存最多三个开放章及一个限制项，核对实际 TXT 全部已存段落和 EPUB ZIP；书旗只验目录及禁用正文守卫。同来源出现异常后不继续请求下一本。另检查起点、书旗、刺猬猫、飞卢、咪咕的官方入口 HTTP 状态。报告不保存会话 Cookie、响应头或登录信息，不执行登录、购买或验证码操作。
+
+`public_checks_passed` 只说明本次公开样本通过；`entry_checks_completed` 只说明入口探测完成（可能返回验证），二者均不证明全站、账户权益或全书能力。番茄本地引擎另用显式原生验收。样本变化时由维护者核对官网再调整固定列表，不能把失效样本直接当平台全部失效。报告和正文仅留本地，不提交 Git。普通用户无需安装 Python 或运行此脚本。
+
 ## 一体化包的显式材料
 
 需要与 `scripts/research/native_engine_lock.json` 匹配的三个本地文件：

@@ -25,6 +25,7 @@
     }
     let reader = null;
     if (platform === 'ciweimao' && location.hostname === 'www.ciweimao.com') {
+      if (/^\/signup\/man_machine_verify\/?$/.test(location.pathname) && shown(document.getElementById('J_ManMachineVerify'))) return finish('verification');
       const book = location.pathname.match(/^\/book\/([1-9]\d*)\/?$/);
       if (book) { result.book_id = book[1]; result.book_title = meta('og:novel:book_name'); return finish(result.book_title ? 'book' : 'unsupported'); }
       const chapter = location.pathname.match(/^\/chapter\/([1-9]\d*)$/);

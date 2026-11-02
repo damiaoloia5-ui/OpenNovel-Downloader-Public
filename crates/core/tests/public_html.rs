@@ -44,6 +44,37 @@ fn public_catalogs_preserve_order_and_reject_missing_duplicate_or_foreign_items(
     }
 }
 #[test]
+fn public_catalog_description_uses_only_unambiguous_17k_book_metadata() {
+    let meta =
+        r#"<meta property="og:description" content="原创旅人走进山谷。&#10;风带来远方的信。">"#;
+    let html = format!("{meta}{}", catalog(false));
+    assert_eq!(
+        PublicHtml::parse_catalog(&html, "123", false)
+            .unwrap()
+            .description,
+        "原创旅人走进山谷。\n风带来远方的信。"
+    );
+    assert!(
+        PublicHtml::parse_catalog(&catalog(false), "123", false)
+            .unwrap()
+            .description
+            .is_empty()
+    );
+    assert!(
+        PublicHtml::parse_catalog(&format!("{meta}{html}"), "123", false)
+            .unwrap()
+            .description
+            .is_empty()
+    );
+    assert!(
+        PublicHtml::parse_catalog(&format!("{meta}{}", catalog(true)), "123", true)
+            .unwrap()
+            .description
+            .is_empty()
+    );
+    assert!(PublicHtml::parse_catalog(&html, "999", false).is_err());
+}
+#[test]
 fn public_bodies_require_identity_known_permission_title_and_full_length() {
     for zh in [false, true] {
         let c = PublicHtml::parse_catalog(&catalog(zh), "123", zh).unwrap();
