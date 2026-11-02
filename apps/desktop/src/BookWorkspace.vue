@@ -31,7 +31,7 @@ const active=computed(()=>ownJobs.value.some(j=>['running','queued'].includes(j.
 const pending=computed(()=>ownJobs.value.some(j=>['running','queued','paused'].includes(j.state)));
 const limited=computed(()=>publicAccessLimited(currentJob.value,mode.value));
 const recoverable=computed(()=>!!currentJob.value&&!limited.value&&['paused','cancelled','failed','partial'].includes(currentJob.value.state));
-const recovery=computed(()=>limited.value?status.value?.message||'网页受限章节不能通过重复继续补齐。':saveRecovery(currentJob.value?.error||'',mode.value==='public'?'public':'account'));
+const recovery=computed(()=>limited.value?status.value?.message||'网页受限章节不能通过重复继续补齐。':saveRecovery(currentJob.value?.error||'',book.value?.source==='fanqie-app-local'?'engine':mode.value==='public'?'public':'account'));
 const chapters=computed(()=>detail.value?.chapters.filter(c=>(!onlySaved.value||c.saved)&&`${c.position} ${c.title}`.includes(search.value))||[]);
 const readerPages=computed(()=>Math.max(1,Math.ceil(chapters.value.length/100)));
 const visibleChapters=computed(()=>chapters.value.slice((readerPage.value-1)*100,readerPage.value*100));
@@ -104,7 +104,7 @@ onUnmounted(()=>{disposed=true;loadSequence++;readSequence++;jobSequence++;});
     <p v-if="!detail&&!error" role="status">正在读取作品和保存进度…</p>
     <template v-if="book&&detail&&status">
       <header class="workspace-heading"><h1 ref="heading" tabindex="-1">{{ book.title }}</h1><p>{{ book.author||'未标注作者' }} · {{ mode==='local'?'本地 JSON':source?.name||book.source }}</p></header>
-      <section class="book-status" :data-state="status.kind" aria-label="本书保存状态"><div><strong>{{ status.title }}</strong><p>{{ status.kind==='attention'?recovery:status.message }}</p><p>全书正文已保存 <b>{{ book.saved_chapters }}/{{ book.total_chapters }}</b> 章 · 尚缺 {{ Math.max(0,book.total_chapters-book.saved_chapters) }} 章</p></div><button v-if="tab!==status.tab&&status.kind!=='complete'" class="primary" :disabled="busy" @click="selectTab(status.tab)">{{ status.action }}</button></section>
+      <section class="book-status" :data-state="status.kind" aria-label="本书保存状态"><div><strong>{{ status.title }}</strong><p>{{ status.kind==='attention'?recovery:status.message }}</p><p v-if="status.kind==='attention'&&currentJob?.error" class="stop-reason">停止原因：{{ currentJob.error }}</p><p>全书正文已保存 <b>{{ book.saved_chapters }}/{{ book.total_chapters }}</b> 章 · 尚缺 {{ Math.max(0,book.total_chapters-book.saved_chapters) }} 章</p></div><button v-if="tab!==status.tab&&status.kind!=='complete'" class="primary" :disabled="busy" @click="selectTab(status.tab)">{{ status.action }}</button></section>
       <AutomaticTxtPanel :book-id="book.id" :saved="book.saved_chapters" :active="active" :status="automatic" />
       <div class="workspace-tabs" role="tablist" aria-label="作品功能" @keydown="tabKeys"><button v-for="entry in tabs" :id="`book-tab-${entry.id}`" :key="entry.id" role="tab" :aria-selected="tab===entry.id" :aria-controls="`book-panel-${entry.id}`" :tabindex="tab===entry.id?0:-1" @click="selectTab(entry.id)">{{ entry.label }}</button></div>
       <section :id="`book-panel-${tab}`" ref="panel" role="tabpanel" :aria-labelledby="`book-tab-${tab}`" tabindex="-1" class="workspace-panel">

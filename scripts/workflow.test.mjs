@@ -2,6 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {qidianBookLink,qidianBookId,saveRecovery} from '../apps/desktop/src/workflow.ts';
 
+test('local engine failures explain validation instead of sending users to an account window',()=>{
+  const advice=saveRecovery('第2章：本地引擎正文长度未通过校验（实际 3031，声明 3027）','engine');
+  assert.match(advice,/未通过校验/);assert.match(advice,/已保存正文保留/);
+  assert.doesNotMatch(advice,/官网窗口|重新登录/);
+  assert.match(saveRecovery('限流 429','engine'),/等待/);
+  assert.match(saveRecovery('HTTP 403 验证','engine'),/不使用官网登录窗口/);
+  assert.match(saveRecovery('引擎退出','engine'),/组件状态/);
+});
+
 test('public access challenges never suggest an unrelated Qidian account window',()=>{
   const advice=saveRecovery('官网访问需处理：HTTP 403 验证','public');
   assert.match(advice,/保留进度/);assert.doesNotMatch(advice,/起点|官网窗口/);

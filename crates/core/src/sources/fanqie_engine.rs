@@ -6,6 +6,15 @@ use serde::Deserialize;
 
 pub const LOCAL_ENGINE_SOURCE: &str = "fanqie-app-local";
 
+// Observed upstream metadata counts ASCII, Han and Chinese punctuation, but not
+// every Unicode scalar (e.g. middle dots, circled numbers and arrows). This is
+// only a comparison metric: never remove those characters from saved content.
+fn metadata_character(c: char) -> bool {
+    c.is_ascii_graphic()
+        || matches!(c, '\u{4e00}'..='\u{9fff}' | '\u{3000}'..='\u{303f}'
+            | '\u{ff00}'..='\u{ffef}' | '—' | '‘' | '’' | '“' | '”' | '…')
+}
+
 impl crate::Library {
     /// Explicit experimental path; normal SourceHub, HTTP and batch capabilities stay disabled.
     pub fn create_engine_download(
@@ -93,11 +102,14 @@ pub fn parse_engine_chapter(
         .iter()
         .map(|p| clean(p).chars().count())
         .sum::<usize>();
-    // Official word metadata can lag tiny additions to a complete long chapter.
-    // Missing text is never tolerated; preserve every received character.
-    let small_complete_addition = value.word_number >= 1000
-        && count > value.word_number
-        && count - value.word_number <= (value.word_number / 1000).clamp(3, 20)
+    let metadata_count = paragraphs
+        .iter()
+        .flat_map(|p| p.chars())
+        .filter(|c| !c.is_whitespace() && metadata_character(*c))
+        .count();
+    // A different counting convention needs a complete framed response. An
+    // unexplained extra/missing character is not accepted via percentage slack.
+    let framed_metadata_match = metadata_count == value.word_number
         && ["header", "article", "footer"].iter().all(|tag| {
             html.select(&Selector::parse(tag).expect("static tag"))
                 .count()
@@ -105,9 +117,9 @@ pub fn parse_engine_chapter(
         })
         && value.content.contains("</article>")
         && value.content.contains("</footer>");
-    if count != value.word_number && !small_complete_addition {
+    if count != value.word_number && !framed_metadata_match {
         return Err(Error::SourceChanged(format!(
-            "本地引擎正文长度未通过校验（实际 {count}，声明 {}），未保存本章",
+            "本地引擎正文长度未通过校验（实际 {count}，平台口径 {metadata_count}，声明 {}），未保存本章",
             value.word_number
         )));
     }
@@ -152,30 +164,45 @@ mod tests {
         );
     }
     #[test]
-    fn complete_long_document_keeps_small_additions_but_never_accepts_missing_text() {
+    fn platform_count_preserves_symbols_without_accepting_missing_or_extra_text() {
         let mut value = fixture();
         let original = "山间的小屋亮起一盏灯。".repeat(100);
         value["word_number"] = json!(1100);
         value["content"] = json!(format!(
-            "<header>原创章</header><article><p>{original}补字甲</p></article><footer></footer>"
+            "<header>原创章</header><article><p>{original}·①②③→Ⅹ∯のᗜ\u{200c}</p></article><footer></footer>"
         ));
         let parsed = check(&value).unwrap();
-        assert_eq!(parsed.paragraphs, [format!("{original}补字甲")]);
+        assert_eq!(parsed.paragraphs, [format!("{original}·①②③→Ⅹ∯のᗜ\u{200c}")]);
         for body in [
-            original.chars().take(1099).collect::<String>(),
-            format!("{original}补字甲乙丙"),
+            format!("{}····", original.chars().take(1099).collect::<String>()),
+            format!("{original}补·"),
         ] {
             value["content"] = json!(format!(
                 "<header>原创章</header><article><p>{body}</p></article><footer></footer>"
             ));
             assert!(check(&value).is_err());
         }
-        value["content"] = json!(format!("<p>{original}补字甲</p>"));
+        value["content"] = json!(format!("<p>{original}·</p>"));
         assert!(check(&value).is_err());
-        value["word_number"] = json!(11);
-        value["content"] = json!(
-            "<header>原创章</header><article><p>山间的小屋亮起一盏灯。补字甲</p></article><footer></footer>"
-        );
+        value["content"] = json!(format!(
+            "<header>原创章</header><article><p>{original}·</p></article><footer>"
+        ));
+        assert!(check(&value).is_err());
+    }
+    #[test]
+    fn exact_platform_count_handles_the_reported_four_symbol_difference() {
+        let mut value = fixture();
+        let body = format!("{}····", "山".repeat(3027));
+        value["word_number"] = json!(3027);
+        value["content"] = json!(format!(
+            "<header>原创章</header><article><p>{body}</p></article><footer></footer>"
+        ));
+        assert_eq!(check(&value).unwrap().paragraphs, [body]);
+        // The previous tiny-addition rule also falsely accepted ordinary extra text.
+        value["content"] = json!(format!(
+            "<header>原创章</header><article><p>{}多</p></article><footer></footer>",
+            "山".repeat(3027)
+        ));
         assert!(check(&value).is_err());
     }
     #[test]
