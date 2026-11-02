@@ -1,6 +1,8 @@
 """Optional desktop stdio producer. No database, exports, arbitrary URLs or credentials."""
 import json
+import concurrent.futures
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -12,6 +14,104 @@ import offline_engine_bundle as offline
 import native_engine as native
 
 MAX_LINE = 2 * 1024 * 1024
+
+
+class PrefetchedSession:
+    """Three approved chapters at most; results still leave in requested order."""
+    WIDTH = 3
+
+    def __init__(self, book, items, *, factory, cancelled):
+        if (not re.fullmatch('[1-9][0-9]{9,23}', book) or not 1 <= len(items) <= 10000
+                or len(set(items)) != len(items)
+                or any(not re.fullmatch('[1-9][0-9]{9,23}', item) for item in items)):
+            raise ValueError('bounded unique identities required')
+        self.items, self.positions = list(items), {item: i for i, item in enumerate(items)}
+        self.external, self.stopped = cancelled, threading.Event()
+        self.sessions, self.pending = [], {}
+        self.available = queue.Queue()
+        self.failure, self.failure_lock = None, threading.Lock()
+        self.executor = None
+        owner = self
+
+        class Stop:
+            def is_set(self):
+                return owner.external.is_set() or owner.stopped.is_set()
+
+        self.cancelled = Stop()
+        try:
+            for _ in range(min(self.WIDTH, len(items))):
+                session = factory(book, items, live=True, cancelled=self.cancelled)
+                self.sessions.append(session)
+                self.available.put(session)
+            self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(self.sessions))
+        except BaseException:
+            self.close()
+            raise
+
+    def _check(self):
+        with self.failure_lock:
+            failure = self.failure
+        if failure is not None:
+            raise failure
+        if self.cancelled.is_set():
+            raise EngineStopped('prefetch cancelled')
+
+    def _fetch(self, item):
+        session = self.available.get()
+        try:
+            self._check()
+            return session.request(item, cancelled=self.cancelled)
+        except BaseException as error:
+            with self.failure_lock:
+                if self.failure is None:
+                    self.failure = error
+            self.stopped.set()
+            raise
+        finally:
+            self.available.put(session)
+
+    def _wait(self, future):
+        deadline = time.monotonic() + 25
+        while time.monotonic() < deadline:
+            self._check()
+            try:
+                return future.result(timeout=0.03)
+            except concurrent.futures.TimeoutError:
+                continue
+        raise EngineStopped('prefetch response timeout')
+
+    def request(self, item, *, cancelled):
+        self._check()
+        if cancelled.is_set() or item not in self.positions:
+            raise EngineStopped('unapproved or cancelled chapter')
+        index = self.positions[item]
+        desired = self.items[index:index + self.WIDTH]
+        # A resumed queue may skip cached entries. Drain bounded old work before
+        # scheduling a new window; never accumulate unrequested bodies.
+        for old, future in list(self.pending.items()):
+            if old not in desired:
+                if not future.cancel():
+                    self._wait(future)
+                del self.pending[old]
+        for upcoming in desired:
+            self._check()
+            if upcoming not in self.pending:
+                self.pending[upcoming] = self.executor.submit(self._fetch, upcoming)
+        result = self._wait(self.pending.pop(item))
+        self._check()
+        return result
+
+    def close(self):
+        self.stopped.set()
+        for future in self.pending.values():
+            future.cancel()
+        if self.executor is not None:
+            self.executor.shutdown(wait=True, cancel_futures=True)
+        # Requests observe stopped and may close their own native child. Join
+        # first so two threads never close the same Windows process handles.
+        for session in self.sessions:
+            session.close()
+        self.pending.clear()
 
 
 def emit(value):
@@ -100,8 +200,11 @@ def serve(fixture=False):
         if fixture and (config['book_id'] != '10000000001' or any(x not in ['10000000002', '10000000003'] for x in config['items'])):
             raise ValueError('fixture identities refused')
         factory = native.NativeSession if native.present() else EngineSession
-        session = factory(config['book_id'], config['items'], live=not fixture,
-                                fixture=original_fixture if fixture else None, cancelled=stopped)
+        if native.present() and not fixture:
+            session = PrefetchedSession(config['book_id'], config['items'], factory=factory, cancelled=stopped)
+        else:
+            session = factory(config['book_id'], config['items'], live=not fixture,
+                                    fixture=original_fixture if fixture else None, cancelled=stopped)
         if stopped.is_set():
             return
         emit({'op': 'ready'})

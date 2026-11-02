@@ -1,10 +1,11 @@
-"""One approved public-chapter transport; no credentials, redirects or retry."""
+"""Bounded public-chapter transport; verified TLS, no credentials or redirects."""
 import base64
 import http.client
 import ipaddress
 import math
 import socket
 import ssl
+import threading
 import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -87,10 +88,47 @@ def retry_after_seconds(value):
     return min(86400, max(1, seconds))
 
 
-def fetch_once(request, expected_item, *, timeout=12):
+class ChapterTransport:
+    """One sequential keep-alive connection, owned and closed by one engine session."""
+    def __init__(self):
+        self._connection = None
+        self._context = None
+        self._closed = False
+        self._lock = threading.Lock()
+
+    def connection(self, timeout):
+        with self._lock:
+            if self._closed:
+                raise OSError('transport closed')
+            if self._connection is None:
+                if self._context is None:
+                    self._context = ssl.create_default_context()
+                self._connection = PinnedConnection(HOST, timeout=timeout, context=self._context)
+            self._connection.timeout = timeout
+            if self._connection.sock is not None:
+                self._connection.sock.settimeout(timeout)
+            return self._connection
+
+    def discard(self, connection):
+        with self._lock:
+            if self._connection is connection:
+                self._connection = None
+        connection.close()
+
+    def close(self):
+        with self._lock:
+            self._closed = True
+            connection, self._connection = self._connection, None
+        if connection is not None:
+            connection.close()
+
+
+def fetch_once(request, expected_item, *, timeout=12, transport=None):
     target, headers = validate_request(request, expected_item)
-    connection = PinnedConnection(HOST, timeout=min(12, timeout), context=ssl.create_default_context())
+    connection = None
+    reusable = False
     try:
+        connection = transport.connection(min(12, timeout)) if transport is not None else PinnedConnection(HOST, timeout=min(12, timeout), context=ssl.create_default_context())
         connection.request('GET', target, headers=headers)
         response = connection.getresponse()
         relevant = {k.lower(): v for k, v in response.getheaders()
@@ -120,21 +158,26 @@ def fetch_once(request, expected_item, *, timeout=12):
         if any(len(v) > LIMIT for v in relevant.values()):
             raise ValueError('response headers too large')
         forwarded = [[k, v] for k, v in relevant.items() if k not in {'bdturing-verify', 'retry-after'}]
+        reusable = transport is not None and not response.will_close
         return {'status': response.status, 'headers': forwarded,
                 'body': base64.b64encode(body).decode('ascii')}, report
     except (OSError, http.client.HTTPException, ValueError):
         return {'status': 502, 'headers': [], 'body': ''}, {'outcome': 'transport_failed'}
     finally:
-        connection.close()
+        if connection is not None and not reusable:
+            if transport is not None:
+                transport.discard(connection)
+            else:
+                connection.close()
 
 
-def fetch_with_retries(request, expected_item, *, stop_requested=lambda: False):
+def fetch_with_retries(request, expected_item, *, stop_requested=lambda: False, transport=None):
     """At most two ordinary GETs; never retry challenges, redirects or rate limits."""
     deadline = time.monotonic() + 18
     for attempt in (1, 2):
         if stop_requested() or time.monotonic() >= deadline:
             return {'status': 503, 'headers': [], 'body': ''}, {'outcome': 'cancelled', 'attempts': attempt - 1}
-        result, report = fetch_once(request, expected_item, timeout=max(0.01, deadline - time.monotonic()))
+        result, report = fetch_once(request, expected_item, timeout=max(0.01, deadline - time.monotonic()), transport=transport)
         report['attempts'] = attempt
         transient = report['outcome'] in {'transport_failed', 'empty_response'} or (
             report['outcome'] == 'http_error' and report.get('http_status') in (408, 502, 503, 504))

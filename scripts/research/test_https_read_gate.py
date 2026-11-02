@@ -4,12 +4,66 @@ import ssl
 from unittest.mock import patch
 from urllib.parse import urlencode
 
-from https_read_gate import LIMIT, PinnedConnection, classify, fetch_once, fetch_with_retries, validate_request
+from https_read_gate import ChapterTransport, LIMIT, PinnedConnection, classify, fetch_once, fetch_with_retries, validate_request
 from local_engine_gate import ITEM, PARAMS, PATH
 from run_https_read_gate import METADATA_FIELDS, split_engine_output
 
 
 class HttpsReadGateTests(unittest.TestCase):
+    def test_keep_alive_reuses_only_successful_fully_read_responses(self):
+        class Response:
+            will_close = False
+            def __init__(self, status=200):
+                self.status, self.reads = status, 0
+            def getheaders(self): return []
+            def read1(self, _limit):
+                self.reads += 1
+                return b'original fixture' if self.reads == 1 else b''
+        class Connection:
+            sock = None
+            def __init__(self, *_a, **_kw): self.closed = 0
+            def request(self, *_a, **_kw): pass
+            def getresponse(self): return responses.pop(0)
+            def close(self): self.closed += 1
+        responses = [Response(), Response(), Response(403), Response()]
+        with patch('https_read_gate.PinnedConnection', side_effect=Connection) as make:
+            transport = ChapterTransport()
+            for expected in [200, 200, 403, 200]:
+                result, _ = fetch_once(self.request(), ITEM, transport=transport)
+                self.assertEqual(result['status'], expected)
+            self.assertEqual(make.call_count, 2)
+            transport.close()
+            result, report = fetch_once(self.request(), ITEM, transport=transport)
+            self.assertEqual(report['outcome'], 'transport_failed')
+            self.assertEqual(make.call_count, 2)
+
+    def test_keep_alive_does_not_reuse_broken_oversized_or_close_responses(self):
+        class Response:
+            status = 200
+            def __init__(self, large=False, closing=False):
+                self.large, self.will_close, self.reads = large, closing, 0
+            def getheaders(self): return []
+            def read1(self, limit):
+                self.reads += 1
+                return b'x' * limit if self.large else b'ok' if self.reads == 1 else b''
+        class Connection:
+            sock = None
+            def __init__(self, *_a, **_kw): pass
+            def request(self, *_a, **_kw): pass
+            def getresponse(self):
+                value = responses.pop(0)
+                if isinstance(value, Exception): raise value
+                return value
+            def close(self): pass
+        responses = [Response(large=True), OSError('closed socket'), Response(closing=True), Response()]
+        with patch('https_read_gate.PinnedConnection', side_effect=Connection) as make:
+            transport = ChapterTransport()
+            for outcome in ['oversized', 'transport_failed', 'response_received_unverified', 'response_received_unverified']:
+                _, report = fetch_once(self.request(), ITEM, transport=transport)
+                self.assertEqual(report['outcome'], outcome)
+            self.assertEqual(make.call_count, 4)
+            transport.close()
+
     def test_transient_empty_response_retries_once_and_then_recovers(self):
         failure = ({'status': 502, 'headers': [], 'body': ''}, {'outcome': 'empty_response', 'http_status': 200})
         success = ({'status': 200, 'headers': [], 'body': 'original-fixture'}, {'outcome': 'response_received_unverified', 'http_status': 200})

@@ -8,7 +8,7 @@ import threading
 import time
 
 import engine_runtime_config as config
-from https_read_gate import fetch_with_retries, validate_request
+from https_read_gate import ChapterTransport, fetch_with_retries, validate_request
 from persistent_engine import EngineStopped, original_fixture
 from windows_engine_sandbox import IsolatedProcess
 
@@ -49,6 +49,7 @@ class NativeSession:
         self._responses = queue.Queue(maxsize=2)
         self._child = None
         self._reader = None
+        self._transport = ChapterTransport()
         self._check_stop(cancelled)
         binary, digest = verify()
         try:
@@ -134,7 +135,7 @@ class NativeSession:
                     if stop():
                         delivered.put_nowait(None)
                         return
-                    result = fetch_with_retries(request['request'], item_id, stop_requested=stop) if self.live else (self.fixture(item_id), {})
+                    result = fetch_with_retries(request['request'], item_id, stop_requested=stop, transport=self._transport) if self.live else (self.fixture(item_id), {})
                     delivered.put_nowait(result)
                 except Exception:
                     delivered.put_nowait(({'status': 502}, {'outcome': 'transport_failed'}))
@@ -162,6 +163,7 @@ class NativeSession:
 
     def close(self):
         self._closed.set()
+        self._transport.close()
         if self._child is not None:
             self._child.close()
         if self._reader is not None:

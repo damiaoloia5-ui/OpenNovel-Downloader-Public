@@ -77,7 +77,7 @@ pub fn parse_engine_chapter(
         ));
     }
     let html = Html::parse_fragment(&value.content);
-    let forbidden = Selector::parse("script,style,img,iframe,canvas,svg,audio,video,[hidden]")
+    let forbidden = Selector::parse("script,style,iframe,canvas,svg,audio,video,[hidden]")
         .expect("static selector");
     if html.select(&forbidden).next().is_some() {
         return Err(Error::SourceChanged(
@@ -107,8 +107,8 @@ pub fn parse_engine_chapter(
     } else {
         html.select(&paragraph_selector).collect::<Vec<_>>()
     };
-    let paragraphs = elements
-        .into_iter()
+    let mut paragraphs = elements
+        .iter()
         .map(|p| p.text().collect::<String>().trim().to_owned())
         .filter(|p| !p.is_empty())
         .collect::<Vec<_>>();
@@ -116,6 +116,44 @@ pub fn parse_engine_chapter(
         .iter()
         .map(|p| clean(p).chars().count())
         .sum::<usize>();
+    let image_selector = Selector::parse("img").expect("static selector");
+    let images = html.select(&image_selector).count();
+    if images > 0 {
+        let illustrations =
+            Selector::parse("article div[data-fanqie-type=\"image\"][source=\"user\"] > p > img")
+                .expect("static selector");
+        // Only explicit user illustrations accompanying sufficient ordinary text
+        // are accepted. Image-only prose and unknown media still fail closed.
+        if !framed
+            || html.select(&illustrations).count() != images
+            || count < value.word_number
+            || elements
+                .iter()
+                .map(|p| p.select(&image_selector).count())
+                .sum::<usize>()
+                != images
+            || html
+                .select(&illustrations)
+                .any(|img| img.value().attr("style").is_some())
+        {
+            return Err(Error::SourceChanged(
+                "本地引擎返回图片正文或未知图片结构，未保存本章".into(),
+            ));
+        }
+        paragraphs.clear();
+        for paragraph in &elements {
+            let text = paragraph.text().collect::<String>().trim().to_owned();
+            if !text.is_empty() {
+                paragraphs.push(text);
+            }
+            for _ in paragraph.select(&image_selector) {
+                paragraphs.push(
+                    "[OpenNovel 插图提示：此处有一幅插图，TXT 仅保存文字，请在官网查看图片。]"
+                        .into(),
+                );
+            }
+        }
+    }
     // Word metadata is an estimate with an undocumented counting convention,
     // not a checksum or a quota. Preserve every character and impose no upper
     // ratio. Framing plus a lower-bound heuristic detects obvious previews;
@@ -220,6 +258,28 @@ mod tests {
         value["word_number"] = json!(usize::MAX);
         assert!(check(&value).is_err());
     }
+    #[test]
+    fn explicit_illustrations_keep_text_and_positions_but_never_pass_image_only_prose() {
+        let mut v = fixture();
+        let content = "<header>原创章</header><article><p>山间的小屋亮起一盏灯。</p><div data-fanqie-type=\"image\" source=\"user\"><p><img src=\"https://example.invalid/original.png\" alt=\"\"></p></div><p>门开了。</p></article><footer></footer>";
+        v["content"] = json!(content);
+        v["word_number"] = json!(15);
+        let parsed = check(&v).unwrap();
+        assert_eq!(parsed.paragraphs.len(), 3);
+        assert_eq!(parsed.paragraphs[0], "山间的小屋亮起一盏灯。");
+        assert!(parsed.paragraphs[1].starts_with("[OpenNovel 插图提示："));
+        assert!(!parsed.paragraphs[1].contains("https://"));
+        assert_eq!(parsed.paragraphs[2], "门开了。");
+        for invalid in [
+            content.replace("source=\"user\"", "source=\"unknown\""),
+            content.replace("<img", "<img style=\"display:none\""),
+            content.replace("山间的小屋亮起一盏灯。", "短文"),
+        ] {
+            v["content"] = json!(invalid);
+            assert!(check(&v).is_err());
+        }
+    }
+
     #[test]
     fn identities_permissions_types_and_schema_are_mandatory() {
         for (field, replacement) in [

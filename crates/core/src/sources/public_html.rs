@@ -216,6 +216,13 @@ impl PublicHtml {
         }
         let doc = Html::parse_document(html);
         let (title, info, body) = if zongheng {
+            if doc
+                .select(&page::selector("body.zh-captcha-page"))
+                .next()
+                .is_some()
+            {
+                return Err(Error::AccessChallenge("纵横官网返回真人验证页（HTTP 成功不代表正文）；已停止并保留进度，请先在官网处理验证".into()));
+            }
             let owner = page::one(&doc, "body[data-bookid][data-chapterid][data-vip]")?;
             if owner.value().attr("data-bookid") != Some(book)
                 || owner.value().attr("data-chapterid") != Some(chapter.id.as_str())

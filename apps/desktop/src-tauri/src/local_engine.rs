@@ -1101,6 +1101,94 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Explicit live full-catalog benchmark with a 180-second budget and a new disposable library"]
+    fn manual_timed_free_book_benchmark() {
+        let started = Instant::now();
+        let input = std::env::var("OPENNOVEL_ACCEPT_BOOK").expect("explicit book URL");
+        let directory = PathBuf::from(
+            std::env::var_os("OPENNOVEL_ACCEPT_OUTPUT").expect("new benchmark directory"),
+        );
+        assert!(directory.is_absolute() && !directory.exists());
+        std::fs::create_dir_all(&directory).unwrap();
+        let measured = (|| -> Result<Value> {
+            let runtime = Runtime::discover()?;
+            runtime.check()?;
+            let catalog = opennovel_core::sources::Fanqie::new()?.inspect_engine(&input)?;
+            std::fs::write(
+                directory.join("catalog.json"),
+                serde_json::to_vec(&catalog)?,
+            )?;
+            if catalog.chapters.iter().any(|c| c.restricted) {
+                return Err(Error::Restricted(
+                    "benchmark requires an explicitly free catalog".into(),
+                ));
+            }
+            let library = opennovel_core::Library::open(directory.join("library.db"))?;
+            let job = library.create_engine_download(
+                &catalog,
+                &(1..=catalog.chapters.len()).collect::<Vec<_>>(),
+            )?;
+            let client = EngineAdapter::new(
+                runtime,
+                catalog.remote_id.clone(),
+                catalog.chapters.iter().map(|c| c.id.clone()).collect(),
+            );
+            let stop = AtomicBool::new(false);
+            let (done, waiting) = mpsc::channel();
+            let setup_seconds = started.elapsed().as_secs_f64();
+            let result = std::thread::scope(|scope| {
+                let stop = &stop;
+                scope.spawn(move || {
+                    if waiting
+                        .recv_timeout(Duration::from_secs(180).saturating_sub(started.elapsed()))
+                        .is_err()
+                    {
+                        stop.store(true, Ordering::Release);
+                    }
+                });
+                let result = library.run_job(&job, &client, stop);
+                let _ = done.send(());
+                result
+            });
+            let download_finished = started.elapsed().as_secs_f64();
+            drop(client);
+            let details = library.job_details(&job)?;
+            let receipt = if details.job.saved > 0 {
+                Some(library.export(
+                    &details.job.book_id,
+                    directory.join("exports"),
+                    opennovel_core::ExportFormat::Txt,
+                )?)
+            } else {
+                None
+            };
+            let seconds = started.elapsed().as_secs_f64();
+            let full = details.job.saved == details.job.total && details.job.state == "completed";
+            let failures: Vec<_> = details
+                .items
+                .iter()
+                .filter(|i| i.error.is_some())
+                .map(|i| json!({"position":i.position,"kind":i.error_kind,"error":i.error}))
+                .collect();
+            Ok(
+                json!({"title":catalog.title,"remote_id":catalog.remote_id,"total":details.job.total,"saved":details.job.saved,"failed":details.job.failed,"blocked":details.job.blocked,"state":details.job.state,"setup_seconds":setup_seconds,"download_finished_seconds":download_finished,"wall_seconds":seconds,"full_book_verified":full,"within_180_seconds":full && seconds <= 180.0,"deadline_reached":stop.load(Ordering::Acquire),"export":receipt,"failures":failures,"run_error":result.err().map(|e|e.to_string())}),
+            )
+        })();
+        let report = match measured {
+            Ok(value) => value,
+            Err(error) => {
+                json!({"url":input,"error":error.to_string(),"full_book_verified":false,"within_180_seconds":false,"wall_seconds":started.elapsed().as_secs_f64()})
+            }
+        };
+        std::fs::write(
+            directory.join("benchmark.json"),
+            serde_json::to_vec_pretty(&report).unwrap(),
+        )
+        .unwrap();
+        println!("{}", serde_json::to_string(&report).unwrap());
+    }
+
+    #[test]
     #[ignore = "Explicit bounded live regression on a marked disposable library copy only"]
     fn manual_resume_length_regression_copy() {
         use opennovel_core::sources::{ChapterRef, SourceAdapter};

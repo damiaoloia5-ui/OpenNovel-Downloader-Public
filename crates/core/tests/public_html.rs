@@ -19,6 +19,51 @@ fn chapter(zh: bool) -> String {
     }
 }
 #[test]
+#[ignore = "Read-only parser diagnostics for an explicitly supplied local official-page snapshot"]
+fn manual_public_chapter_snapshot() {
+    let folder = std::path::PathBuf::from(std::env::var_os("OPENNOVEL_PAGE_SNAPSHOT").unwrap());
+    assert!(folder.is_absolute());
+    let catalog: Catalog =
+        serde_json::from_slice(&std::fs::read(folder.join("inspect.stdout.json")).unwrap())
+            .unwrap();
+    let raw = std::fs::read_to_string(folder.join("failed-page.html")).unwrap();
+    let doc = scraper::Html::parse_document(&raw);
+    for selector in [
+        "body[data-bookid][data-chapterid][data-vip]",
+        "#Jcontent .reader-box .content",
+        "#Jcontent .title_txtbox",
+        "#Jcontent .bookinfo",
+    ] {
+        println!(
+            "{selector}: {}",
+            doc.select(&scraper::Selector::parse(selector).unwrap())
+                .count()
+        );
+    }
+    let owner = doc
+        .select(&scraper::Selector::parse("[data-chapterid]").unwrap())
+        .next()
+        .unwrap();
+    let item = catalog
+        .chapters
+        .iter()
+        .find(|c| Some(c.id.as_str()) == owner.value().attr("data-chapterid"))
+        .unwrap();
+    let result = PublicHtml::parse_chapter(&raw, &catalog.remote_id, item, true);
+    println!("parse: {:?}", result.as_ref().map(|x| x.paragraphs.len()));
+    assert!(result.is_ok());
+}
+#[test]
+fn zongheng_success_status_verification_page_is_not_a_parser_failure_or_body() {
+    let c = PublicHtml::parse_catalog(&catalog(true), "123", true).unwrap();
+    let html = "<html><head><title>人机验证</title></head><body class='zh-captcha-page'><p>请完成验证</p></body></html>";
+    assert!(matches!(
+        PublicHtml::parse_chapter(html, "123", &c.chapters[0], true),
+        Err(Error::AccessChallenge(_))
+    ));
+}
+
+#[test]
 fn public_catalogs_preserve_order_and_reject_missing_duplicate_or_foreign_items() {
     for zh in [false, true] {
         let raw = catalog(zh);
