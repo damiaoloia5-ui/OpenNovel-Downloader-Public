@@ -36,10 +36,15 @@ $stream = [IO.File]::Open($tampered,[IO.FileMode]::Open,[IO.FileAccess]::ReadWri
 try { $stream.Position=4096; $value=$stream.ReadByte(); $stream.Position=4096; $stream.WriteByte([byte]($value -bxor 1)) } finally { $stream.Dispose() }
 Expect-Failure { Confirm-OpenNovelFileSignature $tampered $signTool '' } 'verification failed' 'modified signed binary rejected'
 if ((Get-AuthenticodeSignature -LiteralPath $signTool).Status -ne 'Valid') { throw 'Original Microsoft binary was changed.' }
-$candidate = Join-Path $root '.artifacts/v03-release/OpenNovel-Downloader-0.3.0-windows-x64-setup.exe'
-if (-not (Test-Path -LiteralPath $candidate)) { throw 'This manual release check requires the preserved v0.3 unsigned candidate.' }
+# Build an original unsigned PE in this run. A fresh checkout has no release archives.
+$rustc = (Get-Command rustc.exe -ErrorAction Stop).Source
+$fixtureSource = Join-Path $testDirectory 'unsigned-fixture.rs'
+$candidate = Join-Path $testDirectory 'unsigned fixture.exe'
+[IO.File]::WriteAllText($fixtureSource, 'fn main() {}', [Text.UTF8Encoding]::new($false))
+& $rustc --crate-name opennovel_unsigned_fixture --edition=2021 $fixtureSource -o $candidate
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $candidate -PathType Leaf)) { throw 'Could not build the unsigned signing-test fixture.' }
 $hash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash
-Expect-Failure { Confirm-OpenNovelFileSignature $candidate $signTool '' } 'NotSigned' 'unsigned OpenNovel candidate rejected'
+Expect-Failure { Confirm-OpenNovelFileSignature $candidate $signTool '' } 'NotSigned' 'original unsigned fixture rejected'
 $beforeDirectories = @(Get-ChildItem -LiteralPath (Join-Path $root '.artifacts/signing-build') -Directory -ErrorAction SilentlyContinue).Count
 $entry = Join-Path $PSScriptRoot 'windows-signed-release.ps1'
 $failureLog = Join-Path $testDirectory 'missing-certificate.txt'
@@ -47,11 +52,11 @@ $failureLog = Join-Path $testDirectory 'missing-certificate.txt'
 if ($LASTEXITCODE -ne 1) { throw 'Missing-certificate build did not return failure.' }
 $afterDirectories = @(Get-ChildItem -LiteralPath (Join-Path $root '.artifacts/signing-build') -Directory -ErrorAction SilentlyContinue).Count
 if ($afterDirectories -ne $beforeDirectories -or (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash -ne $hash) { throw 'Failed preflight modified candidate or created a build directory.' }
-$results.Add('missing certificate fails before build and preserves original installer')
+$results.Add('missing certificate fails before build and preserves unsigned fixture')
 & $pwsh -NoProfile -File (Join-Path $PSScriptRoot 'windows-sign-file.ps1') -TargetPath $candidate -CertificateThumbprint 'invalid' *> (Join-Path $testDirectory 'sign-rejected.txt')
-if ($LASTEXITCODE -ne 1 -or (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash -ne $hash) { throw 'Sign-file failure did not preserve original installer.' }
+if ($LASTEXITCODE -ne 1 -or (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash -ne $hash) { throw 'Sign-file failure did not preserve unsigned fixture.' }
 $results.Add('per-file signer refuses missing certificate without modification')
 & $pwsh -NoProfile -File $entry -Action Verify -FilePath $candidate -CertificateThumbprint '' *> (Join-Path $testDirectory 'verify-rejected.txt')
 if ($LASTEXITCODE -ne 1) { throw 'Unsigned verify command returned success.' }
-$results.Add('verify command returns nonzero for unsigned installer')
-[ordered]@{ passed=$results.Count;checks=@($results);actual_project_signing='not performed; CA-issued certificate missing';original_installer_sha256=$hash.ToLowerInvariant() } | ConvertTo-Json -Depth 4
+$results.Add('verify command returns nonzero for unsigned fixture')
+[ordered]@{ passed=$results.Count;checks=@($results);actual_project_signing='not performed; CA-issued certificate missing';unsigned_fixture_sha256=$hash.ToLowerInvariant() } | ConvertTo-Json -Depth 4

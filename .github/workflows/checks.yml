@@ -29,6 +29,8 @@ jobs:
         run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Audit dependencies and desktop permission configuration
         run: python scripts/verify_security.py --output .artifacts/security-ci
+      - name: Install, reinstall and uninstall on disposable runner
+        run: python scripts/verify_installer.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -36,7 +38,10 @@ jobs:
           include-hidden-files: true
           path: |
             .artifacts/checks/**/report.json
+            .artifacts/checks/**/*.log
             .artifacts/security-ci/**
+            .artifacts/installer-ci/**/report.json
+            .artifacts/installer-ci/*.log
       - uses: actions/upload-artifact@v4
         if: success()
         with:
