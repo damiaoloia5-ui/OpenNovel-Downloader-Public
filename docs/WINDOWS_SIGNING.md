@@ -1,6 +1,6 @@
 # Windows 代码签名（可选发布流程）
 
-更新：2026-10-21。当前 v0.3.0 候选安装器仍未签名；本轮仅接入工具与验证入口，未购买、申请或取得正式证书。
+流程更新：2026-11-03。当前 v0.3.19 候选安装器仍未正式签名；已补齐签名编排和隔离测试，未购买、申请或取得正式证书。下方供应商信息为 2026-10-21 历史调研，未重新核实报价或受理条件。
 
 ## 为什么签名
 
@@ -20,7 +20,7 @@ npm run signing:verify -- -FilePath "安装器的完整路径"
 
 inspect 不写文件，只报告工具和指定证书是否就绪；证书尚未配置时返回 certificate_ready=false。verify 会对未签名、无时间戳、不受信任或被篡改的文件返回非零退出码。
 
-signing:test 为本地发布检查，需要保留的 `.artifacts/v03-release` 候选包；不是依赖真实证书的 CI 签名任务。它验证微软已签名文件、篡改副本、错误发布者及未签名项目包等情形，不借用微软证书签署 OpenNovel。
+signing:test 为本地及 CI 发布契约检查，使用当前 Rust 工具链生成原创未签名 EXE，不再依赖历史候选包。它验证微软已签名文件、篡改副本、错误发布者及未签名原创文件等情形，不借用微软证书签署 OpenNovel。
 
 ## 正式证书就绪之后
 
@@ -35,7 +35,9 @@ npm run desktop:package:signed
 
 签名入口会先检查证书、Code Signing EKU、有效期、私钥提供者和在线信任链，再要求 Git 工作区干净。没有证书时在创建构建目录前停止。
 
-构建使用新的 `.artifacts/signing-build/<版本-UUID>` 目标目录；Tauri 以参数数组调用独立 signer，处理包含空格的路径。应用、卸载器、安装器由打包过程签名，CLI 单独签名。每次使用 SHA-256 文件摘要与 RFC3161/SHA-256 时间戳；`/sha1` 仅用于按指纹选择证书，并非使用 SHA-1 给文件签名。[微软时间戳建议](https://learn.microsoft.com/en-us/windows/win32/seccrypto/time-stamping-authenticode-signatures)。
+构建使用新的 `.artifacts/signing-build/<版本-UUID>` 目标目录；Tauri 以参数数组调用独立 signer，处理包含空格的路径。安装包内应用、卸载器、安装器由打包过程签名。Tauri 完成后会恢复未签名的独立主程序，所以最后对独立桌面 EXE 和 CLI 分别签名，再验签及计算交付摘要。每次使用 SHA-256 文件摘要与 RFC3161/SHA-256 时间戳；`/sha1` 仅用于按指纹选择证书，并非使用 SHA-1 给文件签名。[微软时间戳建议](https://learn.microsoft.com/en-us/windows/win32/seccrypto/time-stamping-authenticode-signatures)。
+
+`scripts/research/test_signing_orchestration.py` 在临时目录运行发布脚本副本，使用明确标注的原创假构建和假签名器，覆盖独立 EXE 被恢复、签名失败、安装器未签名及卸载器审计缺失。失败不得生成交付目录；成功回执必须使用最终签名后的摘要。它不接触私钥，也不证明正式 CA 签名成功，生产脚本没有增加跳过验签的开关。
 
 签名后逐个用 Authenticode 和 `signtool verify /pa /all /tw /v` 验证，核对指定证书和时间戳。未观察到经过验证的卸载器签名也会停止。成功后才生成独立的 `.artifacts/signed-release/<版本-UUID>` 交付目录及签名后的 SHA-256/manifest，不覆盖 v0.3 原候选包。
 

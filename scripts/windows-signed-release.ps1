@@ -59,9 +59,13 @@ try {
             & npm.cmd run tauri --workspace '@opennovel/desktop' -- build --config src-tauri/tauri.installer.conf.json --config $configPath --bundles nsis
             if ($LASTEXITCODE -ne 0) { throw 'Signed desktop packaging failed.' }
             $cli = Join-Path $env:CARGO_TARGET_DIR 'release/opennovel.exe'
-            & $pwsh -NoProfile -File $signer -TargetPath $cli -CertificateThumbprint $certificate.Thumbprint -StoreLocation $StoreLocation -TimestampUrl $TimestampUrl
-            if ($LASTEXITCODE -ne 0) { throw 'CLI signing failed.' }
             $desktop = Join-Path $env:CARGO_TARGET_DIR 'release/opennovel-desktop.exe'
+            # Tauri restores the unsigned standalone EXE after signing the bundled
+            # copy. Sign both standalone deliverables before verification/hashing.
+            foreach ($binary in @($cli,$desktop)) {
+                & $pwsh -NoProfile -File $signer -TargetPath $binary -CertificateThumbprint $certificate.Thumbprint -StoreLocation $StoreLocation -TimestampUrl $TimestampUrl
+                if ($LASTEXITCODE -ne 0) { throw ('Executable signing failed: '+[IO.Path]::GetFileName($binary)) }
+            }
             $installer = Join-Path $env:CARGO_TARGET_DIR "release/bundle/nsis/OpenNovel Downloader_${version}_x64-setup.exe"
             $verified = @($desktop,$installer,$cli) | ForEach-Object { Confirm-OpenNovelFileSignature $_ $signTool $certificate.Thumbprint }
             $auditRecords = @(Get-Content -LiteralPath $audit | ForEach-Object { $_ | ConvertFrom-Json })
@@ -74,6 +78,7 @@ try {
             Copy-Item -LiteralPath $installer -Destination (Join-Path $delivery "OpenNovel-Downloader-$version-windows-x64-signed-setup.exe")
             Copy-Item -LiteralPath $cli -Destination (Join-Path $delivery 'opennovel.exe')
             Copy-Item -LiteralPath $desktop -Destination (Join-Path $delivery 'opennovel-desktop.exe')
+            Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'windows-installation-check.cmd') -Destination (Join-Path $delivery '运行安装自检.cmd')
             Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $delivery
             Copy-Item -LiteralPath (Join-Path $root '.artifacts/release/THIRD_PARTY_NOTICES.txt') -Destination $delivery
             $files = @(Get-ChildItem -LiteralPath $delivery -File | ForEach-Object { [ordered]@{ name=$_.Name;bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() } })

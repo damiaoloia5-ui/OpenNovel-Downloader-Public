@@ -76,6 +76,10 @@ npm run desktop:package:integrated
 
 ## 交付检查
 
+基础和一体化 NSIS 安装包均附 `运行安装自检.cmd`。便携交付也应将 `scripts/windows-installation-check.cmd` 以该中文文件名复制到 `OpenNovel.exe` 同目录，保留 UTF-8、CRLF；脚本同时识别安装版的 `opennovel-desktop.exe`。默认报告位于 `%LOCALAPPDATA%/OpenNovel-Installation-Checks`，可用第一参数指定独立输出根目录，第二参数 `--quiet` 取消结束暂停。测试入口不需要开发环境。
+
+托管安装验收会核对安装后的脚本摘要，并在清空 PATH 后实际运行该入口，安装和重装各验证一次，卸载后检查入口已移除。这能验证交付脚本及本机进程链路，不能把带开发环境的 runner 视为完全干净的普通用户 Windows。
+
 依赖和权限检查按 [SECURITY.md](../SECURITY.md) 执行；CI 基础包审计不能替代一体化内置引擎审计。安全刷新工具 `scripts/update_native_engine_dependencies.py --source-archive <当前锁定源码归档> --output <新目录>` 保留上游文件，更新独立 workspace 锁定依赖、完整 vendor 和许可材料，离线重建。新 manifest 仍需审查、固定并通过原生沙箱测试，不能直接分发未核验构建。
 
 1. 核对源码提交、版本一致、工作区和 staged diff；正文、凭据、缓存、构建产物不提交。

@@ -10,6 +10,7 @@
 *.yml text eol=lf
 *.mjs text eol=lf
 *.py text eol=lf
+/scripts/windows-installation-check.cmd text eol=crlf
 Cargo.lock text eol=lf
 # Upstream license bytes are verified by SHA-256, including their original whitespace.
 /LICENSE -text

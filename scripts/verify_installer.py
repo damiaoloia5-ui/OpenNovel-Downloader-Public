@@ -94,10 +94,19 @@ def verify_nsis_binary(installed, original):
             'only_expected_nsis_marker_changed': True}
 
 
-def run(command, output, name):
+def installation_check_command(script, output):
+    # cmd.exe uses different quoting from the C runtime; pass one raw command
+    # line, preserving quoted paths with spaces, Chinese characters and '&'.
+    if any(c in str(script) + str(output) for c in '\r\n\0"'):
+        raise ValueError('Unsafe installation check path')
+    shell = str(Path(os.environ['SystemRoot']) / 'System32/cmd.exe')
+    return subprocess.list2cmdline([shell]) + f' /d /s /c ""{script}" "{output}" --quiet"'
+
+
+def run(command, output, name, env=None):
     with (output / (name + '.log')).open('wb') as stream:
         result = subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT,
-                                timeout=600, creationflags=subprocess.CREATE_NO_WINDOW)
+                                timeout=600, creationflags=subprocess.CREATE_NO_WINDOW, env=env)
     if result.returncode:
         raise ValueError(f'{name} failed with exit code {result.returncode}; see step log')
 
@@ -147,16 +156,20 @@ def main():
             executable = contained(destination / 'opennovel-desktop.exe', destination)
             binary = verify_nsis_binary(executable, repo / 'target/release/opennovel-desktop.exe')
             for name, source in [('LICENSE', repo / 'LICENSE'),
-                                 ('THIRD_PARTY_NOTICES.txt', repo / '.artifacts/release/THIRD_PARTY_NOTICES.txt')]:
+                                 ('THIRD_PARTY_NOTICES.txt', repo / '.artifacts/release/THIRD_PARTY_NOTICES.txt'),
+                                 ('运行安装自检.cmd', repo / 'scripts/windows-installation-check.cmd')]:
                 if sha256(destination / name) != sha256(source):
-                    raise ValueError('Installed license material mismatch')
+                    raise ValueError('Installed license material or self-check launcher mismatch')
             verify_registration(destination, version)
             stage_output = output / stage
             stage_output.mkdir()
-            run([str(executable), '--check-installation', str(stage_output / 'native')], output, stage + '-native')
+            check_env = {**os.environ, 'PATH': ''}
+            run(installation_check_command(destination / '运行安装自检.cmd', stage_output / 'native'),
+                output, stage + '-native', env=check_env)
             inspect_native(stage_output, version)
             verify_preserved(expected)
-            report['steps'].append({'name': stage, 'passed': True, 'binary': binary})
+            report['steps'].append({'name': stage, 'passed': True, 'binary': binary,
+                                    'installed_launcher_verified_with_empty_path': True})
         # Run a copy with NSIS _?= so it remains attached and targets only this
         # exact validated install directory. No recursive shell deletion is used.
         uninstaller = output / 'test-uninstall.exe'
@@ -164,6 +177,8 @@ def main():
         run(nsis_command(uninstaller, ['/S'], '_?=' + str(destination)), output, 'uninstall')
         if (destination / 'opennovel-desktop.exe').exists():
             raise ValueError('Uninstall left the main executable installed')
+        if (destination / '运行安装自检.cmd').exists():
+            raise ValueError('Uninstall left the installation check launcher installed')
         if any(name == REGISTRY_KEYS[0] for _, _, name in registered_locations()):
             raise ValueError('Uninstall left the application registered')
         verify_preserved(expected)

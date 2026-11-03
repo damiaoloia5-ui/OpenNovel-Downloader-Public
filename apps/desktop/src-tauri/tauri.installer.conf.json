@@ -3,6 +3,7 @@
     "useLocalToolsDir": true,
     "resources": {
       "../../../LICENSE": "LICENSE",
+      "../../../scripts/windows-installation-check.cmd": "运行安装自检.cmd",
       "../../../.artifacts/release/THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt"
     }
   }
