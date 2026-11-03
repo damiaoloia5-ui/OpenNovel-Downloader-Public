@@ -52,6 +52,9 @@ await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as Platf
 const real=new Set(['AccountPanel.vue','AutoSavePanel.vue','App.vue','OfficialReaderPanel.vue','PlatformSavePanel.vue']);
 real.add('LocalEnginePanel.vue');
 real.add('SaveLocation.vue');
+real.add('SaveOptions.vue');
+real.add('ExportActions.vue');
+await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as ExportActions} from '+JSON.stringify(resolve('apps/desktop/src/ExportActions.vue'))+';\n');
 real.add('AutomaticTxtPanel.vue');
 await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as AutoTxt} from '+JSON.stringify(resolve('apps/desktop/src/AutomaticTxtPanel.vue'))+';\n');
 await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as Engine} from '+JSON.stringify(resolve('apps/desktop/src/LocalEnginePanel.vue'))+';\n');
@@ -66,7 +69,7 @@ await build({configFile:false,logLevel:'error',plugins:[{
     return transformWithOxc(compiled.content,`${id}.ts`,{lang:'ts'});
   },
 }],build:{ssr:entry,outDir:output,emptyOutDir:false,rollupOptions:{output:{entryFileNames:'components.mjs'}}}});
-const {Account,AutoSave,App,Official,Supplement,Engine,AutoTxt,Platform}=await import(pathToFileURL(join(output,'components.mjs')).href);
+const {Account,AutoSave,App,Official,Supplement,Engine,AutoTxt,Platform,ExportActions}=await import(pathToFileURL(join(output,'components.mjs')).href);
 function element(tag,text=''){
   return {tag,tagName:tag.toUpperCase(),children:[],parent:null,props:{},text,listeners:{},value:'',checked:false,selected:false,
     get textContent(){return this.text+this.children.map(n=>n.textContent).join('');},
@@ -141,7 +144,7 @@ test('missing automatic TXT gives a local regeneration action with honest reques
     api.retryAutomaticTxt=async id=>{state.calls.push(['regenerate',id]);};
   });try{
     await click(f.button('打开 TXT 所在文件夹'));assert.match(f.root.textContent,/导出文件已移动或删除/);
-    await click(f.button('重新生成 TXT'));assert.match(f.root.textContent,/已请求从本地书库重新生成/);
+    await click(f.button('重新生成 TXT'));assert.match(f.root.textContent,/已请求按原范围与格式重新生成/);
     assert.deepEqual(f.state.calls,[['reveal','original-txt'],['regenerate','original-book']]);
   }finally{f.close();}
 });
@@ -160,7 +163,7 @@ test('late TXT failures and acknowledgements cannot cross the selected book',asy
       api.retryAutomaticTxt=()=>new Promise((resolve,reject)=>{finish=()=>failed?reject('旧书原创失败'):resolve();});
     });try{
       await click(f.button('重新生成 TXT'));f.props.bookId='next-book';await flush();finish();await flush();
-      assert.doesNotMatch(f.root.textContent,/旧书原创失败|已请求从本地书库重新生成/);
+      assert.doesNotMatch(f.root.textContent,/旧书原创失败|已请求按原范围与格式重新生成/);
     }finally{f.close();}
   }
 });
@@ -230,7 +233,7 @@ test('new-book guide logs in, reads automatically, and starts once only after ex
   const f=await mount(Account,{initialUrl:link});try{
     await loginAndRead(f);assert.ok(f.button('是这本，开始保存为 TXT').props.disabled);assert.equal(f.state.calls.filter(c=>c[0]==='start').length,0);
     await acknowledge(f);const button=f.button('是这本，开始保存为 TXT');button.props.onClick();button.props.onClick();await flush();await flush();
-    const starts=f.state.calls.filter(c=>c[0]==='start');assert.equal(starts.length,1);assert.deepEqual(starts[0].slice(1),['original-account','original-book','',true,500,{directory:null}]);assert.equal(f.state.calls.filter(c=>c[0]==='confirm').length,1);
+    const starts=f.state.calls.filter(c=>c[0]==='start');assert.equal(starts.length,1);assert.deepEqual(starts[0].slice(1),['original-account','original-book','',true,500,{directory:null,format:'txt',selection_only:false}]);assert.equal(f.state.calls.filter(c=>c[0]==='confirm').length,1);
     assert.ok(f.button('暂停保存'));assert.equal(f.button('是这本，开始保存为 TXT'),undefined);
   }finally{f.close();}
 });
@@ -289,7 +292,7 @@ test('choose destination before saving; cancelling the picker preserves it and r
     await click(f.button('选择文件夹'));await click(f.button('选择文件夹'));
     assert.match(f.root.textContent,/D:\/我的小说/);assert.equal(f.state.calls.length,0);
     walk(f.root,true).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();await flush();
-    assert.deepEqual(f.state.calls.find(c=>c[0]==='download').at(-1),{directory:'D:/我的小说'});
+    assert.deepEqual(f.state.calls.find(c=>c[0]==='download').at(-1),{directory:'D:/我的小说',format:'txt',selection_only:false});
   }finally{f.close();}
   const g=await mount(App,{},({api})=>{api.chooseSaveDirectory=async()=>'D:/custom';});
   try{await click(g.button('选择文件夹'));await click(g.button('使用默认位置'));assert.doesNotMatch(g.root.textContent,/D:\/custom/);assert.match(g.root.textContent,/D:\/OriginalApp\/exports/);}finally{g.close();}
@@ -307,9 +310,9 @@ test('an open folder picker prevents starting a download and choosing a folder a
 
 test('JSON import and account confirmation carry the folder into the start command',async()=>{
   const f=await mount(App,{},({api})=>{api.chooseSaveDirectory=async()=>'D:/JSON小说';});
-  try{await click(f.button('选择文件夹'));const input=walk(f.root).find(n=>n.tag==='input'&&n.props.accept==='.json,application/json');await input.props.onChange({target:{files:[{size:10,text:async()=>'original-json'}]}});await flush();assert.deepEqual(f.state.calls.find(c=>c[0]==='import'),['import','original-json',{directory:'D:/JSON小说'}]);}finally{f.close();}
+  try{await click(f.button('选择文件夹'));const input=walk(f.root).find(n=>n.tag==='input'&&n.props.accept==='.json,application/json');await input.props.onChange({target:{files:[{size:10,text:async()=>'original-json'}]}});await flush();assert.deepEqual(f.state.calls.find(c=>c[0]==='import'),['import','original-json',{directory:'D:/JSON小说',format:'txt'}]);}finally{f.close();}
   const g=await mount(Account,{initialUrl:link,initialDirectory:'D:/账户小说'});
-  try{await loginAndRead(g);assert.match(g.root.textContent,/D:\/账户小说/);await acknowledge(g);await click(g.button('是这本，开始保存为 TXT'));assert.deepEqual(g.state.calls.find(c=>c[0]==='start').at(-1),{directory:'D:/账户小说'});}finally{g.close();}
+  try{await loginAndRead(g);assert.match(g.root.textContent,/D:\/账户小说/);await acknowledge(g);await click(g.button('是这本，开始保存为 TXT'));assert.deepEqual(g.state.calls.find(c=>c[0]==='start').at(-1),{directory:'D:/账户小说',format:'txt',selection_only:false});}finally{g.close();}
 });
 
 test('resume preserves existing destination unless explicitly changed and does not resume if updating it fails',async()=>{
@@ -326,7 +329,7 @@ test('starting an existing account book refreshes a folder changed by another pa
     state.books=[structuredClone(stored)];let calls=0;
     api.bookExportDestination=async()=>({directory:++calls===1?'D:/旧位置':'D:/工作台刚选的位置',custom:true,filename:'原创.txt'});
   });
-  try{assert.match(f.root.textContent,/D:\/旧位置/);await acknowledge(f);await click(f.button('开始保存为 TXT'));assert.deepEqual(f.state.calls.find(c=>c[0]==='start').at(-1),{directory:'D:/工作台刚选的位置'});}finally{f.close();}
+  try{assert.match(f.root.textContent,/D:\/旧位置/);await acknowledge(f);await click(f.button('开始保存为 TXT'));assert.deepEqual(f.state.calls.find(c=>c[0]==='start').at(-1),{directory:'D:/工作台刚选的位置',format:'txt',selection_only:false});}finally{f.close();}
 });
 test('a ready local component requires explicit activation before saving App-only free chapters',async()=>{
   const f=await mount(App,{},({state,api})=>{
@@ -412,7 +415,7 @@ test('saving with a remembered installed component prepares it and continues in 
 });
 test('bookshelf opens the actual automatic TXT record without another export step',async()=>{
   const f=await mount(App,{},({state})=>{state.books=[{...stored,saved_chapters:2}];state.automatic=[{book_id:stored.id,state:'ready',export_id:'original-txt',receipt:{path:'D:/original.txt'}}];});try{
-    await click(walk(f.root,true).find(n=>n.tag==='button'&&n.textContent.includes('我的书库')));await click(f.button('打开 TXT 文件夹'));
+    await click(walk(f.root,true).find(n=>n.tag==='button'&&n.textContent.includes('我的书库')));await click(f.button('打开文件夹'));
     assert.deepEqual(f.state.calls,[['reveal','original-txt']]);
   }finally{f.close();}
 });
@@ -472,16 +475,16 @@ test('new official links route to their account reader without public HTTP downl
 test('multi-platform catalog confirmation starts the matching session queue after explicit acknowledgement',async()=>{
  const links={zongheng:'https://www.zongheng.com/detail/123','17k':'https://www.17k.com/book/123.html',jinjiang:'https://www.jjwxc.net/onebook.php?novelid=123',qimao:'https://www.qimao.com/shuku/123/',shuqi:'https://www.shuqi.com/book/123.html',ciweimao:'https://www.ciweimao.com/book/123',faloo:'https://b.faloo.com/123.html'};
  for(const [p,url] of Object.entries(links)){
-  const b={...stored,source:p+'-session'};const f=await mount(Platform,{initialUrl:url},({state,api})=>{
+  const b={...stored,source:p+'-session'};const f=await mount(Platform,{initialUrl:url,initialOptions:{range:'range',first:2,last:2,format:'docx'}},({state,api})=>{
    api.previewPlatformCatalog=async(id,link)=>{state.calls.push(['platform-preview',id,link]);return {...preview,catalog:{...preview.catalog,source:p+'-session'}};};
    api.confirmAccountPage=async(...args)=>{state.calls.push(['confirm',...args]);state.books=[b];return {kind:'catalog',book_id:b.id};};
    api.startAccountDownload=async(...args)=>{state.calls.push(['start',...args]);state.jobs=[{id:'platform-job',book_id:b.id,source:b.source,title:b.title,state:'running',saved:0,total:2,failed:0,blocked:0}];return 'platform-job';};
   });try{
    await click(f.button('打开官网，去登录'));assert.equal(f.state.accounts[0].account.platform,p);
-   await click(f.button('我已登录，读取作品目录'));assert.equal(f.button('是这本，开始保存为 TXT').props.disabled,true);
-   await acknowledge(f);await click(f.button('是这本，开始保存为 TXT'));await flush();
+   await click(f.button('我已登录，读取作品目录'));assert.equal(f.button('是这本，开始保存为 Word').props.disabled,true);
+   await acknowledge(f);await click(f.button('是这本，开始保存为 Word'));await flush();
    assert.deepEqual(f.state.calls.find(c=>c[0]==='platform-preview'),['platform-preview','original-account',url]);
-   assert.deepEqual(f.state.calls.find(c=>c[0]==='start'),['start','original-account','original-book','',true,3000,{directory:null}]);
+   assert.deepEqual(f.state.calls.find(c=>c[0]==='start'),['start','original-account','original-book','2-2',true,3000,{directory:null,format:'docx',selection_only:true}]);
    assert.equal(f.state.calls.some(c=>c[0]==='download'),false);
   }finally{f.close();}
  }
@@ -499,4 +502,46 @@ test('verification recovery preserves the page and job until manual completion t
     f.state.resumeError=null;await click(f.button('我已完成验证，继续保存'));assert.equal(f.state.jobs[0].state,'running');assert.equal(f.state.jobs[0].saved,1);
     assert.equal(f.state.calls.filter(c=>c[0]==='start'||c[0]==='open').length,0);const resumed=f.state.calls.filter(c=>c[0]==='resume');assert.ok(resumed.every(c=>c[2]==='original-job'&&c[4]===3000));
   }finally{f.close();}
+});
+
+async function selectSaveOptions(f,first=2,last=2,format='docx'){
+ const fields=walk(f.root,true).filter(n=>n.tag==='fieldset'&&n.props.class==='save-options');assert.ok(fields.length);
+ const field=fields[0];const selects=walk(field).filter(n=>n.tag==='select');
+ selects[0].props.onChange({target:{value:'range'}});await flush();selects[1].props.onChange({target:{value:format}});await flush();
+ const inputs=walk(field).filter(n=>n.tag==='input');inputs[0].props.onInput({target:{value:String(first)}});await flush();inputs[1].props.onInput({target:{value:String(last)}});await flush();
+}
+test('public range and Word choice are visible before starting and survive catalog discovery',async()=>{
+ for(const existing of [false,true]){
+  const f=await mount(App,{},({state})=>{if(existing)state.books=[{...stored,source:'qimao-web'}];});try{
+   await selectSaveOptions(f);assert.ok(f.button('开始保存为 Word'));assert.equal(f.state.calls.length,0);
+   const input=walk(f.root,true).find(n=>n.props.id==='novel-link');input.value='https://www.qimao.com/shuku/123/';input.dispatch('input');await flush();
+   walk(f.root,true).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();await flush();
+   assert.deepEqual(f.state.calls.find(c=>c[0]==='download'),['download','https://www.qimao.com/shuku/123/',1,2,'2-2',{directory:null,format:'docx',selection_only:true}]);
+  }finally{f.close();}
+ }
+});
+test('invalid or out of catalog range cannot create a public download',async()=>{
+ for(const [first,last] of [[0,2],[2,1],[1,9]]){
+  const f=await mount(App);try{
+   await selectSaveOptions(f,first,last);const input=walk(f.root,true).find(n=>n.props.id==='novel-link');input.value='https://www.qimao.com/shuku/123/';input.dispatch('input');await flush();
+   walk(f.root,true).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();await flush();assert.equal(f.state.calls.filter(c=>c[0]==='download').length,0);assert.match(f.root.textContent,/起止章节|超过目录总数/);
+  }finally{f.close();}
+ }
+});
+test('account confirmation sends the chosen chapter range and Word format before the worker starts',async()=>{
+ const f=await mount(Account,{initialUrl:link});try{
+  await loginAndRead(f);await selectSaveOptions(f);await acknowledge(f);await click(f.button('是这本，开始保存为 Word'));
+  assert.deepEqual(f.state.calls.find(c=>c[0]==='start'),['start','original-account','original-book','2-2',true,500,{directory:null,format:'docx',selection_only:true}]);
+ }finally{f.close();}
+});
+test('Word automatic result is labeled as Word and uses its recorded file',async()=>{
+ const f=await mount(AutoTxt,{bookId:'original-book',saved:2,status:{...txtReady,receipt:{...txtReady.receipt,path:'D:/original.docx'}}});try{
+  assert.match(f.root.textContent,/Word 已生成/);await click(f.button('打开 Word 所在文件夹'));assert.deepEqual(f.state.calls,[['reveal','original-txt']]);
+ }finally{f.close();}
+});
+
+test('already saved books export only the requested range as Word without a download',async()=>{
+ const f=await mount(ExportActions,{bookId:'original-book',saved:2,total:2,initialOptions:{range:'range',first:2,last:2,format:'docx'}},({state,api})=>{
+  api.exportBook=async(...args)=>{state.calls.push(['export',...args]);return {path:'D:/original.docx',saved_chapters:1,total_chapters:1,partial:false};};api.bookDetails=async()=>({exports:[]});
+ });try{await click(f.button('导出文件'));assert.deepEqual(f.state.calls,[['export','original-book','docx','2-2']]);assert.match(f.root.textContent,/1\/1/);}finally{f.close();}
 });

@@ -134,7 +134,7 @@ enum Command {
     /// 从本地保存内容导出；现有文件不会被覆盖
     Export {
         book_id: String,
-        #[arg(long, default_value = "txt", value_parser = ["txt", "epub"])]
+        #[arg(long, default_value = "txt", value_parser = ["txt", "epub", "docx"])]
         format: String,
         #[arg(long, default_value = ".artifacts/exports")]
         output: PathBuf,

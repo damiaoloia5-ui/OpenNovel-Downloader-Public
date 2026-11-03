@@ -15,7 +15,7 @@ use std::{
 };
 use uuid::Uuid;
 
-pub(crate) const SCHEMA_VERSION: u32 = 10;
+pub(crate) const SCHEMA_VERSION: u32 = 11;
 
 pub struct Library {
     connection: Mutex<Connection>,
@@ -163,6 +163,11 @@ impl Library {
                 PRAGMA user_version=10;")?;
             transaction.commit()?;
         }
+        if version < 11 {
+            let transaction = connection.transaction()?;
+            transaction.execute_batch("CREATE TABLE automatic_exports(book_id TEXT PRIMARY KEY REFERENCES books(id), format TEXT NOT NULL CHECK(format IN ('txt','epub','docx')), job_id TEXT REFERENCES jobs(id)); PRAGMA user_version=11;")?;
+            transaction.commit()?;
+        }
         connection.execute(
             "UPDATE batches SET state='paused' WHERE state='running'",
             [],
@@ -228,7 +233,7 @@ impl Library {
             )?;
         }
         if let Some(destination) = destination {
-            destination.persist(&transaction, &book_id)?;
+            destination.persist_for_job(&transaction, &book_id, &job_id)?;
         }
         transaction.commit()?;
         Ok(job_id)

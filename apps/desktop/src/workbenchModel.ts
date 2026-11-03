@@ -22,7 +22,7 @@ export function workbenchStatus(book:Book,jobs:readonly Job[],mode:SaveMode):Wor
   if(running)return {kind:'running',title:'正在保存',message:'可以在这里查看进度或暂停，已保存正文可随时阅读和导出。',action:'查看保存进度',tab:'save',job:running};
   const paused=own.find(j=>j.state==='paused');
   if(paused)return {kind:'paused',title:'已暂停，进度保留',message:mode==='account'?'打开原账户官网窗口并核对登录后，继续原任务。':'继续原任务会复用已经保存的正文。',action:'继续保存',tab:'save',job:paused};
-  if(book.total_chapters>0&&book.saved_chapters===book.total_chapters)return {kind:'complete',title:'正文已保存完整',message:'后台会自动生成 TXT，可在本页打开文件夹；也可离线阅读或手动导出其他格式。',action:'查看文件与其他导出',tab:'export'};
+  if(book.total_chapters>0&&book.saved_chapters===book.total_chapters)return {kind:'complete',title:'正文已保存完整',message:'后台会按所选格式自动生成文件，可在本页打开文件夹；也可离线阅读或手动导出其他格式。',action:'查看文件与其他导出',tab:'export'};
   if(mode==='unavailable')return {kind:'unavailable',title:'当前来源未开放正文保存',message:'目录不等于正文。已有内容仍可阅读或导出，来源权限和支持范围保持不变。',action:book.saved_chapters?'阅读已保存正文':'查看支持说明',tab:book.saved_chapters?'read':'save'};
   const latest=own[0];
   if(publicAccessLimited(latest,mode))return {kind:'limited',title:'本次范围的网页可读章节已保存',message:'本次范围中其余章节在官网网页受限，反复继续不会补齐。'+(book.source==='fanqie-web'?'可以在下方导入你已有的同书完整 TXT。':'可先阅读或导出已保存正文，之后检查官网目录更新。'),action:'查看补齐方式',tab:'save',job:latest};
@@ -32,9 +32,9 @@ export function workbenchStatus(book:Book,jobs:readonly Job[],mode:SaveMode):Wor
 }
 
 export const exportFormatKey='opennovel.ui.export-format';
-export function preferredExportFormat(storage:Pick<Storage,'getItem'>):'txt'|'epub' {
-  try{return storage.getItem(exportFormatKey)==='epub'?'epub':'txt';}catch{return 'txt';}
+export function preferredExportFormat(storage:Pick<Storage,'getItem'>):'txt'|'epub'|'docx' {
+  try{const value=storage.getItem(exportFormatKey);return value==='epub'||value==='docx'?value:'txt';}catch{return 'txt';}
 }
-export function rememberExportFormat(storage:Pick<Storage,'setItem'>,format:'txt'|'epub'):boolean {
+export function rememberExportFormat(storage:Pick<Storage,'setItem'>,format:'txt'|'epub'|'docx'):boolean {
   try{storage.setItem(exportFormatKey,format);return true;}catch{return false;}
 }

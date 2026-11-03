@@ -8,7 +8,7 @@ async function load(){const owner=props.bookId;const ticket=++sequence;destinati
 async function change(mode:'choose'|'typed'|'reset'){
   if(busy.value)return;const owner=props.bookId;const ticket=++sequence;busy.value=true;error.value='';notice.value='';
   try{const value=mode==='choose'?await chooseBookExportDirectory(owner):await setBookExportDirectory(owner,mode==='reset'?null:draft.value.trim());
-    if(!disposed&&owner===props.bookId&&ticket===sequence&&value){destination.value=value;draft.value=value.directory;notice.value='已记住本书保存位置。TXT 会从本地正文重新生成；旧文件保留，之后的导出使用此目录。';}
+    if(!disposed&&owner===props.bookId&&ticket===sequence&&value){destination.value=value;draft.value=value.directory;notice.value='已记住本书保存位置。文件会按原范围和格式从本地正文重新生成；旧文件保留，之后的导出使用此目录。';}
   }catch(e){if(!disposed&&owner===props.bookId&&ticket===sequence)error.value=String(e);}finally{busy.value=false;}
 }
 watch(()=>props.bookId,()=>{void load();});onMounted(()=>{void load();});onUnmounted(()=>{disposed=true;sequence++;});
@@ -17,7 +17,7 @@ watch(()=>props.bookId,()=>{void load();});onMounted(()=>{void load();});onUnmou
   <section class="export-location-setting" aria-label="本书保存位置">
     <div class="location-heading"><strong>本书保存位置</strong><button :disabled="busy" @click="change('choose')">{{ busy?'正在处理…':'选择文件夹' }}</button></div>
     <code v-if="destination">{{ destination.directory }}</code><p v-else-if="!error">正在读取保存位置…</p>
-    <p v-if="destination" class="filename-preview">文件名：{{ destination.filename }}<br>TXT 和 EPUB 都包含作品信息与简介；同名旧版本保留并追加编号。</p>
+    <p v-if="destination" class="filename-preview">文件名：{{ destination.filename }}<br>TXT、Word 和 EPUB 都包含作品信息与简介；同名旧版本保留并追加编号。</p>
     <details><summary>输入文件夹路径或恢复默认位置</summary><form @submit.prevent="change('typed')"><label>文件夹完整路径<input v-model="draft" :disabled="busy" placeholder="填写已存在的文件夹完整路径" /></label><button :disabled="busy||!draft.trim()">应用并记住</button><button type="button" :disabled="busy||!destination?.custom" @click="change('reset')">恢复本书默认目录</button></form></details>
     <p v-if="error" role="alert">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
   </section>

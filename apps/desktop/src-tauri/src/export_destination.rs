@@ -157,16 +157,29 @@ mod tests {
         );
         let root = tempfile::tempdir().unwrap();
         let default = root.path().join("exports");
-        preflight(Some(&SaveDestination { directory: None }), &default).unwrap();
+        preflight(
+            Some(&SaveDestination {
+                directory: None,
+                ..Default::default()
+            }),
+            &default,
+        )
+        .unwrap();
         assert!(default.is_dir());
         assert_eq!(std::fs::read_dir(&default).unwrap().count(), 0);
         let occupied = root.path().join("file");
         std::fs::write(&occupied, "original").unwrap();
         assert!(
-            preflight(Some(&SaveDestination { directory: None }), &occupied)
-                .unwrap_err()
-                .to_string()
-                .contains("请先选择其他文件夹")
+            preflight(
+                Some(&SaveDestination {
+                    directory: None,
+                    ..Default::default()
+                }),
+                &occupied
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("请先选择其他文件夹")
         );
         let custom = root.path().join("chosen");
         std::fs::create_dir(&custom).unwrap();
@@ -174,6 +187,7 @@ mod tests {
         preflight(
             Some(&SaveDestination {
                 directory: Some(custom.clone()),
+                ..Default::default()
             }),
             &occupied,
         )

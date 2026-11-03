@@ -254,7 +254,7 @@ fn migration_backs_up_v1_book_content_before_upgrading() {
     drop(library);
     let db = rusqlite::Connection::open(&path).unwrap();
     db.execute_batch(
-        "DROP TABLE export_directories; DROP TABLE accounts; DROP TABLE job_history; DROP TABLE history_chapters; DROP TABLE catalog_history; DROP TABLE content_blobs; DROP TABLE batch_items; DROP TABLE batches; DROP TABLE book_preferences; DROP TABLE exports; DROP TABLE source_catalogs; DROP INDEX job_items_pending; ALTER TABLE job_items DROP COLUMN error; ALTER TABLE job_items DROP COLUMN error_kind; PRAGMA user_version=1;",
+        "DROP TABLE automatic_exports; DROP TABLE export_directories; DROP TABLE accounts; DROP TABLE job_history; DROP TABLE history_chapters; DROP TABLE catalog_history; DROP TABLE content_blobs; DROP TABLE batch_items; DROP TABLE batches; DROP TABLE book_preferences; DROP TABLE exports; DROP TABLE source_catalogs; DROP INDEX job_items_pending; ALTER TABLE job_items DROP COLUMN error; ALTER TABLE job_items DROP COLUMN error_kind; PRAGMA user_version=1;",
     )
     .unwrap();
     drop(db);
@@ -578,7 +578,7 @@ fn migration_from_v2_preserves_jobs_and_creates_a_readable_original_backup() {
         .unwrap();
     drop(library);
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.execute_batch("DROP TABLE export_directories; DROP TABLE accounts; DROP TABLE job_history; DROP TABLE history_chapters; DROP TABLE catalog_history; DROP TABLE content_blobs; DROP TABLE batch_items; DROP TABLE batches; DROP TABLE book_preferences; DROP TABLE exports; ALTER TABLE job_items DROP COLUMN error; ALTER TABLE job_items DROP COLUMN error_kind; PRAGMA user_version=2;").unwrap();
+    db.execute_batch("DROP TABLE automatic_exports; DROP TABLE export_directories; DROP TABLE accounts; DROP TABLE job_history; DROP TABLE history_chapters; DROP TABLE catalog_history; DROP TABLE content_blobs; DROP TABLE batch_items; DROP TABLE batches; DROP TABLE book_preferences; DROP TABLE exports; ALTER TABLE job_items DROP COLUMN error; ALTER TABLE job_items DROP COLUMN error_kind; PRAGMA user_version=2;").unwrap();
     drop(db);
     let library = Library::open(&path).unwrap();
     let detail = library.job_details(&id).unwrap();

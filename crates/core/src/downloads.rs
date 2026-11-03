@@ -204,7 +204,7 @@ impl Library {
             transaction.execute("UPDATE batch_items SET job_id=?3,state='running',error=NULL WHERE batch_id=?1 AND position=?2",params![batch_id,position,job_id])?;
         }
         if let Some(destination) = destination {
-            destination.persist(&transaction, &book_id)?;
+            destination.persist_for_job(&transaction, &book_id, &job_id)?;
         }
         transaction.commit()?;
         Ok(job_id)

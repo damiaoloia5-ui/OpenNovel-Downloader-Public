@@ -79,7 +79,8 @@ impl AutoTxtService {
                                     continue;
                                 }
                             };
-                            let signature = serde_json::to_string(&(book, own, &destination))
+                            let plan = library.automatic_export_plan(&book.id).ok();
+                            let signature = serde_json::to_string(&(book, own, &destination, plan))
                                 .unwrap_or_default();
                             if !forced.remove(&book.id)
                                 && observed.get(&book.id) == Some(&signature)
@@ -108,13 +109,13 @@ impl AutoTxtService {
     pub fn request(&self, book: &str) -> Result<(), String> {
         self.sender
             .send(book.into())
-            .map_err(|_| "自动 TXT 后台已停止，请重新打开软件".into())
+            .map_err(|_| "自动导出 后台已停止，请重新打开软件".into())
     }
     pub fn snapshot(&self) -> Result<Vec<AutoTxtStatus>, String> {
         Ok(self
             .statuses
             .lock()
-            .map_err(|_| "自动 TXT 状态不可用")?
+            .map_err(|_| "自动导出 状态不可用")?
             .values()
             .cloned()
             .collect())
@@ -151,7 +152,7 @@ fn process(
         error: None,
     };
     set(statuses, status.clone());
-    match library.export_automatic_txt(book, directory) {
+    match library.export_automatic(book, directory) {
         Ok(receipt) => {
             status.export_id = library.export_record_id(book, &receipt.path).ok();
             status.receipt = Some(receipt);
@@ -182,7 +183,7 @@ pub fn retry_automatic_txt(
         .map_err(|e| e.to_string())?
         .book;
     if book.saved_chapters == 0 {
-        return Err("尚无正文，无法生成 TXT".into());
+        return Err("尚无正文，无法生成文件".into());
     }
     state.auto_txt.request(&book_id)
 }

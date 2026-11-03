@@ -7,6 +7,7 @@ use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 pub enum ExportFormat {
     Txt,
     Epub,
+    Docx,
 }
 
 impl ExportFormat {
@@ -14,12 +15,41 @@ impl ExportFormat {
         match value {
             "txt" => Ok(Self::Txt),
             "epub" => Ok(Self::Epub),
-            _ => Err(Error::Invalid("导出格式必须为 txt 或 epub".into())),
+            "docx" => Ok(Self::Docx),
+            _ => Err(Error::Invalid("导出格式必须为 txt、epub 或 docx".into())),
         }
     }
 }
 
 impl Library {
+    /// Generate the persisted format and scope, independently of the UI lifetime.
+    pub fn export_automatic(
+        &self,
+        book_id: &str,
+        directory: impl AsRef<Path>,
+    ) -> Result<ExportReceipt> {
+        let plan = self.automatic_export_plan(book_id)?;
+        let format = ExportFormat::parse(&plan.format)?;
+        let content = if let Some(job) = &plan.job_id {
+            self.job_content(job)?
+        } else {
+            self.content(book_id)?
+        };
+        let directory = directory.as_ref();
+        std::fs::create_dir_all(directory)?;
+        let digest = match format {
+            ExportFormat::Txt => txt_digest(&content)?,
+            _ => file_digest(render_file(directory, &content, format)?.path())?,
+        };
+        self.persist_export_inner(
+            book_id,
+            plan.job_id.as_deref(),
+            content,
+            directory,
+            format,
+            Some(&digest),
+        )
+    }
     /// Generate a TXT snapshot without overwriting any previous or edited file.
     /// Repeated calls repair a missing file/record and reuse identical bytes.
     pub fn export_automatic_txt(
@@ -54,6 +84,42 @@ impl Library {
         directory: impl AsRef<Path>,
         format: ExportFormat,
     ) -> Result<ExportReceipt> {
+        let content = self.job_content(job_id)?;
+        let book_id = self.job(job_id)?.book_id;
+        self.persist_export(&book_id, Some(job_id), content, directory.as_ref(), format)
+    }
+
+    pub fn export_selected(
+        &self,
+        book_id: &str,
+        selection: &str,
+        directory: impl AsRef<Path>,
+        format: ExportFormat,
+    ) -> Result<ExportReceipt> {
+        let details = self.book_details(book_id)?;
+        let positions = crate::parse_selection(selection, details.book.total_chapters as usize)?;
+        let positions: std::collections::HashSet<_> = positions.into_iter().collect();
+        let ids: std::collections::HashSet<_> = details
+            .chapters
+            .iter()
+            .filter(|c| positions.contains(&(c.position as usize)))
+            .map(|c| c.id.as_str())
+            .collect();
+        let mut content = self.content(book_id)?;
+        content.chapters.retain(|c| ids.contains(c.id.as_str()));
+        if content.chapters.is_empty() {
+            return Err(Error::Conflict("所选范围尚无已保存正文".into()));
+        }
+        content
+            .summary
+            .title
+            .push_str(&format!("（目录序号 {selection}）"));
+        content.summary.saved_chapters = content.chapters.len() as u32;
+        content.summary.total_chapters = positions.len() as u32;
+        self.persist_export(book_id, None, content, directory.as_ref(), format)
+    }
+
+    fn job_content(&self, job_id: &str) -> Result<BookContent> {
         let job = self.job(job_id)?;
         let mut content = if let Some(id) = self.job_history_id(job_id)? {
             self.historical_content(&id)?
@@ -78,13 +144,7 @@ impl Library {
             [job_id],
             |r| r.get(0),
         )?;
-        self.persist_export(
-            &job.book_id,
-            Some(job_id),
-            content,
-            directory.as_ref(),
-            format,
-        )
+        Ok(content)
     }
 
     pub(crate) fn persist_export(
@@ -118,6 +178,7 @@ impl Library {
         let extension = match format {
             ExportFormat::Txt => "txt",
             ExportFormat::Epub => "epub",
+            ExportFormat::Docx => "docx",
         };
         let automatic = automatic_digest.is_some();
         let mut temporary = None;
@@ -141,7 +202,7 @@ impl Library {
                 }
                 if file_digest(&path)? != digest {
                     return Err(Error::Conflict(
-                        "自动 TXT 的目标文件已被修改，已保留；请先移走该文件或选择其他文件夹再重试"
+                        "自动导出的目标文件已被修改，已保留；请先移走该文件或选择其他文件夹再重试"
                             .into(),
                     ));
                 }
@@ -239,6 +300,7 @@ fn render_file(
     match format {
         ExportFormat::Txt => write_txt(&mut file, content)?,
         ExportFormat::Epub => write_epub(file.as_file_mut(), content)?,
+        ExportFormat::Docx => crate::docx::write_docx(file.as_file_mut(), content)?,
     }
     file.as_file_mut().flush()?;
     file.as_file().sync_all()?;

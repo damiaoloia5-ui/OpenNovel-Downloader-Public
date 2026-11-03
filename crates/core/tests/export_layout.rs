@@ -52,6 +52,7 @@ fn initial_folder_is_committed_before_download_and_survives_reopening() {
     let l = Library::open(&db).unwrap();
     let destination = opennovel_core::SaveDestination {
         directory: Some(chosen.clone()),
+        ..Default::default()
     };
     let job = l
         .create_download_selected_with_destination(
@@ -85,7 +86,10 @@ fn initial_folder_is_committed_before_download_and_survives_reopening() {
     l.create_download_selected_with_destination(
         &catalog("10000000009"),
         &[1],
-        Some(&opennovel_core::SaveDestination { directory: None }),
+        Some(&opennovel_core::SaveDestination {
+            directory: None,
+            ..Default::default()
+        }),
     )
     .unwrap();
     assert!(!l.export_destination(&book, d.path()).unwrap().custom);
@@ -98,6 +102,7 @@ fn invalid_folder_or_failed_preference_write_leaves_no_book_or_job() {
     let l = Library::open(&db).unwrap();
     let bad = opennovel_core::SaveDestination {
         directory: Some(d.path().join("missing")),
+        ..Default::default()
     };
     let original = include_str!("../../../examples/local-book.json");
     assert!(
@@ -110,6 +115,7 @@ fn invalid_folder_or_failed_preference_write_leaves_no_book_or_job() {
     );
     let custom = opennovel_core::SaveDestination {
         directory: Some(d.path().to_path_buf()),
+        ..Default::default()
     };
     // Simulate failure at the last DB write, not just preflight validation.
     let external = rusqlite::Connection::open(&db).unwrap();
@@ -141,6 +147,7 @@ fn local_engine_preserves_channel_rules_with_an_initial_folder() {
     let l = Library::open(d.path().join("library.db")).unwrap();
     let custom = opennovel_core::SaveDestination {
         directory: Some(d.path().to_path_buf()),
+        ..Default::default()
     };
     let mut c = catalog("10000000007");
     assert!(
@@ -265,10 +272,10 @@ fn schema_eight_upgrade_keeps_original_backup_and_restore_resets_external_direct
     let book = imported(&l, "10000000001");
     drop(l);
     let conn = rusqlite::Connection::open(&db).unwrap();
-    conn.execute_batch("DROP INDEX exports_content; ALTER TABLE exports DROP COLUMN content_hash; ALTER TABLE exports DROP COLUMN automatic; DROP TABLE export_directories; PRAGMA user_version=8;").unwrap();
+    conn.execute_batch("DROP INDEX exports_content; ALTER TABLE exports DROP COLUMN content_hash; ALTER TABLE exports DROP COLUMN automatic; DROP TABLE automatic_exports; DROP TABLE export_directories; PRAGMA user_version=8;").unwrap();
     drop(conn);
     let l = Library::open(&db).unwrap();
-    assert_eq!(l.diagnostics().unwrap().schema, 10);
+    assert_eq!(l.diagnostics().unwrap().schema, 11);
     let backup = std::fs::read_dir(d.path())
         .unwrap()
         .map(Result::unwrap)

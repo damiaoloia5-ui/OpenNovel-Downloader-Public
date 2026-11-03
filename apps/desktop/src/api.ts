@@ -46,7 +46,7 @@ export function refreshBookChapter(bookId:string,chapterId:string):Promise<{chan
 export function bookHistory(bookId:string):Promise<HistoryEntry[]> {return invoke('book_history',{bookId});}
 export function historyDetails(id:string):Promise<BookDetails> {return invoke('history_details',{id});}
 export function readHistory(id:string,chapterId:string):Promise<ChapterContent> {return invoke('read_history',{id,chapterId});}
-export function exportHistory(id:string,format:'txt'|'epub'):Promise<Receipt> {return invoke('export_history',{id,format});}
+export function exportHistory(id:string,format:'txt'|'epub'|'docx'):Promise<Receipt> {return invoke('export_history',{id,format});}
 export function sourceCapabilities():Promise<SourceInfo[]> {return invoke('source_capabilities');}
 export type LocalEngineIssue='component_unavailable'|'docker_missing'|'docker_unavailable'|'docker_windows_mode'|'images_missing'|'engine_missing'|'source_changed'|'offline_bundle_pending'|'offline_bundle_invalid'|'offline_import_failed'|'native_bundle_invalid'|'native_sandbox_failed'|'check_failed';
 export interface LocalEngineStatus {enabled:boolean;ready:boolean;remembered?:boolean;installed?:boolean;message:string;issue?:LocalEngineIssue|null;next_step?:string}
@@ -60,10 +60,10 @@ export interface BookDetails {book:Book;description:string;acquired_at:string;ch
 export interface Receipt { path: string; saved_chapters: number; total_chapters: number; partial: boolean }
 export interface AutoTxtStatus {book_id:string;state:string;receipt:Receipt|null;export_id:string|null;error:string|null}
 export function automaticTxtSnapshot():Promise<AutoTxtStatus[]> {return invoke('automatic_txt_snapshot');}
-export interface SaveDestination {directory:string|null}
+export interface SaveDestination {directory:string|null;format?:string;selection_only?:boolean}
 export function defaultExportRoot():Promise<string> {return invoke('default_export_root');}
 export function chooseSaveDirectory(current:string|null):Promise<string|null> {return invoke('choose_save_directory',{current});}
-export interface ExportDestination {directory:string;custom:boolean;filename:string}
+export interface ExportDestination {directory:string;custom:boolean;filename:string;format?:string}
 export function bookExportDestination(bookId:string):Promise<ExportDestination> {return invoke('book_export_destination',{bookId});}
 export function chooseBookExportDirectory(bookId:string):Promise<ExportDestination|null> {return invoke('choose_book_export_directory',{bookId});}
 export function setBookExportDirectory(bookId:string,directory:string|null):Promise<ExportDestination> {return invoke('set_book_export_directory',{bookId,directory});}
@@ -86,7 +86,7 @@ export function inspectBook(input: string): Promise<Catalog> { return invoke('in
 export function downloadBook(input: string, first: number, last: number,selection?:string,destination?:SaveDestination): Promise<string> { return invoke('download_book', { input, first, last,selection:selection || null,destination:destination??null }); }
 export function bookDetails(bookId:string):Promise<BookDetails> {return invoke('book_details',{bookId});}
 export function readChapter(bookId:string,chapterId:string):Promise<ChapterContent> {return invoke('read_chapter',{bookId,chapterId});}
-export function exportJob(jobId:string,format:'txt'|'epub'):Promise<Receipt> {return invoke('export_job',{jobId,format});}
+export function exportJob(jobId:string,format:'txt'|'epub'|'docx'):Promise<Receipt> {return invoke('export_job',{jobId,format});}
 export function revealExport(id:string):Promise<void> {return invoke('reveal_export',{id});}
 export function pauseJob(jobId:string):Promise<void> {return invoke('pause_job',{jobId});}
 export function importBook(json: string,destination?:SaveDestination): Promise<string> { return invoke('import_book', { json,destination:destination??null }); }
@@ -98,8 +98,8 @@ export function jobDetails(jobId:string):Promise<JobDetails> {return invoke('job
 export function retryChapters(jobId:string,chapters:string[]):Promise<void> {return invoke('retry_chapters',{jobId,chapters});}
 export function updateBook(bookId:string):Promise<string> {return invoke('update_book',{bookId});}
 export function cancelJob(jobId: string): Promise<void> { return invoke('cancel_job', { jobId }); }
-export function exportBook(bookId: string, format: 'txt' | 'epub'): Promise<Receipt> {
-  return invoke('export_book', { bookId, format });
+export function exportBook(bookId: string, format: 'txt' | 'epub' | 'docx', selection?:string): Promise<Receipt> {
+  return invoke('export_book', { bookId, format, selection:selection||null });
 }
 
 export interface AccountRecord {id:string;platform:string;label:string}

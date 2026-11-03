@@ -5,14 +5,21 @@ use std::path::{Path, PathBuf};
 
 /// An omitted choice preserves an existing preference; directory=None explicitly
 /// selects the application's default. It is persisted in the task transaction.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SaveDestination {
     pub directory: Option<PathBuf>,
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub selection_only: bool,
 }
 
 impl SaveDestination {
     pub fn validate(&self) -> Result<()> {
+        if let Some(format) = &self.format {
+            crate::ExportFormat::parse(format)?;
+        }
         if let Some(directory) = &self.directory {
             if !directory.is_absolute() || !directory.is_dir() {
                 return Err(Error::Invalid(
@@ -33,6 +40,24 @@ impl SaveDestination {
         }
         Ok(())
     }
+
+    pub(crate) fn persist_for_job(
+        &self,
+        db: &rusqlite::Connection,
+        book_id: &str,
+        job_id: &str,
+    ) -> Result<()> {
+        self.persist(db, book_id)?;
+        let format = self.format.as_deref().unwrap_or("txt");
+        db.execute("INSERT INTO automatic_exports(book_id,format,job_id) VALUES (?1,?2,?3) ON CONFLICT(book_id) DO UPDATE SET format=excluded.format,job_id=excluded.job_id", rusqlite::params![book_id,format,self.selection_only.then_some(job_id)])?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct AutomaticExportPlan {
+    pub format: String,
+    pub job_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -40,6 +65,7 @@ pub struct ExportDestination {
     pub directory: String,
     pub custom: bool,
     pub filename: String,
+    pub format: String,
 }
 
 // Limit each part in UTF-16 units as well as removing Windows-invalid characters.
@@ -75,6 +101,25 @@ pub(crate) fn book_filename(book: &BookSummary) -> String {
 }
 
 impl Library {
+    pub fn automatic_export_plan(&self, book_id: &str) -> Result<AutomaticExportPlan> {
+        Ok(self
+            .connection()?
+            .query_row(
+                "SELECT format,job_id FROM automatic_exports WHERE book_id=?1",
+                [book_id],
+                |r| {
+                    Ok(AutomaticExportPlan {
+                        format: r.get(0)?,
+                        job_id: r.get(1)?,
+                    })
+                },
+            )
+            .optional()?
+            .unwrap_or(AutomaticExportPlan {
+                format: "txt".into(),
+                job_id: None,
+            }))
+    }
     pub fn export_destination(
         &self,
         book_id: &str,
@@ -94,12 +139,14 @@ impl Library {
         let directory = directory
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| default_root.as_ref().join(&filename));
+        let format = self.automatic_export_plan(book_id)?.format;
         Ok(ExportDestination {
             directory: std::path::absolute(directory)?
                 .to_string_lossy()
                 .into_owned(),
             custom,
-            filename: format!("{filename}.txt"),
+            filename: format!("{filename}.{format}"),
+            format,
         })
     }
 
@@ -107,6 +154,7 @@ impl Library {
         self.book_summary(book_id)?;
         let choice = SaveDestination {
             directory: directory.map(Path::to_path_buf),
+            ..Default::default()
         };
         choice.validate()?;
         let connection = self.connection()?;

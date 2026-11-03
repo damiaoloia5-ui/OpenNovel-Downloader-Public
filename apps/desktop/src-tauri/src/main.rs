@@ -811,6 +811,7 @@ fn pause_job(job_id: String, state: State<'_, AppState>) -> Result<(), String> {
 async fn export_book(
     book_id: String,
     format: String,
+    selection: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<ExportReceipt, String> {
     let format = ExportFormat::parse(&format).map_err(|error| error.to_string())?;
@@ -818,7 +819,12 @@ async fn export_book(
     let directory = state.exports.clone();
     blocking(move || {
         let output = library.export_destination(&book_id, directory)?;
-        library.export(&book_id, output.directory, format)
+        match selection {
+            Some(selection) => {
+                library.export_selected(&book_id, &selection, output.directory, format)
+            }
+            None => library.export(&book_id, output.directory, format),
+        }
     })
     .await
 }

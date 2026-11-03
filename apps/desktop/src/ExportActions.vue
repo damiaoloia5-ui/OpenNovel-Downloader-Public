@@ -1,18 +1,21 @@
 <script setup lang="ts">
 import {ref,watch} from 'vue';
+import SaveOptionsPanel from './SaveOptions.vue';
+import {defaultSaveOptions,resolveSaveRange,type SaveOptions} from './saveOptions';
 import {bookDetails,exportBook,revealExport,type ExportRecord,type Receipt} from './api';
 import {preferredExportFormat,rememberExportFormat} from './workbenchModel';
-const props=defineProps<{bookId:string;saved:number;total:number;title?:string}>();
+const props=defineProps<{bookId:string;saved:number;total:number;title?:string;initialOptions?:SaveOptions}>();
+const options=ref({...defaultSaveOptions(),...props.initialOptions});
 const emit=defineEmits<{exported:[]}>();
-let initialFormat:'txt'|'epub'='txt';try{initialFormat=preferredExportFormat(window.localStorage);}catch{ /* UI storage may be disabled. */ }
-const format=ref<'txt'|'epub'>(initialFormat);const busy=ref(false);const error=ref('');const receipt=ref<Receipt|null>(null);const record=ref<ExportRecord|null>(null);const remembered=ref(true);
-watch([()=>props.bookId,format],()=>{receipt.value=null;record.value=null;error.value='';});
+let initialFormat:'txt'|'epub'|'docx'='txt';try{initialFormat=preferredExportFormat(window.localStorage);}catch{ /* UI storage may be disabled. */ }
+const format=ref<'txt'|'epub'|'docx'>(props.initialOptions?.format||initialFormat);const busy=ref(false);const error=ref('');const receipt=ref<Receipt|null>(null);const record=ref<ExportRecord|null>(null);const remembered=ref(true);
+watch([()=>props.bookId,format,options],()=>{receipt.value=null;record.value=null;error.value='';});
 watch(format,value=>{try{remembered.value=rememberExportFormat(window.localStorage,value);}catch{remembered.value=false;}});
 async function save(){
   if(busy.value||!props.saved)return;
   const id=props.bookId;busy.value=true;error.value='';receipt.value=null;record.value=null;
   try {
-    const result=await exportBook(id,format.value);
+    const result=await exportBook(id,format.value,resolveSaveRange(options.value,props.total));
     if(id!==props.bookId)return;
     receipt.value=result;emit('exported');
     try {const details=await bookDetails(id);if(id===props.bookId)record.value=details.exports.find(r=>r.path===result.path)??null;} catch { /* A saved file remains valid if the record refresh fails. */ }
@@ -28,7 +31,7 @@ async function openFolder(){if(!record.value||busy.value)return;busy.value=true;
   <section class="export-actions" aria-label="导出本地文件">
     <h3>{{ title||'导出到电脑' }}</h3>
     <p>{{ saved?`已保存 ${saved}/${total} 章，可以导出。`:'先保存至少一章正文，才能生成文件。' }}<span v-if="saved&&saved<total"> 尚有缺章，文件会明确标注。</span></p>
-    <div class="export-controls"><label>文件格式<select v-model="format" :disabled="busy"><option value="txt">TXT · 普通文本，推荐</option><option value="epub">EPUB · 电子书阅读器</option></select></label><button class="primary" :disabled="busy||!saved" @click="save">{{ busy?'正在处理…':'导出文件' }}</button></div>
+    <SaveOptionsPanel v-model="options" :total="total" :disabled="busy" hide-format /><div class="export-controls"><label>文件格式<select v-model="format" :disabled="busy"><option value="txt">TXT · 普通文本，推荐</option><option value="docx">Word · 宋体排版文档</option><option value="epub">EPUB · 电子书阅读器</option></select></label><button class="primary" :disabled="busy||!saved" @click="save">{{ busy?'正在处理…':'导出文件' }}</button></div>
     <p>{{ remembered?'会记住上次选择的文件格式。':'本次格式已生效，系统未允许记住偏好。' }} 使用上方“本书保存位置”，可为不同作品选择不同文件夹。文件包含作品信息与简介。</p>
     <div v-if="receipt" class="export-result" role="status"><strong>文件已生成</strong><p>{{ receipt.saved_chapters }}/{{ receipt.total_chapters }} 章{{ receipt.partial?'（部分内容）':'' }}</p><code>{{ receipt.path }}</code></div>
     <p v-if="error" class="message failure" role="alert">{{ error }}</p>

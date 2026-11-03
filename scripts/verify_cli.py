@@ -4,6 +4,7 @@ import json
 import pathlib
 import subprocess
 import zipfile
+import xml.etree.ElementTree as ET
 
 
 def main():
@@ -34,7 +35,7 @@ def main():
     if job['state'] != 'completed' or job['saved'] != 2 or job['total'] != 2:
         raise ValueError('original CLI import incomplete')
     receipts = {}
-    for fmt in ['txt', 'epub']:
+    for fmt in ['txt', 'epub', 'docx']:
         receipt = command('export', job['book_id'], '--format', fmt, '--output', str(root / 'exports'))
         if receipt['partial'] or receipt['saved_chapters'] != 2 or receipt['total_chapters'] != 2:
             raise ValueError('original CLI export incomplete')
@@ -47,7 +48,16 @@ def main():
             raise ValueError('original CLI EPUB integrity mismatch')
         if not {'EPUB/package.opf', 'EPUB/nav.xhtml', 'META-INF/container.xml'} <= set(archive.namelist()):
             raise ValueError('original CLI EPUB structure missing')
+    with zipfile.ZipFile(receipts['docx']['path']) as archive:
+        if archive.testzip() is not None:
+            raise ValueError('original CLI Word integrity mismatch')
+        for name in archive.namelist():
+            ET.fromstring(archive.read(name))
+        document = archive.read('word/document.xml').decode('utf-8')
+        if '清晨的阳光落在书架上' not in document or '雨停之后' not in document:
+            raise ValueError('original CLI Word body mismatch')
     report = {'version': args.version, 'passed': True, 'original_chapters': 2,
+              'docx_zip_xml_body_checked': True,
               'txt_body_checked': True, 'epub_zip_checked': True, 'receipts': receipts,
               'real_platform_requested': False, 'user_library_opened': False,
               'epubcheck_executed': False}

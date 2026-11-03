@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type {SaveOptions} from './saveOptions';
 import NovelReader from './NovelReader.vue';
 import {computed,nextTick,onMounted,onUnmounted,ref,watch} from 'vue';
 import AccountPanel from './AccountPanel.vue';
@@ -12,7 +13,7 @@ import {bookDetails,readChapter,jobDetails,pauseJob,resumeJob,cancelJob,updateBo
 import {saveMode,workbenchStatus,publicAccessLimited,type WorkbenchTab} from './workbenchModel';
 import {saveRecovery,sessionBookLink,isSessionSource} from './workflow';
 
-const props=defineProps<{bookId:string;initialTab?:WorkbenchTab;accountId?:string;sources:SourceInfo[];jobs:Job[];summary?:Book;preference?:BookPreferences;automatic?:AutoTxtStatus}>();
+const props=defineProps<{bookId:string;initialTab?:WorkbenchTab;initialOptions?:SaveOptions;accountId?:string;sources:SourceInfo[];jobs:Job[];summary?:Book;preference?:BookPreferences;automatic?:AutoTxtStatus}>();
 const emit=defineEmits<{changed:[];back:[];tasks:[];help:[];engine:[input:string];account:[input:string]}>();
 const tab=ref<WorkbenchTab>(props.initialTab||'save');
 const selectedAccount=ref(props.accountId||'');
@@ -118,10 +119,10 @@ onUnmounted(()=>{disposed=true;loadSequence++;readSequence++;jobSequence++;});
           <details class="workspace-advanced"><summary>整理作品、目录变更与历史版本</summary><div class="tag-editor"><label>标签（逗号分隔）<input v-model="tags" :disabled="busy" placeholder="例如 收藏，连载" @input="tagsDirty=true" /></label><button :disabled="busy" @click="organize(!!preference?.archived)">保存标签</button><button :disabled="busy" @click="organize(!preference?.archived)">{{ preference?.archived?'移回书架':'归档作品' }}</button></div><RevisionPanel :book-id="book.id" :chapter-id="reader?.id||null" :online="mode==='public'" @changed="revised" /></details>
         </template>
         <template v-else-if="tab==='save'">
-          <AccountPanel v-if="mode==='account'" :book-id="book.id" :account-id="selectedAccount" embedded @selected="selectedAccount=$event" @saved="accountSaved" @ready="accountSaved" @read="readSaved" />
+          <AccountPanel v-if="mode==='account'" :initial-options="initialOptions" :book-id="book.id" :account-id="selectedAccount" embedded @selected="selectedAccount=$event" @saved="accountSaved" @ready="accountSaved" @read="readSaved" />
           <template v-else>
             <h2>{{ mode==='local'?'本地导入进度':'保存本书正文' }}</h2>
-            <p v-if="mode==='public'">{{ active?'保存正在进行，完成后会自动生成 TXT。':book.saved_chapters===book.total_chapters?'正文已保存，不需要再次下载。上方可以打开 TXT 文件夹。':limited?recovery:'点击下方按钮继续保存，已有正文会自动跳过。' }}</p>
+            <p v-if="mode==='public'">{{ active?'保存正在进行，完成后会按所选格式自动生成文件。':book.saved_chapters===book.total_chapters?'正文已保存，不需要再次下载。上方可以打开文件夹。':limited?recovery:'点击下方按钮继续保存，已有正文会自动跳过。' }}</p>
             <p v-else-if="mode==='unavailable'">{{ source?.note||'这个来源尚未开放正文保存。已有文字仍可离线阅读和导出。' }}</p>
             <p v-else>原始 JSON 中的章节通过持久任务导入。本地作品不能从官网补齐。</p>
             <button v-if="mode==='public'&&!pending&&!recoverable&&!limited&&book.saved_chapters<book.total_chapters" class="primary" :disabled="busy||pending" @click="fillMissing">检查目录并保存缺章</button>
@@ -141,7 +142,7 @@ onUnmounted(()=>{disposed=true;loadSequence++;readSequence++;jobSequence++;});
           <div v-else class="reader-layout"><div class="reader-directory"><label>查找章节<input v-model="search" type="search" placeholder="序号或章节标题" /></label><label class="saved-filter"><input v-model="onlySaved" type="checkbox" />只看已保存章节</label><ol><li v-for="chapter in visibleChapters" :key="chapter.id"><button :disabled="busy||!chapter.saved" :aria-current="reader?.id===chapter.id?'true':undefined" @click="openChapter(chapter.id)">{{ chapter.position }} · {{ chapter.title }}{{ chapter.saved?'':'（未保存）' }}</button></li></ol><p v-if="!chapters.length">没有符合条件的章节。</p><div class="detail-pagination"><button :disabled="readerPage<=1" @click="readerPage--">上一页</button><span>{{ readerPage }}/{{ readerPages }}</span><button :disabled="readerPage>=readerPages" @click="readerPage++">下一页</button></div></div><NovelReader v-if="reader" :chapter="reader" :book-title="detail?.book.title"><div class="detail-pagination"><button :disabled="busy||readIndex<=0" @click="openChapter(savedChapters[readIndex-1]!.id)">上一章</button><button :disabled="busy||readIndex<0||readIndex>=savedChapters.length-1" @click="openChapter(savedChapters[readIndex+1]!.id)">下一章</button></div></NovelReader><div v-else class="reader-empty"><h3>从一章开始阅读</h3><p>从目录选择已保存章节，正文会按小说格式排版。切换页签会保留当前章节。</p></div></div>
         </template>
         <template v-else>
-          <ExportActions :book-id="book.id" :saved="book.saved_chapters" :total="book.total_chapters" @exported="exported" />
+          <ExportActions :initial-options="initialOptions" :book-id="book.id" :saved="book.saved_chapters" :total="book.total_chapters" @exported="exported" />
           <h3>本书导出记录</h3><p>记录标明导出时的范围与时间，同章数不保证内容版本相同。旧文件不会覆盖。</p><p v-if="!detail.exports.length">还没有导出记录，先在上方导出已保存内容。</p><ul class="export-history"><li v-for="record in detail.exports" :key="record.id"><span>{{ record.job_id?'任务选章':'书库内容' }} · {{ record.format.toUpperCase() }} · {{ record.saved }}/{{ record.total }} 章 · {{ record.created_at }} UTC</span><code>{{ record.path }}</code><button :disabled="busy" @click="action(()=>revealExport(record.id))">打开此导出文件夹</button></li></ul>
         </template>
       </section>

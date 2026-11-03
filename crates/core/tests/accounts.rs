@@ -149,7 +149,7 @@ fn legacy_account_constraint_migrates_with_verified_backup_and_preserves_content
     let before = serde_json::to_value(l.snapshot().unwrap()).unwrap();
     drop(l);
     let conn = rusqlite::Connection::open(&db).unwrap();
-    conn.execute_batch("ALTER TABLE accounts RENAME TO accounts_fixture; CREATE TABLE accounts(id TEXT PRIMARY KEY,platform TEXT NOT NULL CHECK(platform IN ('qidian','shuqi')),label TEXT NOT NULL); INSERT INTO accounts SELECT * FROM accounts_fixture; DROP TABLE accounts_fixture; PRAGMA user_version=9;").unwrap();
+    conn.execute_batch("DROP TABLE automatic_exports; ALTER TABLE accounts RENAME TO accounts_fixture; CREATE TABLE accounts(id TEXT PRIMARY KEY,platform TEXT NOT NULL CHECK(platform IN ('qidian','shuqi')),label TEXT NOT NULL); INSERT INTO accounts SELECT * FROM accounts_fixture; DROP TABLE accounts_fixture; PRAGMA user_version=9;").unwrap();
     drop(conn);
     let l = Library::open(&db).unwrap();
     assert_eq!(l.account(&account.id).unwrap(), account);

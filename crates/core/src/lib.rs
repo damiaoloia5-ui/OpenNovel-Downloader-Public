@@ -5,6 +5,7 @@ mod browser_sources;
 pub use browser_sources::{
     clean_session_url, session_chapter_url, session_platform, session_source,
 };
+mod docx;
 mod domain;
 mod downloads;
 mod export;
@@ -25,7 +26,7 @@ pub use accounts::{
 pub use batch::{BatchItem, BatchSnapshot, MAX_BATCH_ITEMS};
 pub use domain::*;
 pub use export::ExportFormat;
-pub use export_settings::{ExportDestination, SaveDestination};
+pub use export_settings::{AutomaticExportPlan, ExportDestination, SaveDestination};
 pub use maintenance::{BackupManifest, BookPreferences, DiagnosticReport};
 pub use official_reader::{
     OfficialPage, official_book_link, official_login_url, official_page_url, official_platform_name,
@@ -63,7 +64,7 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("JSON 格式错误：{0}")]
     Json(#[from] serde_json::Error),
-    #[error("EPUB 文件错误：{0}")]
+    #[error("电子书文件错误：{0}")]
     Zip(#[from] zip::result::ZipError),
 }
 

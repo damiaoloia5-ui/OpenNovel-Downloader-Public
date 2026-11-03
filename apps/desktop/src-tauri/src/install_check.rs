@@ -14,6 +14,7 @@ fn local_roundtrip(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     std::fs::create_dir(&chosen)?;
     let destination = opennovel_core::SaveDestination {
         directory: Some(chosen.clone()),
+        ..Default::default()
     };
     crate::export_destination::preflight(Some(&destination), &root.join("sample-exports"))?;
     let job = library.create_import_with_destination(
@@ -74,6 +75,62 @@ fn local_roundtrip(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     }
 }
 
+fn word_roundtrip(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let library = Arc::new(Library::open(root.join("word-library.db"))?);
+    let folder = root.join("chosen-word-folder");
+    std::fs::create_dir(&folder)?;
+    let destination = opennovel_core::SaveDestination {
+        directory: Some(folder.clone()),
+        format: Some("docx".into()),
+        selection_only: false,
+    };
+    let job = library.create_import_with_destination(
+        include_str!("../../../../examples/local-book.json"),
+        Some(&destination),
+    )?;
+    let book = library.run_import(&job, &AtomicBool::new(false))?.book_id;
+    let service = AutoTxtService::start(Arc::clone(&library), root.join("unused-word-default"))?;
+    let until = Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Some(status) = service.snapshot()?.into_iter().find(|s| s.book_id == book) {
+            if status.state == "failed" {
+                return Err(status.error.unwrap_or_default().into());
+            }
+            if let Some(receipt) = status.receipt
+                && status.state == "ready"
+            {
+                let path = PathBuf::from(receipt.path);
+                if path.extension().is_none_or(|e| e != "docx")
+                    || path.parent() != Some(folder.as_path())
+                    || receipt.saved_chapters != 2
+                    || receipt.partial
+                    || !std::fs::read(&path)?.starts_with(b"PK\x03\x04")
+                {
+                    return Err("原创 Word 自动导出检查失败".into());
+                }
+                let selected = library.export_selected(
+                    &book,
+                    "2",
+                    &folder,
+                    opennovel_core::ExportFormat::Docx,
+                )?;
+                if selected.saved_chapters != 1
+                    || selected.total_chapters != 1
+                    || selected.partial
+                    || library.book_summary(&book)?.saved_chapters != 2
+                {
+                    return Err("Word 选章范围检查失败".into());
+                }
+                return Ok(path);
+            }
+        }
+        if Instant::now() > until {
+            return Err("Word 自动导出检查超时".into());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 pub fn run(output: &Path) -> Result<bool, Box<dyn std::error::Error>> {
     if !output.is_absolute() {
         return Err("检查输出目录必须是绝对路径".into());
@@ -83,18 +140,21 @@ pub fn run(output: &Path) -> Result<bool, Box<dyn std::error::Error>> {
     std::fs::create_dir(&root)?;
     let webview = tauri::webview_version().map_err(|e| e.to_string());
     let local = local_roundtrip(&root).map_err(|e| e.to_string());
+    let word = word_roundtrip(&root).map_err(|e| e.to_string());
     #[cfg(windows)]
     let folder_dialog = crate::folder_dialog::check(&root);
     #[cfg(not(windows))]
     let folder_dialog: Result<(), String> = Ok(());
     // Optional readiness only: no enabling, chapter requests, image pulls or installation.
     let engine = EngineControl::default().status();
-    let passed = webview.is_ok() && local.is_ok() && folder_dialog.is_ok();
+    let passed = webview.is_ok() && local.is_ok() && word.is_ok() && folder_dialog.is_ok();
     let report = json!({
         "schema_version": 1, "version": env!("CARGO_PKG_VERSION"),
         "required_checks_passed": passed,
         "webview": {"ready": webview.is_ok(), "result": webview},
         "original_sample_txt": {"ready": local.is_ok(), "result": local},
+        "original_sample_word": {"ready": word.is_ok(), "result": word},
+        "selected_word_range_checked": word.is_ok(),
         "deleted_sample_txt_recovered": local.is_ok(),
         "chosen_directory_and_simple_filename_checked": local.is_ok(),
         "directory_selected_before_save_checked": local.is_ok(),

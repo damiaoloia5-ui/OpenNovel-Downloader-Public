@@ -76,6 +76,7 @@ fn session_initial_destination_is_saved_before_any_body_and_invalid_choice_creat
     let book = l.register_session_catalog(&catalog()).unwrap();
     let invalid = opennovel_core::SaveDestination {
         directory: Some(d.path().join("missing")),
+        ..Default::default()
     };
     assert!(
         l.create_session_download_with_destination(&book, None, Some(&invalid))
@@ -84,6 +85,7 @@ fn session_initial_destination_is_saved_before_any_body_and_invalid_choice_creat
     assert!(l.snapshot().unwrap().jobs.is_empty());
     let custom = opennovel_core::SaveDestination {
         directory: Some(d.path().to_path_buf()),
+        ..Default::default()
     };
     let job = l
         .create_session_download_with_destination(&book, None, Some(&custom))

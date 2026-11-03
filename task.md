@@ -476,3 +476,12 @@ W01/W02 使用本地 JSON 完成工程基础。番茄官网网页来源仍按实
 - [ ] 起点/晋江的公开目录、免费试读与账户/已购内容分层研究。
 
 最新证据见 [v0.2 多来源验证](docs/verification/2026-10-21-multi-source.md)，历史记录保留在 [v0.1 候选版验收](docs/verification/2026-10-20-v01.md)、[章节明细与更新](docs/verification/2026-10-20-chapter-details.md)、[番茄网页验证](docs/verification/2026-10-20-fanqie-web.md) 和 [工程基础验证](docs/verification/2026-10-20-foundation.md)。
+
+
+## 2026-11-03 选章与 Word 保存
+- [x] 保存前展示范围、格式与位置（公开网页和账户流程）
+- [x] 内核生成 DOCX，自动导出保留任务范围与格式
+- [x] 书库升级、选章、格式和中断恢复回归验证
+- [x] 界面与文档排版检查、打包、桌面入口更新
+
+证据见 [选章与 Word 保存验证](docs/verification/2026-11-03-chapter-word.md)。本次使用原创样本完成自动化、排版和交付程序检查，不扩大平台获取能力声明。
