@@ -112,29 +112,21 @@ def check_source(source, urls, executable, output):
                 raise ValueError('empty catalogue')
             row.update(total=len(chapters), open=sum(not c['restricted'] for c in chapters),
                        restricted=sum(c['restricted'] for c in chapters), description=bool(catalog['description']))
-            if source == 'shuqi-web':
-                code, _ = run_cli(executable, folder, 'disabled', 'download', url, '--from', '1', '--to', '1')
-                # Refusal alone is not enough: the documented boundary must be the reason.
-                error = (folder / 'disabled.stderr.log').read_text(encoding='utf-8')
-                if code == 0 or '书旗' not in error or '正文' not in error:
-                    raise ValueError('catalogue-only guard did not produce its expected refusal')
-                row['scope'] = 'catalogue and disabled-body guard only'
-            else:
-                chosen = select_chapters(chapters)
-                code, job = run_cli(executable, folder, 'download', 'download', url,
-                                    '--chapters', ','.join(map(str, chosen)))
-                saved = validate_job(code, job, catalog, chosen)
-                row.update(selected=chosen, saved=saved, blocked=job['blocked'], failed=job['failed'])
-                if not saved:
-                    raise ValueError('no open chapter was available to validate body parsing')
-                row['exports'] = {}
-                for fmt in ['txt', 'epub']:
-                    code, receipt = run_cli(executable, folder, 'export-' + fmt, 'export', job['book_id'],
-                                            '--format', fmt, '--output', str(folder / 'exports'))
-                    if code:
-                        raise ValueError(fmt + ' export failed')
-                    row['exports'][fmt] = verify_export(receipt, folder, saved, len(chapters), fmt)
-                row['scope'] = 'first/middle/last open chapter and one restricted marker where present'
+            chosen = select_chapters(chapters)
+            code, job = run_cli(executable, folder, 'download', 'download', url,
+                                '--chapters', ','.join(map(str, chosen)))
+            saved = validate_job(code, job, catalog, chosen)
+            row.update(selected=chosen, saved=saved, blocked=job['blocked'], failed=job['failed'])
+            if not saved:
+                raise ValueError('no open chapter was available to validate body parsing')
+            row['exports'] = {}
+            for fmt in ['txt', 'epub']:
+                code, receipt = run_cli(executable, folder, 'export-' + fmt, 'export', job['book_id'],
+                                        '--format', fmt, '--output', str(folder / 'exports'))
+                if code:
+                    raise ValueError(fmt + ' export failed')
+                row['exports'][fmt] = verify_export(receipt, folder, saved, len(chapters), fmt)
+            row['scope'] = 'first/middle/last open chapter and one restricted marker where present'
             row['passed'] = True
         except (OSError, ValueError, KeyError, TypeError, sqlite3.Error, subprocess.SubprocessError, zipfile.BadZipFile) as error:
             row['error'] = str(error)

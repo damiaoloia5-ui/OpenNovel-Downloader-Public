@@ -179,15 +179,12 @@ fn shuqi_can_inspect_complete_directories_without_claiming_reading_permission() 
     );
     assert_eq!(catalog.description, "原创简介");
     let capability = source_infos().iter().find(|s| s.id == "shuqi-web").unwrap();
-    assert!(!capability.can_download);
-    assert!(matches!(
-        SourceHub::new().adapter("shuqi-web"),
-        Err(Error::Restricted(_))
-    ));
+    assert!(capability.can_download);
+    assert!(SourceHub::new().adapter("shuqi-web").is_ok());
     let temp = tempdir().unwrap();
     let library = Library::open(temp.path().join("library.db")).unwrap();
-    assert!(library.create_download(&catalog, 1, 3).is_err());
-    assert!(library.snapshot().unwrap().books.is_empty());
+    assert!(library.create_download(&catalog, 1, 3).is_ok());
+    assert_eq!(library.snapshot().unwrap().books.len(), 1);
     for invalid in [
         directory.replace(&format!("bid={BOOK}"), "bid=999"),
         directory.replace("/reader?bid=", "https://evil.test/reader?bid="),

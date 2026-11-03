@@ -15,6 +15,19 @@ spec.loader.exec_module(checks)
 
 
 class CompatibilityChecks(unittest.TestCase):
+    def test_shuqi_uses_body_and_export_checks_instead_of_old_disabled_guard(self):
+        catalog = {'source':'shuqi-web', 'description':'原创简介', 'chapters':[{'restricted':False},{'restricted':True}]}
+        job = {'book_id':'original', 'saved':1, 'blocked':1, 'failed':0, 'total':2}
+        def command(_exe, _folder, _log, op, *_args):
+            return (0,catalog) if op=='inspect' else (2,job) if op=='download' else (0,{'path':'original'})
+        with tempfile.TemporaryDirectory() as tmp, patch.object(checks,'run_cli',side_effect=command) as run, patch.object(checks,'verify_export',return_value={'bytes':20}) as verify:
+            result=checks.check_source('shuqi-web',['controlled:book'],pathlib.Path('unused'),pathlib.Path(tmp))[0]
+            self.assertTrue(result['passed'])
+            self.assertEqual(result['saved'],1)
+            self.assertEqual(result['blocked'],1)
+            self.assertEqual(verify.call_count,2)
+            self.assertEqual([c.args[3] for c in run.call_args_list],['inspect','download','export','export'])
+
     def test_bounded_sampling_preserves_order_and_restriction(self):
         chapters = [{'restricted': i > 9} for i in range(1000)]
         self.assertEqual(checks.select_chapters(chapters), [1, 6, 10, 11])

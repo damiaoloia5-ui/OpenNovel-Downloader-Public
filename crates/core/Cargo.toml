@@ -21,6 +21,7 @@ httpdate = "1"
 scraper = "0.24"
 encoding_rs = "0.8"
 sha2 = "0.10"
+base64 = "0.22"
 
 [dev-dependencies]
 roxmltree = "0.20"

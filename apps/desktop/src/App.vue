@@ -146,7 +146,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
             <span class="entry-symbol"><AppIcon name="link" :size="26" /></span>
             <label for="novel-link">粘贴小说的官网作品链接</label>
             <div class="link-row"><input id="novel-link" v-model="bookInput" type="text" placeholder="粘贴官网作品链接，例如纵横、17K、番茄、七猫、晋江或起点" :disabled="working" required /><button class="primary" :disabled="!desktopAvailable || working || !bookInput.trim()">{{ working ? '正在识别，请稍等…' : '开始保存为 TXT' }}</button></div>
-            <p class="footnote">免费网页会直接开始保存；起点会提示你登录。完成后自动生成 TXT，不需要手动选格式。</p><p class="footnote">不知道复制哪个链接？打开小说的作品介绍页，复制浏览器顶部地址，粘贴到这里。书旗目前只能读取目录。</p>
+            <p class="footnote">免费网页会直接开始保存；起点会提示你登录。完成后自动生成 TXT，不需要手动选格式。</p><p class="footnote">不知道复制哪个链接？打开小说的作品介绍页，复制浏览器顶部地址，粘贴到这里。书旗可保存官网明确开放的免费章节，其他章节会标注未保存。</p>
             <details class="optional-options"><summary>只想先看看能保存多少？</summary><button type="button" :disabled="!desktopAvailable||working||!bookInput.trim()" @click="inspect()">只看获取范围</button></details>
           </form>
           <LocalEnginePanel :disabled="working" :current="engineStatus" @checked="engineStatus=$event" @changed="engineChanged" />
@@ -210,7 +210,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         </template>
 
         <template v-if="page === 'sources'">
-          <div class="source-intro"><h2>已接入与待适配平台</h2><p>纵横、17K、番茄、七猫与晋江提供实验性官网免费正文保存；书旗先提供详情与目录，起点提供账户内保存实验。刺猬猫、飞卢提供登录后当前页普通文字采集；咪咕目前可登录和识别作品页，正文仍待验证。所选范围完成不代表整本完整。</p></div>
+          <div class="source-intro"><h2>已接入与待适配平台</h2><p>纵横、17K、番茄、七猫、晋江与书旗提供实验性官网免费正文保存；起点提供账户内保存实验。刺猬猫、飞卢提供登录后当前页普通文字采集；咪咕目前可登录和识别作品页，正文仍待验证。所选范围完成不代表整本完整。</p></div>
           <div class="source-list">
             <article><span class="source-monogram">本</span><div><h3>本地 JSON 内容</h3><p>用户提供的作品与章节 · 任务恢复 · TXT / EPUB</p></div><span class="available">已接入</span></article>
             <article v-for="source in sourceInfos" :key="source.id"><span class="source-monogram">{{ source.name.slice(0,1) }}</span><div><h3>{{ source.name }}</h3><p>{{ source.note }}</p><small>{{ source.example }}</small></div><span :class="source.can_download ? 'available' : 'pending-label'">{{ source.id==='qidian-session'?'账户内自动保存':['ciweimao-web','faloo-web','migu-web'].includes(source.id)?'账户当前页实验':source.can_inspect===false?'待适配':source.can_download ? '实验性下载' : '仅详情/目录' }}</span></article>

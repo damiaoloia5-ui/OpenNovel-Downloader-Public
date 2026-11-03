@@ -54,10 +54,10 @@ static SOURCES: [SourceInfo; 10] = [
     SourceInfo {
         id: "shuqi-web",
         can_inspect: true,
-        name: "书旗官网目录",
-        can_download: false,
+        name: "书旗官网免费章节",
+        can_download: true,
         can_search: false,
-        note: "详情与完整目录已接入；正文实测限流，尚未通过验收，暂不开放下载。",
+        note: "保存官方阅读目录明确开放的免费正文；未开放、付费及会员章节不请求，尚未接入登录权益。",
         example: "https://www.shuqi.com/book/作品ID.html",
     },
     SourceInfo {
@@ -274,9 +274,7 @@ impl SourceHub {
             "jinjiang-web" => Ok(initialize(&self.jinjiang, Jinjiang::new)?),
             "zongheng-web" => Ok(initialize(&self.zongheng, || PublicHtml::new(true))?),
             "17k-web" => Ok(initialize(&self.seventeen, || PublicHtml::new(false))?),
-            "shuqi-web" => Err(Error::Restricted(
-                "书旗当前仅支持详情与目录，正文尚未通过实测验收，暂不开放下载".into(),
-            )),
+            "shuqi-web" => Ok(initialize(&self.shuqi, Shuqi::new)?),
             _ => Err(Error::Invalid("该来源没有已实现的下载适配器".into())),
         }
     }

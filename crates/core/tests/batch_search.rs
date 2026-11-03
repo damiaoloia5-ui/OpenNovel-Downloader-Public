@@ -150,7 +150,7 @@ fn batch_bounds_identity_dedup_and_capability_are_checked_before_persistence() {
     for values in [
         vec![],
         vec!["qimao:1".into(); 11],
-        vec!["shuqi:1".into()],
+        vec!["faloo:1".into()],
         vec!["https://user:secret@www.qimao.com/shuku/1/".into()],
     ] {
         assert!(l.create_batch(&values, "1").is_err());
