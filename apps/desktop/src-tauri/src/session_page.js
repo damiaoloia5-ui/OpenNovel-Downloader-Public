@@ -50,7 +50,18 @@
     const illustration=e=>{if(platform!=='ciweimao'||e.tagName!=='IMG')return false;try{const image=new URL(e.src);return image.protocol==='https:'&&image.hostname==='e1.kuangxiangit.com'&&image.pathname.startsWith('/uploads/chapterimgsnew/')&&new RegExp('-__BOOK__-'+u.pathname.split('/').at(-1)+'\\.(jpg|png|jpeg|webp)$','i').test(image.pathname);}catch{return false;}};
     if(Array.from(body.querySelectorAll('img,canvas,iframe,svg')).some(e=>visible(e)&&!illustration(e)))return fail('protected');
     const wordMatch=info.match(/(?:本章字数|字数|本章共)\s*[:：]?\s*([\d,]+)/);if(!declared&&wordMatch)declared=Number(wordMatch[1].replaceAll(',',''));
-    if(!Number.isSafeInteger(declared)||declared<=0)return fail('word_count');
+    let visiblePageEnd;
+    if(!Number.isSafeInteger(declared)||declared<=0){
+      if(platform!=='faloo')return fail('word_count');
+      // Faloo's observed ordinary reader has no declared chapter word count.
+      // Require its visible end navigation after the complete paragraph container;
+      // never fabricate a platform count from the text we just extracted.
+      const catalog=document.getElementById('huimulu'),next=document.getElementById('next_page');
+      if(!visible(catalog)||!visible(next)||!(body.compareDocumentPosition(catalog)&4)||!(body.compareDocumentPosition(next)&4))return fail('word_count');
+      if(!/^目录$/.test(text(catalog))||!/^下一章\s*$/.test(text(next)))return fail('word_count');
+      if(Array.from(body.children).some(e=>e.tagName!=='P'||!visible(e)||e.children.length))return fail('protected');
+      visiblePageEnd={catalog_url:catalog.href,next_url:next.href};declared=0;
+    }
     const skip=e=>e.matches('.copy,.author-say,.author_say,.chapter_text_ad,.qrcode,.watermark,[class*="watermark"]')||e.closest('.author-say,.author_say');
     let paragraphs=Array.from(body.querySelectorAll(':scope > p')).filter(e=>visible(e)&&!skip(e)).map(text).filter(Boolean);
     if(platform==='ciweimao'){
@@ -71,6 +82,6 @@
     if(paragraphs.length>10000)return fail('large');
     const keys=platform==='shuqi'?['bid','cid']:platform==='jinjiang'?['novelid','chapterid']:[];
     const values=keys.map(k=>[k,u.searchParams.get(k)]);u.search='';u.hash='';for(const [k,v] of values)u.searchParams.set(k,v);
-    return {url:u.href,title,paragraphs,declared_words:declared};
+    return {url:u.href,title,paragraphs,declared_words:declared,...(visiblePageEnd?{visible_page_end:visiblePageEnd}:{})};
   }catch{return fail('unsupported');}
 })();

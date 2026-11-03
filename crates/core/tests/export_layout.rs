@@ -153,7 +153,7 @@ fn schema_eight_upgrade_keeps_original_backup_and_restore_resets_external_direct
     conn.execute_batch("DROP INDEX exports_content; ALTER TABLE exports DROP COLUMN content_hash; ALTER TABLE exports DROP COLUMN automatic; DROP TABLE export_directories; PRAGMA user_version=8;").unwrap();
     drop(conn);
     let l = Library::open(&db).unwrap();
-    assert_eq!(l.diagnostics().unwrap().schema, 9);
+    assert_eq!(l.diagnostics().unwrap().schema, 10);
     let backup = std::fs::read_dir(d.path())
         .unwrap()
         .map(Result::unwrap)

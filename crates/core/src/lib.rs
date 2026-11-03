@@ -28,7 +28,7 @@ pub use export::ExportFormat;
 pub use export_settings::ExportDestination;
 pub use maintenance::{BackupManifest, BookPreferences, DiagnosticReport};
 pub use official_reader::{
-    OfficialPage, official_book_link, official_login_url, official_platform_name,
+    OfficialPage, official_book_link, official_login_url, official_page_url, official_platform_name,
 };
 pub use revisions::{
     CatalogChange, CatalogFieldChange, CatalogUpdate, HistoryEntry, RefreshReceipt,

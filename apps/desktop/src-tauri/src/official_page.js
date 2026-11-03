@@ -1,8 +1,12 @@
 (() => {
   const platform = '__PLATFORM__';
   const result = {platform, url: location.origin + location.pathname, status: 'unsupported', book_id: '', chapter_id: '', book_title: '', chapter_title: '', paragraphs: [], declared_words: null};
-  const finish = status => ({...result, status, paragraphs: status === 'text' ? result.paragraphs : []});
+  const finish = status => ({...result, status, paragraphs: ['text','excerpt'].includes(status) ? result.paragraphs : []});
   try {
+    if(platform==='migu'&&location.hostname==='n.cmread.com'&&location.pathname==='/nap/p/wap_detail_new.jsp'){
+      const ids=new URL(location.href).searchParams.getAll('bid');
+      if(ids.length===1&&/^[1-9]\d{0,23}$/.test(ids[0]))result.url=location.origin+location.pathname+'?bid='+ids[0];
+    }
     if (document.readyState !== 'complete') return finish('loading');
     const shown = node => {
       if (!node || !node.getClientRects().length) return false;
@@ -49,6 +53,28 @@
       result.book_title = first('#novelName');
       result.chapter_title = first('.c_left h1').replace(result.book_title, '').trim();
       reader = document.querySelector('.c_left .noveContent');
+    } else if (platform === 'migu' && location.hostname === 'n.cmread.com' && location.pathname === '/nap/p/wap_detail_new.jsp') {
+      const ids = new URL(location.href).searchParams.getAll('bid');
+      if(ids.length!==1||!numeric(ids[0]))return finish('unsupported');
+      result.url=location.origin+location.pathname+'?bid='+ids[0];
+      result.book_id=ids[0];result.book_title=first('.book-info .book-name');
+      // Only public book identity, never session/account fields or hidden chapter data.
+      const identities=Object.values(globalThis.pageData||{}).filter(p=>p?.pluginCode==='wap_bk_content_book');
+      if(identities.length!==1||String(identities[0].data?.bookIds)!==ids[0]||identities[0].data?.bookName!==result.book_title)return finish('unsupported');
+      result.author=first('.book-info .book-author');result.description=first('.book-desc .desc-info').replace(/^简介：/,'');
+      const groups=Array.from(document.querySelectorAll('.Wap_reading_page .chapter-info')).filter(shown);
+      if(!groups.length||groups.length>100)return finish('unsupported');
+      for(const group of groups){
+        const heading=text(group.querySelector('.chapter-name')),body=group.querySelector('.chapter-html');
+        if(!heading||!shown(body))return finish('unsupported');
+        if(body.querySelector('img,canvas,iframe,svg'))return finish('protected');
+        const paragraphs=Array.from(body.querySelectorAll('p')).filter(shown).map(text).filter(Boolean);
+        if(!paragraphs.length)return finish('unsupported');
+        result.paragraphs.push(heading,...paragraphs);
+      }
+      if(result.paragraphs.length>10000)return finish('unsupported');
+      result.chapter_title='官网公开试读';
+      return finish('excerpt');
     } else if (platform === 'migu' && location.hostname === 'www.cmread.com') {
       const book = location.pathname.match(/^\/yuekan\/novel\/([1-9]\d*)\.html$/);
       if (book) { result.book_id = book[1]; result.book_title = first('h1'); return finish(result.book_title ? 'book' : 'unsupported'); }

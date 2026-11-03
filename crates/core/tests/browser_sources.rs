@@ -150,3 +150,36 @@ fn confirmed_catalog_does_not_mix_sources_or_silently_reorder_saved_chapters() {
     assert!(SessionCatalog::from_public(c.catalog().clone(), "faloo").is_err());
     assert_eq!(l.session_catalog(&book).unwrap().chapters[0].id, "1");
 }
+#[test]
+fn faloo_end_navigation_is_scoped_and_does_not_fabricate_a_word_count() {
+    use opennovel_core::SessionChapter;
+    let url = "https://b.faloo.com/1234567_2.html";
+    let mut raw = serde_json::json!({"url":url,"title":"原创第二章","paragraphs":["山谷的灯亮了，旅人走向小屋。"],"declared_words":0,"visible_page_end":{"catalog_url":"https://b.faloo.com/html_1234_1234567/","next_url":"https://b.faloo.com/1234567_4.html"}});
+    let page = SessionChapter::parse_for(&raw.to_string(), url, "faloo", "1234567", "2").unwrap();
+    assert_eq!(page.declared_words, 0);
+    for next in [
+        "https://evil.test/1234567_4.html",
+        "https://b.faloo.com/7654321_4.html",
+        "https://b.faloo.com/1234567_2.html",
+        "https://b.faloo.com/1234567_4.html?token=no",
+        "https://u:p@b.faloo.com/1234567_4.html",
+    ] {
+        raw["visible_page_end"]["next_url"] = serde_json::json!(next);
+        assert!(SessionChapter::parse_for(&raw.to_string(), url, "faloo", "1234567", "2").is_err());
+    }
+    raw["visible_page_end"]["next_url"] = serde_json::json!("https://b.faloo.com/1234567_4.html");
+    raw["visible_page_end"]["catalog_url"] =
+        serde_json::json!("https://b.faloo.com/html_7654_7654321/");
+    assert!(SessionChapter::parse_for(&raw.to_string(), url, "faloo", "1234567", "2").is_err());
+    raw.as_object_mut().unwrap().remove("visible_page_end");
+    assert!(SessionChapter::parse_for(&raw.to_string(), url, "faloo", "1234567", "2").is_err());
+    raw["url"] = serde_json::json!("https://www.qidian.com/chapter/1234567/2/");
+    raw["visible_page_end"] = serde_json::json!({"catalog_url":"https://b.faloo.com/html_1234_1234567/","next_url":"https://b.faloo.com/1234567_4.html"});
+    assert!(
+        SessionChapter::parse(
+            &raw.to_string(),
+            "https://www.qidian.com/chapter/1234567/2/"
+        )
+        .is_err()
+    );
+}

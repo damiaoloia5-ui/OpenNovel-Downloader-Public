@@ -14,7 +14,7 @@ function fixture(platform='faloo'){
   const origin=platform==='faloo'?'https://b.faloo.com':platform==='ciweimao'?'https://www.ciweimao.com':'https://www.cmread.com';
   const pathname=platform==='faloo'?'/123_10.html':platform==='ciweimao'?'/chapter/10':'/yuekan/novel/123.html';
   const context={document,location:{origin,hostname:new URL(origin).hostname,pathname},HB:{book:{book_id:123,chapter_id:10}},getComputedStyle:e=>({display:'block',visibility:'visible',opacity:'1',filter:'none',...e.style})};
-  return {document,reader,text,ids,context,run(){return JSON.parse(JSON.stringify(vm.runInNewContext(source.replace('__PLATFORM__',platform),context)));}};
+  return {document,reader,text,ids,nodes,context,run(){return JSON.parse(JSON.stringify(vm.runInNewContext(source.replace('__PLATFORM__',platform),context)));}};
 }
 test('official text extraction is visible-only, identity-bound and never claims complete chapters',()=>{
   const f=fixture();assert.equal(f.run().status,'text');assert.equal(f.run().paragraphs[0],'原创第一段。');assert.equal(f.run().declared_words,null);
@@ -48,4 +48,21 @@ test('Ciwemo standalone human verification is recognized without reading or solv
 test('visible text is not cut off by a two-hundred-thousand-character quota',()=>{
   const f=fixture();f.text.childNodes[0].textContent='山'.repeat(200001);
   const result=f.run();assert.equal(result.status,'text');assert.equal(result.paragraphs[0].length,200001);
+});
+test('migu mobile preview reads visible paragraphs and metadata but never invents chapter identities',()=>{
+ const f=fixture('migu');f.context.URL=URL;f.context.location={origin:'https://n.cmread.com',hostname:'n.cmread.com',pathname:'/nap/p/wap_detail_new.jsp',href:'https://n.cmread.com/nap/p/wap_detail_new.jsp?bid=123&cm=tracking'};
+ f.context.pageData={book:{pluginCode:'wap_bk_content_book',data:{bookIds:'123',bookName:'原创山路'}}};
+ f.nodes['.book-info .book-name']=element('原创山路');f.nodes['.book-info .book-author']=element('原创作者');f.nodes['.book-desc .desc-info']=element('简介：原创故事');
+ const group=element();group.querySelector=s=>s==='.chapter-name'?element('第一章'):s==='.chapter-html'?f.reader:null;
+ f.document.querySelectorAll=s=>s==='.Wap_reading_page .chapter-info'?[group]:[];
+ let result=f.run();assert.equal(result.status,'excerpt');assert.equal(result.chapter_id,'');assert.equal(result.url,'https://n.cmread.com/nap/p/wap_detail_new.jsp?bid=123');assert.equal(result.author,'原创作者');assert.equal(result.description,'原创故事');assert.deepEqual(result.paragraphs,['第一章','原创第一段。']);
+ f.text.style={display:'none'};assert.equal(f.run().status,'unsupported');f.text.style={};
+ f.context.pageData.book.data.bookIds='456';assert.equal(f.run().status,'unsupported');f.context.pageData.book.data.bookIds='123';
+ f.context.location.href+='&bid=123';assert.equal(f.run().status,'unsupported');
+});
+test('migu loading and verification preserve the book identity without returning preview text',()=>{
+ const f=fixture('migu');f.context.URL=URL;f.context.location={origin:'https://n.cmread.com',hostname:'n.cmread.com',pathname:'/nap/p/wap_detail_new.jsp',href:'https://n.cmread.com/nap/p/wap_detail_new.jsp?bid=123&cm=tracking'};
+ f.document.readyState='loading';assert.equal(f.run().status,'loading');assert.equal(f.run().url,'https://n.cmread.com/nap/p/wap_detail_new.jsp?bid=123');
+ f.document.readyState='complete';f.document.querySelectorAll=s=>s.startsWith('iframe')?[{...element(),title:'安全验证'}]:[];
+ assert.equal(f.run().status,'verification');assert.deepEqual(f.run().paragraphs,[]);assert.equal(f.run().url,'https://n.cmread.com/nap/p/wap_detail_new.jsp?bid=123');
 });

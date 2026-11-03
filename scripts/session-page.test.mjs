@@ -20,7 +20,7 @@ function fixture(platform){
  if(platform==='jinjiang')reader.childNodes=[{nodeType:3,textContent:'旅人沿着山路走进小屋。'}];
  const document={readyState:'complete',body,querySelector:s=>nodes[s]||null,getElementById:id=>ids[id]||null,querySelectorAll:s=>s==='.chapter-content'?[reader]:[]};
  const context={document,location:{href:routes[platform]},URL,HB:{book:{book_id:123,chapter_id:2}},$__BOOK:{bookId:123,chapterId:2},getComputedStyle:e=>({display:'block',visibility:'visible',opacity:'1',filter:'none',...e.style})};
-  return {document,reader,paragraph,nodes,info,context,run:()=>JSON.parse(JSON.stringify(vm.runInNewContext(script.replaceAll('__PLATFORM__',platform).replaceAll('__BOOK__','123'),context)))};
+  return {document,reader,paragraph,nodes,info,ids,context,run:()=>JSON.parse(JSON.stringify(vm.runInNewContext(script.replaceAll('__PLATFORM__',platform).replaceAll('__BOOK__','123'),context)))};
 }
 test('seven platform rendered readers preserve visible paragraphs and identity-only URLs',()=>{
  for(const p of ['zongheng','17k','qimao','shuqi','jinjiang','ciweimao','faloo']){const f=fixture(p);const r=f.run();assert.equal(r.title,'原创一章',p);assert.deepEqual(r.paragraphs,['旅人沿着山路走进小屋。'],p);assert.equal(r.declared_words,11);}
@@ -48,4 +48,14 @@ test('ciweimao identified chapter illustrations become explicit TXT placeholders
  f.reader.querySelectorAll=s=>s==='img,canvas,iframe,svg'?[img]:s===':scope > p'||s===':scope > p.chapter'?[f.paragraph]:[];
  assert.match(f.run().paragraphs[0],/TXT 未保存图片/);
  img.src='https://e1.kuangxiangit.com/uploads/chapterimgsnew/1/2/3/999-456-2.jpg';assert.equal(f.run().error,'protected');
+});
+test('faloo without a declared count needs visible end navigation after plain paragraphs',()=>{
+ const f=fixture('faloo');f.info.childNodes=[];
+ const catalog=element('目录','A'),next=element('下一章','A');catalog.href='https://b.faloo.com/html_1234_1234567/';next.href='https://b.faloo.com/1234567_3.html';
+ f.ids.huimulu=catalog;f.ids.next_page=next;f.reader.children=[f.paragraph];f.reader.compareDocumentPosition=()=>4;
+ const result=f.run();assert.equal(result.declared_words,0);assert.deepEqual(result.visible_page_end,{catalog_url:catalog.href,next_url:next.href});assert.deepEqual(result.paragraphs,['旅人沿着山路走进小屋。']);
+ f.reader.compareDocumentPosition=()=>2;assert.equal(f.run().error,'word_count');f.reader.compareDocumentPosition=()=>4;
+ catalog.style={display:'none'};assert.equal(f.run().error,'word_count');catalog.style={};
+ f.paragraph.children=[element('隐藏注入','SPAN')];assert.equal(f.run().error,'protected');f.paragraph.children=[];
+ f.paragraph.childNodes[0].textContent='试读结束';assert.equal(f.run().error,'restricted');
 });

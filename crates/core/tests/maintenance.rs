@@ -48,7 +48,7 @@ fn online_backup_restores_content_tags_and_exports_in_a_new_directory_only() {
         .unwrap();
     let backup = d.path().join("bundle");
     let m = l.backup(&backup).unwrap();
-    assert_eq!((m.schema, m.books, m.chapters), (9, 1, 2));
+    assert_eq!((m.schema, m.books, m.chapters), (10, 1, 2));
     assert!(l.backup(&backup).is_err());
     let restored = Library::restore(&backup, d.path().join("restored")).unwrap();
     assert_eq!(restored.preferences().unwrap(), l.preferences().unwrap());
@@ -113,7 +113,7 @@ fn schema_four_migrates_with_backup_and_keeps_book_data() {
         .unwrap();
     drop(db);
     let l = Library::open(&path).unwrap();
-    assert_eq!(l.diagnostics().unwrap().schema, 9);
+    assert_eq!(l.diagnostics().unwrap().schema, 10);
     assert_eq!(l.diagnostics().unwrap().saved_chapters, 2);
     assert!(std::fs::read_dir(d.path()).unwrap().any(|e| {
         e.unwrap()

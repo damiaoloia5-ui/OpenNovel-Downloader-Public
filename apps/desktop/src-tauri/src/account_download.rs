@@ -124,6 +124,24 @@ struct AccountReader {
     revision: Arc<AtomicU64>,
     last_navigation: Arc<Mutex<Option<Instant>>>,
 }
+/// WebView2 starts at about:blank before its first official navigation commits.
+/// This is a loading state, never a page whose content may be captured.
+fn classify_page_url(platform: &str, url: &tauri::Url) -> Result<Option<String>> {
+    if url.as_str() == "about:blank" {
+        return Ok(None);
+    }
+    if !opennovel_core::account_navigation_allowed(platform, url) {
+        return Err(Error::Restricted(
+            "页面已离开当前平台官网，自动保存已停止".into(),
+        ));
+    }
+    if url.host_str() == Some("passport.qidian.com") {
+        return Err(Error::Restricted(
+            "官网要求重新登录，请本人登录后继续".into(),
+        ));
+    }
+    opennovel_core::clean_session_url(platform, url.as_str()).map(Some)
+}
 struct RunLease {
     reading: Arc<AtomicBool>,
     registrations: Arc<Mutex<HashMap<String, ActiveTask>>>,
@@ -285,17 +303,8 @@ impl AccountReader {
         let url = window
             .url()
             .map_err(|_| Error::Network("无法确认官网地址".into()))?;
-        if !opennovel_core::account_navigation_allowed(&self.platform, &url) {
-            return Err(Error::Restricted(
-                "页面已离开当前平台官网，自动保存已停止".into(),
-            ));
-        }
-        if url.host_str() == Some("passport.qidian.com") {
-            return Err(Error::Restricted(
-                "官网要求重新登录，请本人登录后继续".into(),
-            ));
-        }
-        opennovel_core::clean_session_url(&self.platform, url.as_str())
+        classify_page_url(&self.platform, &url)?
+            .ok_or_else(|| Error::Network("官网页面尚未加载，保存进度保留".into()))
     }
 }
 impl SourceAdapter for AccountReader {
@@ -327,9 +336,24 @@ impl SourceAdapter for AccountReader {
             .map(|t| self.interval.saturating_sub(t.elapsed()))
             .unwrap_or_default();
         wait(delay, cancelled)?;
-        let window = self.window(cancelled)?;
+        let initial_deadline = Instant::now() + PAGE_TIMEOUT;
+        let (window, current) = loop {
+            let window = self.window(cancelled)?;
+            let url = window
+                .url()
+                .map_err(|_| Error::Network("无法确认官网地址".into()))?;
+            if let Some(current) = classify_page_url(&self.platform, &url)? {
+                break (window, current);
+            }
+            if Instant::now() >= initial_deadline {
+                return Err(Error::Network(
+                    "官网窗口加载超时，请核对网络后继续；进度已保留".into(),
+                ));
+            }
+            wait(Duration::from_millis(100), cancelled)?;
+        };
         // Reading normal pages must never turn a login page into an unattended login flow.
-        if self.current_url(&window)? != expected {
+        if current != expected {
             window
                 .navigate(
                     expected
@@ -582,6 +606,36 @@ fn launch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn initial_blank_waits_but_login_and_foreign_pages_still_stop() {
+        assert_eq!(
+            classify_page_url("faloo", &"about:blank".parse().unwrap()).unwrap(),
+            None
+        );
+        assert_eq!(
+            classify_page_url(
+                "faloo",
+                &"https://b.faloo.com/1538594.html".parse().unwrap()
+            )
+            .unwrap(),
+            Some("https://b.faloo.com/1538594.html".into())
+        );
+        for address in [
+            "about:blank?x=1",
+            "https://faloo.com.evil.test/",
+            "http://b.faloo.com/1538594.html",
+            "chrome-error://chromewebdata/",
+        ] {
+            assert!(matches!(
+                classify_page_url("faloo", &address.parse().unwrap()),
+                Err(Error::Restricted(_))
+            ));
+        }
+        assert!(matches!(
+            classify_page_url("qidian", &"https://passport.qidian.com/".parse().unwrap()),
+            Err(Error::Restricted(_))
+        ));
+    }
     #[test]
     fn resume_checks_only_accept_a_small_ready_status() {
         assert!(check_resume_page(r#"{"status":"ready"}"#).is_ok());

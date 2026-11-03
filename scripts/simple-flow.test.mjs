@@ -105,6 +105,7 @@ function fixture(){
     openOfficialReader:async(...args)=>{state.calls.push(['official-open',...args]);},
     inspectOfficialReader:async(p)=>{state.calls.push(['official-inspect',p]);return {token:'official-token',page:state.officialPage||{platform:p,status:'text',book_title:'原创旅行',chapter_title:'原创第一章',paragraphs:['原创页面内容。'],declared_words:null}};},
     saveOfficialReader:async(...args)=>{state.calls.push(['official-save',...args]);return {id:'official-export',path:'D:/original-visible.txt'};},
+    chooseOfficialExportDirectory:async()=>{state.calls.push(['official-folder']);return 'D:/chosen-original';},
     revealOfficialReader:async(id)=>{state.calls.push(['official-reveal',id]);},
     closeOfficialReader:async(p)=>{state.calls.push(['official-close',p]);},
     previewTxtSupplement:async(...args)=>{state.calls.push(['txt-preview',...args]);if(state.txtError)throw state.txtError;return {fingerprint:'original-fingerprint',title:'原创样书',total:3,already_saved:1,first_title:'第一章 原创',last_title:'第三章 原创'};},
@@ -369,11 +370,21 @@ test('official login flow requires readable preview and acknowledgement before a
     await click(f.button('我已登录，识别当前页'));
     assert.ok(f.button('确认，保存当前页为 TXT').props.disabled);
     await acknowledge(f);await click(f.button('确认，保存当前页为 TXT'));
-    assert.deepEqual(f.state.calls.find(c=>c[0]==='official-save'),['official-save','faloo','official-token',true]);
+    assert.deepEqual(f.state.calls.find(c=>c[0]==='official-save'),['official-save','faloo','official-token',true,undefined]);
     await click(f.button('打开 TXT 所在文件夹'));
     assert.ok(f.state.calls.some(c=>c[0]==='official-reveal'&&c[1]==='official-export'));
     assert.equal(f.state.calls.filter(c=>c[0]==='start'||c[0]==='download').length,0);
   }finally{f.close();}
+});
+test('migu public excerpt can be exported without login and never starts a complete-book job',async()=>{
+ const url='https://n.cmread.com/nap/p/wap_detail_new.jsp?bid=123';
+ const f=await mount(Official,{initialUrl:url},({state})=>{state.officialPage={status:'excerpt',book_title:'原创山路',author:'原创作者',paragraphs:['原创试读'],declared_words:null};});
+ try{
+  await click(f.button('打开这本书'));await click(f.button('识别官网试读'));assert.match(f.root.textContent,/官网公开试读/);
+  assert.ok(f.button('确认，保存当前页为 TXT').props.disabled);await click(f.button('选择 TXT 保存文件夹'));await acknowledge(f);await click(f.button('确认，保存当前页为 TXT'));
+  assert.deepEqual(f.state.calls.find(c=>c[0]==='official-open'),['official-open','migu',url,false]);
+  assert.deepEqual(f.state.calls.find(c=>c[0]==='official-save'),['official-save','migu','official-token',true,'D:/chosen-original']);assert.equal(f.state.calls.filter(c=>c[0]==='start'||c[0]==='download').length,0);
+ }finally{f.close();}
 });
 test('protected official pages never expose a save action or start an automatic job',async()=>{
   const f=await mount(Official,{initialUrl:'https://www.ciweimao.com/book/123'},({state})=>{state.officialPage={status:'protected',book_title:'原创图片页',paragraphs:[]};});

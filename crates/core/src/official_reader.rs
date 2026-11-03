@@ -32,10 +32,34 @@ pub fn official_book_link(platform: &str, input: &str) -> Result<Url> {
         || url.port().is_some()
         || !url.username().is_empty()
         || url.password().is_some()
-        || url.query().is_some()
+        || (url.query().is_some() && platform != "migu")
         || url.fragment().is_some()
     {
         return Err(Error::Invalid("作品链接不能包含登录参数或凭据".into()));
+    }
+    if platform == "migu" {
+        if url.host_str() == Some("www.cmread.com")
+            && url.query().is_none()
+            && let Some(id) = url
+                .path()
+                .strip_prefix("/yuekan/novel/")
+                .and_then(|p| p.strip_suffix(".html"))
+            && numeric_id(id)
+        {
+            return Url::parse(&format!(
+                "https://n.cmread.com/nap/p/wap_detail_new.jsp?bid={id}"
+            ))
+            .map_err(|_| Error::Invalid("咪咕作品链接无效".into()));
+        }
+        if url.host_str() == Some("n.cmread.com")
+            && url.path() == "/nap/p/wap_detail_new.jsp"
+            && url
+                .query_pairs()
+                .all(|(key, _)| ["bid", "type", "cm"].contains(&key.as_ref()))
+        {
+            return official_page_url(platform, url.as_str());
+        }
+        return Err(Error::Invalid("请输入咪咕官网作品详情链接".into()));
     }
     let id = match (platform, url.host_str()) {
         ("ciweimao", Some("www.ciweimao.com")) => {
@@ -53,6 +77,36 @@ pub fn official_book_link(platform: &str, input: &str) -> Result<Url> {
     };
     if !id.is_some_and(numeric_id) {
         return Err(Error::Invalid("当前平台作品链接尚不支持".into()));
+    }
+    Ok(url)
+}
+
+/// Strip navigation/tracking data; keep only a verified mobile book identity.
+pub fn official_page_url(platform: &str, input: &str) -> Result<Url> {
+    let mut url = Url::parse(input).map_err(|_| Error::Invalid("官网页面地址无效".into()))?;
+    if !crate::account_navigation_allowed(platform, &url) {
+        return Err(Error::Invalid("官网页面地址无效".into()));
+    }
+    let book = if platform == "migu"
+        && url.host_str() == Some("n.cmread.com")
+        && url.path() == "/nap/p/wap_detail_new.jsp"
+    {
+        let ids: Vec<_> = url
+            .query_pairs()
+            .filter(|(k, _)| k == "bid")
+            .map(|(_, v)| v.into_owned())
+            .collect();
+        if ids.len() != 1 || !numeric_id(&ids[0]) {
+            return Err(Error::Invalid("咪咕作品身份缺失或重复".into()));
+        }
+        Some(ids[0].clone())
+    } else {
+        None
+    };
+    url.set_query(None);
+    url.set_fragment(None);
+    if let Some(id) = book {
+        url.query_pairs_mut().append_pair("bid", &id);
     }
     Ok(url)
 }
@@ -78,6 +132,10 @@ pub struct OfficialPage {
     pub chapter_title: String,
     pub paragraphs: Vec<String>,
     pub declared_words: Option<u32>,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub description: String,
 }
 impl OfficialPage {
     pub fn parse(raw: &str, platform: &str, expected: &str) -> Result<Self> {
@@ -90,7 +148,7 @@ impl OfficialPage {
         let expected = Url::parse(expected).map_err(|_| Error::Invalid("页面地址无效".into()))?;
         if page.platform != platform
             || actual != expected
-            || actual.query().is_some()
+            || official_page_url(platform, actual.as_str())? != actual
             || actual.fragment().is_some()
             || !crate::account_navigation_allowed(platform, &actual)
             || !["ciweimao", "faloo", "migu"].contains(&platform)
@@ -99,6 +157,7 @@ impl OfficialPage {
         }
         if ![
             "text",
+            "excerpt",
             "book",
             "restricted",
             "protected",
@@ -110,7 +169,7 @@ impl OfficialPage {
         {
             return Err(Error::SourceChanged("未知页面状态".into()));
         }
-        if page.status != "text" && !page.paragraphs.is_empty() {
+        if !["text", "excerpt"].contains(&page.status.as_str()) && !page.paragraphs.is_empty() {
             return Err(Error::SourceChanged("受限状态不能携带正文".into()));
         }
         if page.book_title.chars().count() > 500
@@ -120,7 +179,7 @@ impl OfficialPage {
         {
             return Err(Error::Invalid("页面字段超过限制".into()));
         }
-        if page.status == "text" {
+        if ["text", "excerpt"].contains(&page.status.as_str()) {
             page.validate_text()?;
         }
         Ok(page)
@@ -128,36 +187,57 @@ impl OfficialPage {
     fn validate_text(&self) -> Result<()> {
         let url = Url::parse(&self.url).map_err(|_| Error::Invalid("正文地址无效".into()))?;
         if !crate::account_navigation_allowed(&self.platform, &url)
-            || url.query().is_some()
+            || official_page_url(&self.platform, &self.url)? != url
             || url.fragment().is_some()
         {
             return Err(Error::Invalid("正文地址不能包含凭据或登录参数".into()));
         }
-        if !numeric_id(&self.book_id) || !numeric_id(&self.chapter_id) {
+        let excerpt = self.platform == "migu" && self.status == "excerpt";
+        if !numeric_id(&self.book_id)
+            || (!excerpt && !numeric_id(&self.chapter_id))
+            || (excerpt && (!self.chapter_id.is_empty() || self.declared_words.is_some()))
+        {
             return Err(Error::Invalid("章节身份无效".into()));
         }
         let valid = match self.platform.as_str() {
-            "ciweimao" => {
+            "ciweimao" if self.status == "text" => {
                 url.host_str() == Some("www.ciweimao.com")
                     && url.path() == format!("/chapter/{}", self.chapter_id)
             }
-            "faloo" => {
+            "faloo" if self.status == "text" => {
                 url.host_str() == Some("b.faloo.com")
                     && url.path() == format!("/{}_{}.html", self.book_id, self.chapter_id)
             }
-            // No verified Migu reader layout yet. Do not guess a reader route.
+            "migu" if excerpt => {
+                url.as_str()
+                    == format!(
+                        "https://n.cmread.com/nap/p/wap_detail_new.jsp?bid={}",
+                        self.book_id
+                    )
+            }
             _ => false,
         };
         if !valid {
             return Err(Error::SourceChanged("当前平台正文路由尚未验证".into()));
         }
         crate::domain::validate_label(&self.book_title, "书名", 500)?;
+        if self.author.chars().count() > 500
+            || self.description.chars().count() > 20_000
+            || crate::domain::invalid_xml(&self.author)
+            || crate::domain::invalid_xml(&self.description)
+        {
+            return Err(Error::Invalid("作品信息格式无效".into()));
+        }
         let d = ImportDocument {
             id: self.book_id.clone(),
             title: self.book_title.clone(),
             author: String::new(),
             chapters: vec![ImportChapter {
-                id: self.chapter_id.clone(),
+                id: if excerpt {
+                    "preview".into()
+                } else {
+                    self.chapter_id.clone()
+                },
                 title: self.chapter_title.clone(),
                 paragraphs: self.paragraphs.clone(),
             }],
@@ -191,32 +271,59 @@ impl OfficialPage {
         Ok(())
     }
     pub fn save_txt(&self, directory: &Path) -> Result<String> {
-        if self.status != "text" {
+        if !["text", "excerpt"].contains(&self.status.as_str()) {
             return Err(Error::Restricted("当前页面没有可保存的普通文字".into()));
         }
         self.validate_text()?;
         std::fs::create_dir_all(directory)?;
+        use crate::export_settings::filename_part;
         let name = format!(
-            "{}-{}-{}-visible-{}.txt",
-            self.platform,
-            self.book_id,
-            self.chapter_id,
-            uuid::Uuid::new_v4()
+            "{}－{}－{}（{}）",
+            official_platform_name(&self.platform).unwrap_or("官网"),
+            filename_part(&self.book_title, "未命名作品", 64),
+            filename_part(&self.author, "佚名", 24),
+            if self.status == "excerpt" {
+                "官网试读".into()
+            } else {
+                filename_part(&self.chapter_title, "当前页", 32)
+            }
         );
-        let path = directory.join(name);
         let mut file = tempfile::NamedTempFile::new_in(directory)?;
         writeln!(
             file,
-            "{}\n{}\n来源：{}\n当前页可见文字采集；未核验全章或全书完整性。\n",
-            self.book_title, self.chapter_title, self.url
+            "{}\n作者：{}\n{}\n来源：{}\n简介：{}\n",
+            self.book_title, self.author, self.chapter_title, self.url, self.description
+        )?;
+        writeln!(
+            file,
+            "{}\n",
+            if self.status == "excerpt" {
+                "官网公开试读摘录；不是完整章节或全书，不计入书库完成进度。"
+            } else {
+                "当前页可见文字采集；未核验全章或全书完整性。"
+            }
         )?;
         for paragraph in &self.paragraphs {
             writeln!(file, "{}\n", paragraph.trim())?;
         }
         file.flush()?;
         file.as_file().sync_all()?;
-        file.persist_noclobber(&path)
-            .map_err(|e| Error::Io(e.error))?;
-        Ok(path.to_string_lossy().into_owned())
+        for number in 1..=1000 {
+            let path = directory.join(if number == 1 {
+                format!("{name}.txt")
+            } else {
+                format!("{name} ({number}).txt")
+            });
+            match file.persist_noclobber(&path) {
+                Ok(_) => return Ok(path.to_string_lossy().into_owned()),
+                Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    file = error.file
+                }
+                Err(error) => return Err(Error::Io(error.error)),
+            }
+        }
+        Err(Error::Conflict(
+            "同名导出文件过多，请选择另一个文件夹".into(),
+        ))
     }
 }

@@ -109,3 +109,135 @@ fn local_account_records_are_bounded_and_restores_never_imply_active_sessions() 
     let l = Library::open(db).unwrap();
     assert_eq!(l.accounts().unwrap().len(), 9);
 }
+
+#[test]
+fn all_supported_platform_accounts_survive_restart_backup_and_restore() {
+    let d = tempdir().unwrap();
+    let db = d.path().join("library.db");
+    let l = Library::open(&db).unwrap();
+    let mut expected = Vec::new();
+    for p in [
+        "qidian", "shuqi", "zongheng", "17k", "jinjiang", "qimao", "ciweimao", "faloo", "migu",
+    ] {
+        expected.push(l.create_account(p, &format!("原创{p}账户")).unwrap());
+    }
+    assert_eq!(l.accounts().unwrap(), expected);
+    let backup = d.path().join("backup");
+    l.backup(&backup).unwrap();
+    assert_eq!(
+        Library::restore(&backup, d.path().join("restored"))
+            .unwrap()
+            .accounts()
+            .unwrap(),
+        expected
+    );
+    drop(l);
+    assert_eq!(Library::open(&db).unwrap().accounts().unwrap(), expected);
+}
+
+#[test]
+fn legacy_account_constraint_migrates_with_verified_backup_and_preserves_content() {
+    use std::sync::atomic::AtomicBool;
+    let d = tempdir().unwrap();
+    let db = d.path().join("library.db");
+    let l = Library::open(&db).unwrap();
+    let job = l
+        .create_import(include_str!("../../../examples/local-book.json"))
+        .unwrap();
+    l.run_import(&job, &AtomicBool::new(false)).unwrap();
+    let account = l.create_account("qidian", "原始别名").unwrap();
+    let before = serde_json::to_value(l.snapshot().unwrap()).unwrap();
+    drop(l);
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    conn.execute_batch("ALTER TABLE accounts RENAME TO accounts_fixture; CREATE TABLE accounts(id TEXT PRIMARY KEY,platform TEXT NOT NULL CHECK(platform IN ('qidian','shuqi')),label TEXT NOT NULL); INSERT INTO accounts SELECT * FROM accounts_fixture; DROP TABLE accounts_fixture; PRAGMA user_version=9;").unwrap();
+    drop(conn);
+    let l = Library::open(&db).unwrap();
+    assert_eq!(l.account(&account.id).unwrap(), account);
+    assert_eq!(serde_json::to_value(l.snapshot().unwrap()).unwrap(), before);
+    l.create_account("faloo", "飞卢迁移验证").unwrap();
+    let backups = std::fs::read_dir(d.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("library-v9-backup-")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(backups.len(), 1);
+    let old = rusqlite::Connection::open(backups[0].path()).unwrap();
+    assert_eq!(
+        old.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
+            .unwrap(),
+        9
+    );
+    assert_eq!(
+        old.query_row(
+            "SELECT label FROM accounts WHERE id=?1",
+            [&account.id],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "原始别名"
+    );
+    assert!(
+        old.execute(
+            "INSERT INTO accounts VALUES('blocked','faloo','old schema')",
+            []
+        )
+        .is_err()
+    );
+    assert_eq!(
+        old.query_row("SELECT COUNT(*) FROM chapters", [], |r| r.get::<_, u32>(0))
+            .unwrap(),
+        2
+    );
+    drop(old);
+    drop(l);
+    assert_eq!(Library::open(&db).unwrap().accounts().unwrap().len(), 2);
+    assert_eq!(
+        std::fs::read_dir(d.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e
+                .file_name()
+                .to_string_lossy()
+                .starts_with("library-v9-backup-"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn failed_account_migration_leaves_old_schema_and_account_records_unchanged() {
+    let d = tempdir().unwrap();
+    let path = d.path().join("library.db");
+    let l = Library::open(&path).unwrap();
+    let account = l.create_account("shuqi", "原始书旗记录").unwrap();
+    drop(l);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("PRAGMA user_version=9; CREATE TABLE accounts_v10(sentinel TEXT); INSERT INTO accounts_v10 VALUES('original sentinel');").unwrap();
+    drop(db);
+    assert!(Library::open(&path).is_err());
+    let db = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(
+        db.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
+            .unwrap(),
+        9
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT label FROM accounts WHERE id=?1",
+            [account.id],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "原始书旗记录"
+    );
+    assert_eq!(
+        db.query_row("SELECT sentinel FROM accounts_v10", [], |r| r
+            .get::<_, String>(0))
+            .unwrap(),
+        "original sentinel"
+    );
+}

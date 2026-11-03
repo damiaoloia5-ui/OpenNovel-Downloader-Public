@@ -16,7 +16,12 @@ export function sessionBookPlatform(input:string):string|null {
 export function officialBookPlatform(input:string):'ciweimao'|'faloo'|'migu'|null {
   try {
     const u=new URL(input.trim());
-    if(u.protocol!=='https:'||u.port||u.username||u.password||u.search||u.hash)return null;
+    if(u.protocol!=='https:'||u.port||u.username||u.password||u.hash)return null;
+    if(u.hostname==='n.cmread.com'&&u.pathname==='/nap/p/wap_detail_new.jsp'){
+      const ids=u.searchParams.getAll('bid');
+      return ids.length===1&&/^[1-9]\d{0,23}$/.test(ids[0]!)&&Array.from(u.searchParams.keys()).every(k=>['bid','type','cm'].includes(k))?'migu':null;
+    }
+    if(u.search)return null;
     if(u.hostname==='www.ciweimao.com'&&/^\/book\/[1-9]\d{0,23}\/?$/.test(u.pathname))return 'ciweimao';
     if(u.hostname==='b.faloo.com'&&/^\/[1-9]\d{0,23}\.html$/.test(u.pathname))return 'faloo';
     if(u.hostname==='www.cmread.com'&&/^\/yuekan\/novel\/[1-9]\d{0,23}\.html$/.test(u.pathname))return 'migu';

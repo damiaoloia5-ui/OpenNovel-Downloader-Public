@@ -54,6 +54,15 @@ struct ChapterPage {
     title: String,
     paragraphs: Vec<String>,
     declared_words: u32,
+    #[serde(default)]
+    visible_page_end: Option<VisiblePageEnd>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VisiblePageEnd {
+    catalog_url: String,
+    next_url: String,
 }
 
 fn numeric_id(value: &str) -> bool {
@@ -167,7 +176,10 @@ impl SessionChapter {
         let page: ChapterPage = parse_page(raw)?;
         let (book, chapter) = same_page(&page.url, expected_url)?;
         let chapter = chapter.ok_or_else(|| Error::Invalid("请先打开一章完整正文".into()))?;
-        Self::from_page(page, book, chapter)
+        if page.visible_page_end.is_some() {
+            return Err(Error::SourceChanged("当前来源不接受网页末尾校验".into()));
+        }
+        Self::from_page(page, book, chapter, false)
     }
     pub fn parse_for(
         raw: &str,
@@ -196,10 +208,58 @@ impl SessionChapter {
         {
             return Err(Error::Conflict("读取章节不属于当前平台、作品或任务".into()));
         }
-        Self::from_page(page, book.into(), chapter.into())
+        let end_checked = if let Some(end) = &page.visible_page_end {
+            if platform != "faloo" {
+                return Err(Error::SourceChanged("当前来源不接受网页末尾校验".into()));
+            }
+            let catalog_path = format!("/html_{}_{book}/", &book[..book.len().saturating_sub(3)]);
+            let catalog = Url::parse(&end.catalog_url)
+                .map_err(|_| Error::SourceChanged("章节末尾目录地址无效".into()))?;
+            let next = Url::parse(&end.next_url)
+                .map_err(|_| Error::SourceChanged("章节末尾导航地址无效".into()))?;
+            for url in [&catalog, &next] {
+                if url.scheme() != "https"
+                    || url.host_str() != Some("b.faloo.com")
+                    || url.port().is_some()
+                    || !url.username().is_empty()
+                    || url.password().is_some()
+                    || url.query().is_some()
+                    || url.fragment().is_some()
+                {
+                    return Err(Error::SourceChanged("章节末尾导航不属于当前作品".into()));
+                }
+            }
+            let next_id = next
+                .path()
+                .strip_prefix(&format!("/{book}_"))
+                .and_then(|p| p.strip_suffix(".html"));
+            if catalog.path() != catalog_path
+                || !next_id.is_some_and(|id| {
+                    numeric_id(id)
+                        && id
+                            .parse::<u128>()
+                            .ok()
+                            .zip(chapter.parse::<u128>().ok())
+                            .is_some_and(|(next, current)| next > current)
+                })
+            {
+                return Err(Error::SourceChanged(
+                    "章节末尾导航未通过作品与顺序校验".into(),
+                ));
+            }
+            true
+        } else {
+            false
+        };
+        Self::from_page(page, book.into(), chapter.into(), end_checked)
     }
-    fn from_page(page: ChapterPage, book: String, chapter: String) -> Result<Self> {
-        if page.declared_words == 0 || page.paragraphs.len() > 10_000 {
+    fn from_page(
+        page: ChapterPage,
+        book: String,
+        chapter: String,
+        end_checked: bool,
+    ) -> Result<Self> {
+        if (page.declared_words == 0 && !end_checked) || page.paragraphs.len() > 10_000 {
             return Err(Error::SourceChanged(
                 "正文标注字数缺失或段落数量超过处理容量".into(),
             ));

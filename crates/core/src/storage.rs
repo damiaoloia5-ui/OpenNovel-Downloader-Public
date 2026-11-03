@@ -15,6 +15,8 @@ use std::{
 };
 use uuid::Uuid;
 
+pub(crate) const SCHEMA_VERSION: u32 = 10;
+
 pub struct Library {
     connection: Mutex<Connection>,
     pub(crate) export_lock: Mutex<()>,
@@ -39,13 +41,13 @@ impl Library {
         let mut connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 9 {
+        if version > SCHEMA_VERSION {
             return Err(Error::Conflict("书库来自较新版本，请使用匹配的程序".into()));
         }
         connection.execute_batch(
             "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;",
         )?;
-        if (1..9).contains(&version) {
+        if (1..SCHEMA_VERSION).contains(&version) {
             let backup =
                 path.with_file_name(format!("library-v{version}-backup-{}.db", Uuid::new_v4()));
             let reserved = OpenOptions::new()
@@ -146,6 +148,19 @@ impl Library {
                 CREATE INDEX exports_content ON exports(book_id,format,automatic,content_hash);
                 CREATE TABLE export_directories(book_id TEXT PRIMARY KEY REFERENCES books(id), directory TEXT NOT NULL);
                 PRAGMA user_version=9;")?;
+            transaction.commit()?;
+        }
+        if version < 10 {
+            let transaction = connection.transaction()?;
+            // Rebuild only the account constraint, preserving stable IDs and selection order.
+            // Existing libraries were backed up above before any schema change.
+            transaction.execute_batch("CREATE TABLE accounts_v10(id TEXT PRIMARY KEY,
+                platform TEXT NOT NULL CHECK(platform IN ('qidian','shuqi','zongheng','17k','jinjiang','qimao','ciweimao','faloo','migu')),
+                label TEXT NOT NULL);
+                INSERT INTO accounts_v10(rowid,id,platform,label) SELECT rowid,id,platform,label FROM accounts;
+                DROP TABLE accounts;
+                ALTER TABLE accounts_v10 RENAME TO accounts;
+                PRAGMA user_version=10;")?;
             transaction.commit()?;
         }
         connection.execute(

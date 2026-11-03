@@ -25,6 +25,7 @@ struct Preview {
 pub struct OfficialReaderState {
     pending: Mutex<HashMap<String, Preview>>,
     exports: Mutex<HashMap<String, PathBuf>>,
+    picking: AtomicBool,
 }
 #[derive(Serialize)]
 pub struct PagePreview {
@@ -127,9 +128,8 @@ pub async fn inspect_official_reader(
     {
         return Err("官网页面或会话已变化，请重新识别".into());
     }
-    let mut clean = before.clone();
-    clean.set_query(None);
-    clean.set_fragment(None);
+    let clean =
+        opennovel_core::official_page_url(&platform, before.as_str()).map_err(|e| e.to_string())?;
     let page = OfficialPage::parse(&raw, &platform, clean.as_str()).map_err(|e| e.to_string())?;
     let token = uuid::Uuid::new_v4().to_string();
     let mut pending = reader.pending.lock().map_err(|_| "识别预览不可用")?;
@@ -155,6 +155,7 @@ pub async fn save_official_reader(
     platform: String,
     token: String,
     acknowledged: bool,
+    directory: Option<String>,
     state: State<'_, AppState>,
     reader: State<'_, OfficialReaderState>,
 ) -> Result<PageExport, String> {
@@ -162,6 +163,17 @@ pub async fn save_official_reader(
         return Err("请先确认阅读权限与当前页采集范围".into());
     }
     let id = session_id(&platform)?;
+    let directory = match directory.filter(|d| !d.trim().is_empty()) {
+        Some(path) => {
+            let path = PathBuf::from(path.trim());
+            if !path.is_absolute() || !path.is_dir() {
+                return Err("请选择已存在的文件夹，或填写完整路径".into());
+            }
+            tempfile::NamedTempFile::new_in(&path).map_err(|_| "所选文件夹不可写，请重新选择")?;
+            path
+        }
+        None => state.exports.join("official-pages"),
+    };
     let preview = {
         let mut pending = reader.pending.lock().map_err(|_| "识别预览不可用")?;
         if pending.get(&token).is_none_or(|p| p.account != id) {
@@ -179,7 +191,6 @@ pub async fn save_official_reader(
     {
         return Err("官网会话已关闭或预览过期，请重新识别".into());
     }
-    let directory = state.exports.join("official-pages");
     let path = tauri::async_runtime::spawn_blocking(move || preview.page.save_txt(&directory))
         .await
         .map_err(|_| "保存中断")?
@@ -194,6 +205,35 @@ pub async fn save_official_reader(
         id: receipt_id,
         path,
     })
+}
+
+#[tauri::command]
+pub async fn choose_official_export_directory(
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+    reader: State<'_, OfficialReaderState>,
+) -> Result<Option<String>, String> {
+    if reader.picking.swap(true, Ordering::AcqRel) {
+        return Err("文件夹选择窗口已经打开".into());
+    }
+    struct Guard<'a>(&'a AtomicBool);
+    impl Drop for Guard<'_> {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::Release);
+        }
+    }
+    let _guard = Guard(&reader.picking);
+    #[cfg(windows)]
+    let owner = window.hwnd().map_err(|e| e.to_string())?.0 as isize;
+    #[cfg(not(windows))]
+    let owner = {
+        let _ = window;
+        0
+    };
+    let initial = state.exports.to_string_lossy().into_owned();
+    tauri::async_runtime::spawn_blocking(move || crate::folder_dialog::pick(owner, &initial))
+        .await
+        .map_err(|_| "文件夹选择中断")?
 }
 #[tauri::command]
 pub async fn reveal_official_reader(

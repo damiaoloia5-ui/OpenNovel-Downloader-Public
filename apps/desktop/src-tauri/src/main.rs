@@ -863,6 +863,7 @@ fn main() {
                     official_reader::open_official_reader,
                     official_reader::inspect_official_reader,
                     official_reader::save_official_reader,
+                    official_reader::choose_official_export_directory,
                     official_reader::reveal_official_reader,
                     official_reader::close_official_reader,
                     export_destination::book_export_destination,

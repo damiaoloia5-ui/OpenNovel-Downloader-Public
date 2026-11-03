@@ -173,7 +173,7 @@ impl Library {
         let manifest: BackupManifest = serde_json::from_slice(&std::fs::read(manifest_path)?)?;
         if manifest.format != 1
             || manifest.application != "OpenNovel Downloader"
-            || !(1..=9).contains(&manifest.schema)
+            || !(1..=crate::storage::SCHEMA_VERSION).contains(&manifest.schema)
         {
             return Err(Error::Invalid("备份格式或版本不受支持".into()));
         }

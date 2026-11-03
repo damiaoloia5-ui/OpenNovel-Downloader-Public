@@ -126,3 +126,60 @@ fn readable_page_keeps_long_text_without_a_membership_or_word_quota() {
         OfficialPage::parse(&raw.to_string(), "faloo", "https://b.faloo.com/123_10.html").is_ok()
     );
 }
+
+#[test]
+fn migu_mobile_preview_keeps_identity_metadata_and_explicit_excerpt_scope() {
+    use opennovel_core::official_page_url;
+    let url = "https://n.cmread.com/nap/p/wap_detail_new.jsp?bid=123";
+    assert_eq!(
+        official_book_link("migu", "https://www.cmread.com/yuekan/novel/123.html")
+            .unwrap()
+            .as_str(),
+        url
+    );
+    assert_eq!(
+        official_book_link("migu", &format!("{url}&cm=demo&type=1"))
+            .unwrap()
+            .as_str(),
+        url
+    );
+    for bad in [
+        format!("{url}&bid=456"),
+        format!("{url}&token=no"),
+        url.replace("bid=123", "bid=0"),
+        url.replace("n.cmread.com", "evil.test"),
+    ] {
+        assert!(official_book_link("migu", &bad).is_err());
+    }
+    assert_eq!(
+        official_page_url("migu", &format!("{url}&tracking=drop#drop"))
+            .unwrap()
+            .as_str(),
+        url
+    );
+    let raw = serde_json::json!({"platform":"migu","url":url,"status":"excerpt","book_id":"123","chapter_id":"","book_title":"原创山路","chapter_title":"官网公开试读","author":"原创作者","description":"关于山间行走的原创故事。","paragraphs":["第一章","旅人抵达山顶，看到灯火。"],"declared_words":null});
+    let page = OfficialPage::parse(&raw.to_string(), "migu", url).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let file = page.save_txt(dir.path()).unwrap();
+    let txt = std::fs::read_to_string(file).unwrap();
+    assert!(
+        txt.contains("官网公开试读摘录")
+            && txt.contains("不计入书库完成进度")
+            && txt.contains("原创作者")
+            && txt.contains("关于山间")
+    );
+    for (key, value) in [
+        ("status", serde_json::json!("text")),
+        ("chapter_id", serde_json::json!("1")),
+        ("book_id", serde_json::json!("456")),
+        ("declared_words", serde_json::json!(20)),
+        ("url", serde_json::json!(format!("{url}&token=no"))),
+    ] {
+        let mut bad = raw.clone();
+        bad[key] = value;
+        assert!(
+            OfficialPage::parse(&bad.to_string(), "migu", url).is_err(),
+            "{key}"
+        );
+    }
+}

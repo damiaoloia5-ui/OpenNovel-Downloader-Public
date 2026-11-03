@@ -12,7 +12,7 @@ pub struct ExportDestination {
 
 // Limit each part in UTF-16 units as well as removing Windows-invalid characters.
 // The platform prefix means reserved bare device names can never be filenames.
-fn filename_part(value: &str, fallback: &str, limit: usize) -> String {
+pub(crate) fn filename_part(value: &str, fallback: &str, limit: usize) -> String {
     let mut result = String::new();
     let mut units = 0;
     for c in value.trim().chars() {
