@@ -185,7 +185,18 @@ impl Library {
     }
 
     pub fn create_import(&self, json: &str) -> Result<String> {
+        self.create_import_with_destination(json, None)
+    }
+
+    pub fn create_import_with_destination(
+        &self,
+        json: &str,
+        destination: Option<&crate::SaveDestination>,
+    ) -> Result<String> {
         let document = ImportDocument::parse(json)?;
+        if let Some(destination) = destination {
+            destination.validate()?;
+        }
         let book_id = Uuid::new_v4().to_string();
         let job_id = Uuid::new_v4().to_string();
         let mut connection = self.connection()?;
@@ -215,6 +226,9 @@ impl Library {
                 "INSERT INTO job_items (job_id,chapter_id,position,payload,state) VALUES (?1,?2,?3,?4,'queued')",
                 params![job_id, chapter.id, position, serde_json::to_string(chapter)?],
             )?;
+        }
+        if let Some(destination) = destination {
+            destination.persist(&transaction, &book_id)?;
         }
         transaction.commit()?;
         Ok(job_id)

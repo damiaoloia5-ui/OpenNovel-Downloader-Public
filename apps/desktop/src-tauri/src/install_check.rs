@@ -10,12 +10,24 @@ use std::{
 
 fn local_roundtrip(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let library = Arc::new(Library::open(root.join("sample-library.db"))?);
-    let job = library.create_import(include_str!("../../../../examples/local-book.json"))?;
-    let book = library.run_import(&job, &AtomicBool::new(false))?.book_id;
     let chosen = root.join("chosen-book-folder");
     std::fs::create_dir(&chosen)?;
-    library.set_export_directory(&book, Some(&chosen))?;
-    let service = AutoTxtService::start(library, root.join("sample-exports"))?;
+    let destination = opennovel_core::SaveDestination {
+        directory: Some(chosen.clone()),
+    };
+    crate::export_destination::preflight(Some(&destination), &root.join("sample-exports"))?;
+    let job = library.create_import_with_destination(
+        include_str!("../../../../examples/local-book.json"),
+        Some(&destination),
+    )?;
+    let book = library.job(&job)?.book_id;
+    if !library.export_destination(&book, root)?.custom
+        || library.book_summary(&book)?.saved_chapters != 0
+    {
+        return Err("开始保存前的目录选择未落库".into());
+    }
+    let service = AutoTxtService::start(Arc::clone(&library), root.join("sample-exports"))?;
+    library.run_import(&job, &AtomicBool::new(false))?;
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut original: Option<(PathBuf, String)> = None;
     loop {
@@ -85,6 +97,7 @@ pub fn run(output: &Path) -> Result<bool, Box<dyn std::error::Error>> {
         "original_sample_txt": {"ready": local.is_ok(), "result": local},
         "deleted_sample_txt_recovered": local.is_ok(),
         "chosen_directory_and_simple_filename_checked": local.is_ok(),
+        "directory_selected_before_save_checked": local.is_ok(),
         "native_folder_dialog_initialization": folder_dialog,
         "optional_local_engine": engine,
         "user_library_opened": false,

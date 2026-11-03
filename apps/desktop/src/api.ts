@@ -60,6 +60,9 @@ export interface BookDetails {book:Book;description:string;acquired_at:string;ch
 export interface Receipt { path: string; saved_chapters: number; total_chapters: number; partial: boolean }
 export interface AutoTxtStatus {book_id:string;state:string;receipt:Receipt|null;export_id:string|null;error:string|null}
 export function automaticTxtSnapshot():Promise<AutoTxtStatus[]> {return invoke('automatic_txt_snapshot');}
+export interface SaveDestination {directory:string|null}
+export function defaultExportRoot():Promise<string> {return invoke('default_export_root');}
+export function chooseSaveDirectory(current:string|null):Promise<string|null> {return invoke('choose_save_directory',{current});}
 export interface ExportDestination {directory:string;custom:boolean;filename:string}
 export function bookExportDestination(bookId:string):Promise<ExportDestination> {return invoke('book_export_destination',{bookId});}
 export function chooseBookExportDirectory(bookId:string):Promise<ExportDestination|null> {return invoke('choose_book_export_directory',{bookId});}
@@ -80,13 +83,13 @@ export const desktopAvailable = isTauri();
 
 export function snapshot(): Promise<Snapshot> { return invoke('library_snapshot'); }
 export function inspectBook(input: string): Promise<Catalog> { return invoke('inspect_book', { input }); }
-export function downloadBook(input: string, first: number, last: number,selection?:string): Promise<string> { return invoke('download_book', { input, first, last,selection:selection || null }); }
+export function downloadBook(input: string, first: number, last: number,selection?:string,destination?:SaveDestination): Promise<string> { return invoke('download_book', { input, first, last,selection:selection || null,destination:destination??null }); }
 export function bookDetails(bookId:string):Promise<BookDetails> {return invoke('book_details',{bookId});}
 export function readChapter(bookId:string,chapterId:string):Promise<ChapterContent> {return invoke('read_chapter',{bookId,chapterId});}
 export function exportJob(jobId:string,format:'txt'|'epub'):Promise<Receipt> {return invoke('export_job',{jobId,format});}
 export function revealExport(id:string):Promise<void> {return invoke('reveal_export',{id});}
 export function pauseJob(jobId:string):Promise<void> {return invoke('pause_job',{jobId});}
-export function importBook(json: string): Promise<string> { return invoke('import_book', { json }); }
+export function importBook(json: string,destination?:SaveDestination): Promise<string> { return invoke('import_book', { json,destination:destination??null }); }
 export interface TxtSupplementPreview {fingerprint:string;title:string;total:number;already_saved:number;first_title:string;last_title:string}
 export function previewTxtSupplement(bookId:string,text:string):Promise<TxtSupplementPreview> {return invoke('preview_txt_supplement',{bookId,text});}
 export function confirmTxtSupplement(bookId:string,text:string,fingerprint:string):Promise<TxtSupplementPreview> {return invoke('confirm_txt_supplement',{bookId,text,fingerprint});}
@@ -122,5 +125,5 @@ export function previewAccountPage(id:string,kind:'catalog'|'chapter'):Promise<C
 export function previewPlatformCatalog(id:string,bookUrl:string):Promise<CapturePreview> {return invoke('preview_platform_catalog',{id,bookUrl});}
 export function confirmAccountPage(id:string,token:string):Promise<CaptureReceipt> {return invoke('confirm_account_page',{id,token});}
 export function accountDownloadJobs(bookId:string):Promise<Job[]> {return invoke('account_download_jobs',{bookId});}
-export function startAccountDownload(id:string,bookId:string,selection:string,noAutoPurchase:boolean,intervalMs=500):Promise<string> {return invoke('start_account_download',{id,bookId,selection:selection.trim()||null,noAutoPurchase,intervalMs});}
+export function startAccountDownload(id:string,bookId:string,selection:string,noAutoPurchase:boolean,intervalMs=500,destination?:SaveDestination):Promise<string> {return invoke('start_account_download',{id,bookId,selection:selection.trim()||null,noAutoPurchase,intervalMs,destination:destination??null});}
 export function resumeAccountDownload(id:string,jobId:string,noAutoPurchase:boolean,intervalMs=500):Promise<string> {return invoke('resume_account_download',{id,jobId,noAutoPurchase,intervalMs});}

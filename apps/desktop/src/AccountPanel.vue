@@ -6,9 +6,11 @@ import AutoSavePanel from './AutoSavePanel.vue';
 import OfficialReaderPanel from './OfficialReaderPanel.vue';
 import {accountList,createAccount,openAccount,closeAccount,previewAccountPage,confirmAccountPage,startAccountDownload,snapshot,type AccountStatus,type Book,type CapturePreview} from './api';
 import {qidianBookId,qidianBookLink,officialBookPlatform,sessionBookPlatform} from './workflow';
+import SaveLocation from './SaveLocation.vue';
 import {readGuidedCatalog} from './guidedCatalog';
-const props=defineProps<{bookId?:string;initialUrl?:string;accountId?:string;embedded?:boolean}>();
+const props=defineProps<{bookId?:string;initialUrl?:string;initialDirectory?:string|null;accountId?:string;embedded?:boolean}>();
 const emit=defineEmits<{saved:[bookId:string];read:[bookId:string];ready:[bookId:string,accountId:string];selected:[accountId:string]}>();
+const directory=ref<string|null>(props.initialDirectory??null);const choosingDirectory=ref(false);const directoryTouched=ref(props.initialDirectory!==undefined);
 const platformNames:Record<string,string>={qidian:'起点',shuqi:'书旗',zongheng:'纵横','17k':'17K',jinjiang:'晋江',qimao:'七猫',ciweimao:'刺猬猫',faloo:'飞卢',migu:'咪咕'};
 const accounts=ref<AccountStatus[]>([]);const chosen=ref('');const books=ref<Book[]>([]);const bookUrl=ref('');
 const busy=ref(false);const error=ref('');const notice=ref('');const preview=ref<CapturePreview|null>(null);const previewAccount=ref('');const previewUrl=ref('');const catalogRevision=ref(0);
@@ -33,7 +35,7 @@ function openBook(){void action(async()=>{const link=qidianBookLink(bookUrl.valu
 function readCatalog(){void action(async()=>{preview.value=null;acknowledged.value=false;const epoch=++readEpoch;const link=qidianBookLink(bookUrl.value);if(!link)throw new Error('请先填写起点作品链接并打开作品目录。');const id=chosen.value;const result=await previewAccountPage(id,'catalog');if(disposed||readEpoch!==epoch||id!==chosen.value||link!==qidianBookLink(bookUrl.value))return;if(result.catalog?.remote_id!==qidianBookId(link))throw new Error('官网目录与填写的作品不一致，请点击“打开作品目录”后重试。');preview.value=result;previewAccount.value=id;previewUrl.value=link;});}
 function collectCatalog(navigate=true){void action(async()=>{const link=qidianBookLink(bookUrl.value);if(!link)throw new Error('请先填写这本书的起点官网链接。');const id=chosen.value;const epoch=++readEpoch;const current=()=>!disposed&&readEpoch===epoch&&chosen.value===id&&qidianBookLink(bookUrl.value)===link;preview.value=null;acknowledged.value=false;if(navigate)await openAccount(id,`${link}catalog/`);if(!current())return;const result=await readGuidedCatalog(link,()=>previewAccountPage(id,'catalog'),current,()=>new Promise(resolve=>setTimeout(resolve,1200)));if(result){preview.value=result;previewAccount.value=id;previewUrl.value=link;}});}
 function loggedIn(){loginAcknowledged.value=true;if(selectedBook.value){emit('ready',selectedBook.value.id,chosen.value);return;}collectCatalog();}
-function confirmCatalog(){void action(async()=>{const value=preview.value;const id=chosen.value;const link=qidianBookLink(bookUrl.value);const epoch=readEpoch;if(!acknowledged.value)throw new Error('请先确认已关闭官网自动订阅，并拥有要保存内容的阅读权限。');if(!value||previewAccount.value!==id||previewUrl.value!==link)throw new Error('账户或作品已改变，请重新读取目录。');const result=await confirmAccountPage(id,value.token);if(disposed||readEpoch!==epoch||chosen.value!==id||qidianBookLink(bookUrl.value)!==link)return;preview.value=null;catalogRevision.value++;emit('saved',result.book_id);await startAccountDownload(id,result.book_id,'',true);if(disposed||readEpoch!==epoch)return;notice.value='已开始保存，结束后会自动生成 TXT。';emit('ready',result.book_id,id);});}
+function confirmCatalog(){void action(async()=>{const value=preview.value;const id=chosen.value;const link=qidianBookLink(bookUrl.value);const epoch=readEpoch;if(!acknowledged.value)throw new Error('请先确认已关闭官网自动订阅，并拥有要保存内容的阅读权限。');if(!value||previewAccount.value!==id||previewUrl.value!==link)throw new Error('账户或作品已改变，请重新读取目录。');const result=await confirmAccountPage(id,value.token);if(disposed||readEpoch!==epoch||chosen.value!==id||qidianBookLink(bookUrl.value)!==link)return;preview.value=null;catalogRevision.value++;emit('saved',result.book_id);await startAccountDownload(id,result.book_id,'',true,500,{directory:directory.value});if(disposed||readEpoch!==epoch)return;notice.value='已开始保存，结束后会自动生成 TXT。';emit('ready',result.book_id,id);});}
 function savedBook(id:string){void action(async()=>{await reload();if(props.embedded&&id!==props.bookId){notice.value='已保存另一部作品，请从书库打开它的工作台。';emit('saved',id);return;}const b=books.value.find(b=>b.id===id&&b.source==='qidian-session');if(b)bookUrl.value=`https://www.qidian.com/book/${b.remote_id}/`;catalogRevision.value++;emit('saved',id);});}
 function add(){void action(async()=>{const a=await createAccount(platform.value,label.value);if(a.platform==='qidian')chosen.value=a.id;label.value='';notice.value='本地账户记录已添加。';});}
 function close(id:string,remove:boolean){void action(async()=>{await closeAccount(id,remove);preview.value=null;notice.value=remove?'账户记录已移除，书库保留。':'会话已关闭，书库和进度保留。';});}
@@ -42,8 +44,8 @@ onMounted(()=>{void action(async()=>{await reload();applyInput();});window.addEv
 onUnmounted(()=>{disposed=true;readEpoch++;window.removeEventListener('focus',refocus);});
 </script>
 <template>
-  <PlatformSavePanel v-if="otherSession||sessionBookPlatform(initialUrl||'')" :book-id="otherSession?.id" :initial-url="initialUrl" @saved="emit('saved',$event)" @read="emit('read',$event)" />
-  <OfficialReaderPanel v-else-if="!embedded&&officialBookPlatform(initialUrl||'')==='migu'" :initial-url="initialUrl" />
+  <PlatformSavePanel v-if="otherSession||sessionBookPlatform(initialUrl||'')" :book-id="otherSession?.id" :initial-url="initialUrl" :initial-directory="initialDirectory" @saved="emit('saved',$event)" @read="emit('read',$event)" />
+  <OfficialReaderPanel v-else-if="!embedded&&officialBookPlatform(initialUrl||'')==='migu'" :initial-url="initialUrl" :initial-directory="initialDirectory" />
   <details v-else-if="!embedded"><summary>其他平台：登录并连续保存</summary><PlatformSavePanel @saved="emit('saved',$event)" @read="emit('read',$event)" /><details><summary>当前页文字采集与咪咕识别</summary><OfficialReaderPanel /></details></details>
   <section v-if="!otherSession&&!sessionBookPlatform(initialUrl||'')&&!officialBookPlatform(initialUrl||'')" class="account-panel" aria-label="起点保存引导">
     <h2>{{ embedded?'保存这本书':'跟着提示保存小说' }} <small>起点 · 实验性</small></h2>
@@ -62,12 +64,12 @@ onUnmounted(()=>{disposed=true;readEpoch++;window.removeEventListener('focus',re
 <h3>是这本书吗？</h3><section class="catalog-confirm" aria-label="核对作品目录"><h4>{{ preview.catalog.title }}</h4><p>{{ preview.catalog.author||'未标注作者' }} · 目录共 {{ preview.catalog.chapters.length }} 章</p><p>首章：{{ preview.catalog.chapters[0]?.title }}<br>末章：{{ preview.catalog.chapters[preview.catalog.chapters.length-1]?.title }}</p></section>
         <p>请核对书名和章数。接下来会保存可正常阅读的正文，结束后自动生成 TXT；遇到限制会停止并保留已保存内容。</p>
         <label class="ack"><input v-model="acknowledged" type="checkbox" :disabled="busy">我已在官网关闭自动订阅，确认只保存已有阅读权限的内容</label>
-        <div class="actions"><button class="primary" :disabled="busy||!acknowledged" @click="confirmCatalog">{{ busy?'正在开始保存…':'是这本，开始保存为 TXT' }}</button><button :disabled="busy" @click="preview=null;acknowledged=false">不是这本，重新读取</button></div>
+        <SaveLocation v-model="directory" :disabled="busy" @busy="choosingDirectory=$event" @update:model-value="directoryTouched=true" /><div class="actions"><button class="primary" :disabled="busy||choosingDirectory||!acknowledged" @click="confirmCatalog">{{ busy?'正在开始保存…':'是这本，开始保存为 TXT' }}</button><button :disabled="busy" @click="preview=null;acknowledged=false">不是这本，重新读取</button></div>
         <p v-if="!acknowledged">先勾选上面的确认项，才能开始保存。目录章数不代表已订阅或已保存章数。</p>
       </template>
       <template v-else><h3>{{ busy?'正在识别这本书，请稍等…':'还没读到完整目录' }}</h3><p>{{ busy?'软件正在打开作品目录并尝试读取，不需要你来回点击。':'如果官网要求登录或验证，请先完成；如果目录没有全部显示，请在官网点“展开全部”，再点下面的按钮。' }}</p><div v-if="!busy" class="actions"><button class="primary" @click="collectCatalog(false)">我已处理，重新读取</button><button @click="collectCatalog()">重新打开这本书</button></div></template>
     </section>
-    <AutoSavePanel v-else-if="current&&selectedBook" :key="`${chosen}:${selectedBook.id}`" :account-id="chosen" :opened="!!opened" :preferred-book="selectedBook.id" :revision="catalogRevision" guided hide-export @check-session="refocus" @saved="emit('saved',$event)" @read="emit('read',$event)" />
+    <AutoSavePanel v-else-if="current&&selectedBook" :key="`${chosen}:${selectedBook.id}`" :account-id="chosen" :opened="!!opened" :preferred-book="selectedBook.id" :revision="catalogRevision" :initial-directory="directoryTouched?directory:undefined" guided hide-export @check-session="refocus" @saved="emit('saved',$event)" @read="emit('read',$event)" />
     <p v-if="current?.blocked_navigation" class="message failure">官网有一个跳转未能打开。可在下方“更多设置”中关闭官网窗口，再重新登录。</p>
     <p v-if="error" class="message failure" role="alert">{{ error }}<br>下一步：先核对官网窗口的提示，再重试当前步骤。已保存的正文会保留。</p><p v-if="notice" class="message success" role="status">{{ notice }}</p>
     <button v-if="loginAcknowledged&&!selectedBook&&!busy" class="back-login" @click="loginAcknowledged=false;preview=null;acknowledged=false">返回登录步骤</button>

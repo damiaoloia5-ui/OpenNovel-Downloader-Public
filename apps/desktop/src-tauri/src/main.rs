@@ -452,33 +452,37 @@ async fn download_book(
     first: usize,
     last: usize,
     selection: Option<String>,
+    destination: Option<opennovel_core::SaveDestination>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let handle = Arc::clone(&state.source);
     let library = Arc::clone(&state.library);
     let engine = state.engine.enabled();
+    let root = state.exports.clone();
     let job = blocking(move || {
+        export_destination::preflight(destination.as_ref(), &root)?;
         let catalog = inspect_channel(&handle, &input, engine)?;
+        let positions = if let Some(selection) = selection.filter(|s| !s.trim().is_empty()) {
+            opennovel_core::parse_selection(&selection, catalog.chapters.len())?
+        } else {
+            if first == 0 || last < first || last > catalog.chapters.len() {
+                return Err(opennovel_core::Error::Invalid("章节范围超出目录".into()));
+            }
+            (first..=last).collect()
+        };
         if catalog.source == opennovel_core::sources::LOCAL_ENGINE_SOURCE {
-            let positions = if let Some(selection) = selection.filter(|s| !s.trim().is_empty()) {
-                opennovel_core::parse_selection(&selection, catalog.chapters.len())?
-            } else {
-                if first == 0 || last < first || last > catalog.chapters.len() {
-                    return Err(opennovel_core::Error::Invalid("章节范围超出目录".into()));
-                }
-                (first..=last).collect()
-            };
-            return library.create_engine_download(&catalog, &positions);
+            return library.create_engine_download_with_destination(
+                &catalog,
+                &positions,
+                destination.as_ref(),
+            );
         }
         handle.adapter(&catalog.source)?;
-        if let Some(selection) = selection.filter(|s| !s.trim().is_empty()) {
-            library.create_download_selected(
-                &catalog,
-                &opennovel_core::parse_selection(&selection, catalog.chapters.len())?,
-            )
-        } else {
-            library.create_download(&catalog, first, last)
-        }
+        library.create_download_selected_with_destination(
+            &catalog,
+            &positions,
+            destination.as_ref(),
+        )
     })
     .await?;
     launch(&job, &state, None).await?;
@@ -626,9 +630,18 @@ async fn confirm_txt_supplement(
 }
 
 #[tauri::command]
-async fn import_book(json: String, state: State<'_, AppState>) -> Result<String, String> {
+async fn import_book(
+    json: String,
+    destination: Option<opennovel_core::SaveDestination>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
     let library = Arc::clone(&state.library);
-    let job = blocking(move || library.create_import(&json)).await?;
+    let root = state.exports.clone();
+    let job = blocking(move || {
+        export_destination::preflight(destination.as_ref(), &root)?;
+        library.create_import_with_destination(&json, destination.as_ref())
+    })
+    .await?;
     launch(&job, &state, None).await?;
     Ok(job)
 }
@@ -833,8 +846,8 @@ fn main() {
             };
             let directory = database.parent().ok_or("书库目录无效")?;
             let library = Arc::new(Library::open(&database)?);
-            let auto_txt =
-                auto_txt::AutoTxtService::start(Arc::clone(&library), directory.join("exports"))?;
+            let exports = export_destination::application_export_root()?;
+            let auto_txt = auto_txt::AutoTxtService::start(Arc::clone(&library), exports.clone())?;
             app.manage(official_reader::OfficialReaderState::default());
             app.manage(AppState {
                 engine: Arc::new(local_engine::EngineControl::for_directory(directory)),
@@ -842,7 +855,7 @@ fn main() {
                 auto_txt,
                 source: Arc::default(),
                 cancellations: Arc::default(),
-                exports: directory.join("exports"),
+                exports,
                 diagnostic_preview: Mutex::new(None),
                 restored: Mutex::default(),
                 batches: Arc::default(),
@@ -866,6 +879,8 @@ fn main() {
                     official_reader::choose_official_export_directory,
                     official_reader::reveal_official_reader,
                     official_reader::close_official_reader,
+                    export_destination::default_export_root,
+                    export_destination::choose_save_directory,
                     export_destination::book_export_destination,
                     export_destination::set_book_export_directory,
                     export_destination::choose_book_export_directory,

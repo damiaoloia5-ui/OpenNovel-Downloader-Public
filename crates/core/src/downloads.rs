@@ -29,6 +29,20 @@ impl Library {
     ) -> Result<String> {
         self.create_download_linked(catalog, positions, None)
     }
+    pub fn create_download_selected_with_destination(
+        &self,
+        catalog: &Catalog,
+        positions: &[usize],
+        destination: Option<&crate::SaveDestination>,
+    ) -> Result<String> {
+        self.create_download_authorized_with_destination(
+            catalog,
+            positions,
+            None,
+            DownloadAuthorization::Public,
+            destination,
+        )
+    }
     pub(crate) fn create_download_linked(
         &self,
         catalog: &Catalog,
@@ -45,7 +59,27 @@ impl Library {
         batch: Option<(&str, usize, u64)>,
         authorization: DownloadAuthorization,
     ) -> Result<String> {
+        self.create_download_authorized_with_destination(
+            catalog,
+            positions,
+            batch,
+            authorization,
+            None,
+        )
+    }
+
+    pub(crate) fn create_download_authorized_with_destination(
+        &self,
+        catalog: &Catalog,
+        positions: &[usize],
+        batch: Option<(&str, usize, u64)>,
+        authorization: DownloadAuthorization,
+        destination: Option<&crate::SaveDestination>,
+    ) -> Result<String> {
         catalog.validate()?;
+        if let Some(destination) = destination {
+            destination.validate()?;
+        }
         let session_authorized = matches!(authorization, DownloadAuthorization::QidianSession)
             && crate::session_platform(&catalog.source).is_some()
             && batch.is_none();
@@ -168,6 +202,9 @@ impl Library {
         }
         if let Some((batch_id, position, _)) = batch {
             transaction.execute("UPDATE batch_items SET job_id=?3,state='running',error=NULL WHERE batch_id=?1 AND position=?2",params![batch_id,position,job_id])?;
+        }
+        if let Some(destination) = destination {
+            destination.persist(&transaction, &book_id)?;
         }
         transaction.commit()?;
         Ok(job_id)

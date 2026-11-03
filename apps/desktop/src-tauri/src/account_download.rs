@@ -439,12 +439,15 @@ pub async fn account_download_jobs(
         .map_err(|e| e.to_string())
 }
 #[tauri::command]
+// Keep the existing IPC argument names; app and state are injected by Tauri.
+#[allow(clippy::too_many_arguments)]
 pub async fn start_account_download(
     id: String,
     no_auto_purchase: bool,
     interval_ms: Option<u64>,
     book_id: String,
     selection: Option<String>,
+    destination: Option<opennovel_core::SaveDestination>,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> std::result::Result<String, String> {
@@ -453,7 +456,7 @@ pub async fn start_account_download(
     }
     launch(
         id,
-        Some((book_id, selection)),
+        Some((book_id, selection, destination)),
         None,
         navigation_interval(interval_ms)?,
         None,
@@ -479,7 +482,11 @@ pub async fn resume_account_download(
 }
 fn launch(
     id: String,
-    new: Option<(String, Option<String>)>,
+    new: Option<(
+        String,
+        Option<String>,
+        Option<opennovel_core::SaveDestination>,
+    )>,
     resume: Option<String>,
     interval: Duration,
     ticket: Option<ResumeTicket>,
@@ -516,7 +523,7 @@ fn launch(
     }
     let expected_source =
         opennovel_core::session_source(&account.platform).map_err(|e| e.to_string())?;
-    let requested_book = if let Some((book, _)) = &new {
+    let requested_book = if let Some((book, _, _)) = &new {
         book.clone()
     } else {
         state
@@ -534,13 +541,19 @@ fn launch(
     {
         return Err("当前账户平台与这本书不一致，未启动任务".into());
     }
-    let job_id = if let Some((book, selection)) = new {
+    let job_id = if let Some((book, selection, destination)) = new {
         if registrations.values().any(|r| r.book_id == book) {
             return Err("该书有任务正在停止中，请稍候".into());
         }
+        crate::export_destination::preflight(destination.as_ref(), &state.exports)
+            .map_err(|e| e.to_string())?;
         state
             .library
-            .create_session_download(&book, selection.as_deref())
+            .create_session_download_with_destination(
+                &book,
+                selection.as_deref(),
+                destination.as_ref(),
+            )
             .map_err(|e| e.to_string())?
     } else {
         let job = resume.ok_or("缺少任务")?;

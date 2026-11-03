@@ -13,14 +13,24 @@ impl crate::Library {
         catalog: &super::Catalog,
         positions: &[usize],
     ) -> Result<String> {
+        self.create_engine_download_with_destination(catalog, positions, None)
+    }
+
+    pub fn create_engine_download_with_destination(
+        &self,
+        catalog: &super::Catalog,
+        positions: &[usize],
+        destination: Option<&crate::SaveDestination>,
+    ) -> Result<String> {
         if catalog.source != LOCAL_ENGINE_SOURCE {
             return Err(Error::Invalid("本地引擎任务必须使用独立来源身份".into()));
         }
-        self.create_download_authorized(
+        self.create_download_authorized_with_destination(
             catalog,
             positions,
             None,
             crate::downloads::DownloadAuthorization::LocalEngine,
+            destination,
         )
     }
 }

@@ -70,6 +70,29 @@ fn automatic_job_requires_confirmed_catalog_and_keeps_generic_http_disabled() {
 }
 
 #[test]
+fn session_initial_destination_is_saved_before_any_body_and_invalid_choice_creates_no_job() {
+    let d = tempdir().unwrap();
+    let l = Library::open(d.path().join("library.db")).unwrap();
+    let book = l.register_session_catalog(&catalog()).unwrap();
+    let invalid = opennovel_core::SaveDestination {
+        directory: Some(d.path().join("missing")),
+    };
+    assert!(
+        l.create_session_download_with_destination(&book, None, Some(&invalid))
+            .is_err()
+    );
+    assert!(l.snapshot().unwrap().jobs.is_empty());
+    let custom = opennovel_core::SaveDestination {
+        directory: Some(d.path().to_path_buf()),
+    };
+    let job = l
+        .create_session_download_with_destination(&book, None, Some(&custom))
+        .unwrap();
+    assert_eq!(l.job(&job).unwrap().saved, 0);
+    assert!(l.export_destination(&book, d.path()).unwrap().custom);
+}
+
+#[test]
 fn automatic_whole_book_skips_cached_body_and_exports_complete_content() {
     let d = tempdir().unwrap();
     let l = Library::open(d.path().join("library.db")).unwrap();

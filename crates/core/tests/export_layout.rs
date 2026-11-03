@@ -44,6 +44,121 @@ fn imported(l: &Library, id: &str) -> String {
 }
 
 #[test]
+fn initial_folder_is_committed_before_download_and_survives_reopening() {
+    let d = tempfile::tempdir().unwrap();
+    let chosen = d.path().join("先选的目录");
+    std::fs::create_dir(&chosen).unwrap();
+    let db = d.path().join("library.db");
+    let l = Library::open(&db).unwrap();
+    let destination = opennovel_core::SaveDestination {
+        directory: Some(chosen.clone()),
+    };
+    let job = l
+        .create_download_selected_with_destination(
+            &catalog("10000000009"),
+            &[1],
+            Some(&destination),
+        )
+        .unwrap();
+    let book = l.job(&job).unwrap().book_id;
+    assert_eq!(l.book_summary(&book).unwrap().saved_chapters, 0);
+    assert_eq!(
+        Path::new(&l.export_destination(&book, d.path()).unwrap().directory),
+        chosen
+    );
+    drop(l);
+    let l = Library::open(&db).unwrap();
+    l.run_job(&job, &Original, &AtomicBool::new(false)).unwrap();
+    let location = l
+        .export_destination(&book, d.path().join("default"))
+        .unwrap();
+    let receipt = l.export_automatic_txt(&book, &location.directory).unwrap();
+    assert_eq!(Path::new(&receipt.path).parent(), Some(chosen.as_path()));
+    assert!(!d.path().join("default").exists());
+    // Legacy callers preserve custom preferences; explicitly choosing default resets it.
+    let again = l
+        .create_download_selected_with_destination(&catalog("10000000009"), &[1], None)
+        .unwrap();
+    assert!(l.export_destination(&book, d.path()).unwrap().custom);
+    l.run_job(&again, &Original, &AtomicBool::new(false))
+        .unwrap();
+    l.create_download_selected_with_destination(
+        &catalog("10000000009"),
+        &[1],
+        Some(&opennovel_core::SaveDestination { directory: None }),
+    )
+    .unwrap();
+    assert!(!l.export_destination(&book, d.path()).unwrap().custom);
+}
+
+#[test]
+fn invalid_folder_or_failed_preference_write_leaves_no_book_or_job() {
+    let d = tempfile::tempdir().unwrap();
+    let db = d.path().join("library.db");
+    let l = Library::open(&db).unwrap();
+    let bad = opennovel_core::SaveDestination {
+        directory: Some(d.path().join("missing")),
+    };
+    let original = include_str!("../../../examples/local-book.json");
+    assert!(
+        l.create_import_with_destination(original, Some(&bad))
+            .is_err()
+    );
+    assert!(
+        l.create_download_selected_with_destination(&catalog("10000000008"), &[1], Some(&bad))
+            .is_err()
+    );
+    let custom = opennovel_core::SaveDestination {
+        directory: Some(d.path().to_path_buf()),
+    };
+    // Simulate failure at the last DB write, not just preflight validation.
+    let external = rusqlite::Connection::open(&db).unwrap();
+    external.execute_batch("CREATE TRIGGER reject_destination BEFORE INSERT ON export_directories BEGIN SELECT RAISE(ABORT,'original injected storage failure'); END;").unwrap();
+    assert!(
+        l.create_import_with_destination(original, Some(&custom))
+            .is_err()
+    );
+    assert!(
+        l.create_download_selected_with_destination(&catalog("10000000008"), &[1], Some(&custom))
+            .is_err()
+    );
+    assert!(l.snapshot().unwrap().books.is_empty());
+    assert!(l.snapshot().unwrap().jobs.is_empty());
+    external
+        .execute_batch("DROP TRIGGER reject_destination;")
+        .unwrap();
+    let job = l
+        .create_import_with_destination(original, Some(&custom))
+        .unwrap();
+    let book = l.job(&job).unwrap().book_id;
+    assert!(l.export_destination(&book, d.path()).unwrap().custom);
+    assert_eq!(l.book_summary(&book).unwrap().saved_chapters, 0);
+}
+
+#[test]
+fn local_engine_preserves_channel_rules_with_an_initial_folder() {
+    let d = tempfile::tempdir().unwrap();
+    let l = Library::open(d.path().join("library.db")).unwrap();
+    let custom = opennovel_core::SaveDestination {
+        directory: Some(d.path().to_path_buf()),
+    };
+    let mut c = catalog("10000000007");
+    assert!(
+        l.create_engine_download_with_destination(&c, &[1], Some(&custom))
+            .is_err()
+    );
+    c.source = "fanqie-app-local".into();
+    let job = l
+        .create_engine_download_with_destination(&c, &[1], Some(&custom))
+        .unwrap();
+    assert!(
+        l.export_destination(&l.job(&job).unwrap().book_id, d.path())
+            .unwrap()
+            .custom
+    );
+}
+
+#[test]
 fn metadata_and_description_are_in_txt_and_epub_with_concise_filenames() {
     let d = tempfile::tempdir().unwrap();
     let l = Library::open(d.path().join("library.db")).unwrap();

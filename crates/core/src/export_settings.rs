@@ -1,7 +1,39 @@
 use crate::{BookSummary, Error, Library, Result};
 use rusqlite::OptionalExtension;
-use serde::Serialize;
-use std::path::Path;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+
+/// An omitted choice preserves an existing preference; directory=None explicitly
+/// selects the application's default. It is persisted in the task transaction.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SaveDestination {
+    pub directory: Option<PathBuf>,
+}
+
+impl SaveDestination {
+    pub fn validate(&self) -> Result<()> {
+        if let Some(directory) = &self.directory {
+            if !directory.is_absolute() || !directory.is_dir() {
+                return Err(Error::Invalid(
+                    "请选择已存在的文件夹，或填写文件夹的完整路径".into(),
+                ));
+            }
+            let _probe = tempfile::NamedTempFile::new_in(directory)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn persist(&self, db: &rusqlite::Connection, book_id: &str) -> Result<()> {
+        if let Some(directory) = &self.directory {
+            let path = std::path::absolute(directory)?;
+            db.execute("INSERT INTO export_directories(book_id,directory) VALUES (?1,?2) ON CONFLICT(book_id) DO UPDATE SET directory=excluded.directory", rusqlite::params![book_id,path.to_string_lossy()])?;
+        } else {
+            db.execute("DELETE FROM export_directories WHERE book_id=?1", [book_id])?;
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Serialize)]
 pub struct ExportDestination {
@@ -73,21 +105,11 @@ impl Library {
 
     pub fn set_export_directory(&self, book_id: &str, directory: Option<&Path>) -> Result<()> {
         self.book_summary(book_id)?;
-        if let Some(directory) = directory {
-            if !directory.is_absolute() || !directory.is_dir() {
-                return Err(Error::Invalid(
-                    "请选择已存在的文件夹，或填写文件夹的完整路径".into(),
-                ));
-            }
-            // Prove write access before persisting the selection; old preference
-            // and exports survive a failure. The probe is removed on drop.
-            let _probe = tempfile::NamedTempFile::new_in(directory)?;
-            let path = std::path::absolute(directory)?;
-            self.connection()?.execute("INSERT INTO export_directories(book_id,directory) VALUES (?1,?2) ON CONFLICT(book_id) DO UPDATE SET directory=excluded.directory", rusqlite::params![book_id,path.to_string_lossy()])?;
-        } else {
-            self.connection()?
-                .execute("DELETE FROM export_directories WHERE book_id=?1", [book_id])?;
-        }
-        Ok(())
+        let choice = SaveDestination {
+            directory: directory.map(Path::to_path_buf),
+        };
+        choice.validate()?;
+        let connection = self.connection()?;
+        choice.persist(&connection, book_id)
     }
 }

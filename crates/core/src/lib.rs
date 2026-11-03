@@ -25,7 +25,7 @@ pub use accounts::{
 pub use batch::{BatchItem, BatchSnapshot, MAX_BATCH_ITEMS};
 pub use domain::*;
 pub use export::ExportFormat;
-pub use export_settings::ExportDestination;
+pub use export_settings::{ExportDestination, SaveDestination};
 pub use maintenance::{BackupManifest, BookPreferences, DiagnosticReport};
 pub use official_reader::{
     OfficialPage, official_book_link, official_login_url, official_page_url, official_platform_name,

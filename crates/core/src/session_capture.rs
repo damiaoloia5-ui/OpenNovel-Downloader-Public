@@ -353,16 +353,26 @@ impl Library {
         book_id: &str,
         selection: Option<&str>,
     ) -> Result<String> {
+        self.create_session_download_with_destination(book_id, selection, None)
+    }
+
+    pub fn create_session_download_with_destination(
+        &self,
+        book_id: &str,
+        selection: Option<&str>,
+        destination: Option<&crate::SaveDestination>,
+    ) -> Result<String> {
         let catalog = self.session_catalog(book_id)?;
         let positions = match selection.filter(|s| !s.trim().is_empty()) {
             Some(s) => crate::parse_selection(s, catalog.chapters.len())?,
             None => (1..=catalog.chapters.len()).collect(),
         };
-        self.create_download_authorized(
+        self.create_download_authorized_with_destination(
             &catalog,
             &positions,
             None,
             crate::downloads::DownloadAuthorization::QidianSession,
+            destination,
         )
     }
 

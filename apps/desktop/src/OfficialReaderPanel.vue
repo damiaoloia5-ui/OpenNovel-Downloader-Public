@@ -2,15 +2,15 @@
 import {computed,onUnmounted,ref,watch} from 'vue';
 import {officialBookPlatform} from './workflow';
 import {openOfficialReader,inspectOfficialReader,saveOfficialReader,chooseOfficialExportDirectory,revealOfficialReader,closeOfficialReader,type OfficialPreview,type OfficialExport} from './api';
-const props=defineProps<{initialUrl?:string}>();
+const props=defineProps<{initialUrl?:string;initialDirectory?:string|null}>();
 const platform=ref('ciweimao');const bookUrl=ref('');const busy=ref(false);const opened=ref(false);const error=ref('');const notice=ref('');const ack=ref(false);
 const preview=ref<OfficialPreview|null>(null);const receipt=ref<OfficialExport|null>(null);let disposed=false;let epoch=0;
-const directory=ref('');
+const directory=ref(props.initialDirectory||'');
 const names:Record<string,string>={ciweimao:'刺猬猫',faloo:'飞卢',migu:'咪咕悦看'};
 const name=computed(()=>names[platform.value]||platform.value);
 const statusText=computed(()=>({text:'已识别当前可见文字，尚未证明全章完整。',excerpt:'已识别咪咕官网公开试读。可保存试读 TXT；全文仍需在官网提示的 App 中阅读，登录不会自动解锁网页全文。',book:'已识别作品页。请在官网打开目标章节，再识别当前页。',restricted:'官网要求订阅或只提供试读。请在官网核对已有权益，再重新识别。',protected:'当前正文采用图片、画布或保护呈现，此入口无法保存普通文字。',verification:'官网要求验证，请本人在原窗口完成后重新识别。',unsupported:'当前页面结构尚未识别，可能仍在登录页或需要使用 App。',loading:'官网页面还在加载，请稍候重新识别。'}[preview.value?.page.status||'unsupported']));
 watch(()=>props.initialUrl,value=>{if(value){const p=officialBookPlatform(value);if(p){platform.value=p;bookUrl.value=value;}}},{immediate:true});
-watch([platform,bookUrl],()=>{epoch++;preview.value=null;ack.value=false;error.value='';notice.value='';opened.value=false;receipt.value=null;directory.value='';});
+watch([platform,bookUrl],()=>{epoch++;preview.value=null;ack.value=false;error.value='';notice.value='';opened.value=false;receipt.value=null;});
 async function action(work:()=>Promise<void>){if(busy.value)return;const own=epoch;busy.value=true;error.value='';notice.value='';try{await work();}catch(e){if(!disposed&&own===epoch)error.value=String(e);}finally{if(!disposed)busy.value=false;}}
 function open(login:boolean){void action(async()=>{const own=epoch;const p=platform.value;const input=bookUrl.value;if(!login&&officialBookPlatform(input)!==p)throw new Error('请填写所选平台的干净作品链接。');await openOfficialReader(p,input,login);if(!disposed&&own===epoch&&p===platform.value){opened.value=true;preview.value=null;notice.value=login?'请在官网自行登录，再打开你能正常阅读的目标章节。窗口打开不代表已经登录。':p==='migu'?'已打开官网手机试读页，等待加载完成后点击“识别官网试读”。无需先登录。':'作品页已打开，请在官网打开一章正文后回到这里识别。';}});}
 function inspect(){void action(async()=>{const own=epoch;const p=platform.value;preview.value=null;ack.value=false;const result=await inspectOfficialReader(p);if(!disposed&&own===epoch&&p===platform.value)preview.value=result;});}
