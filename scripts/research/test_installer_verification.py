@@ -66,6 +66,29 @@ class InstallerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verifier.verify_preserved(expected)
 
+    def test_nsis_marker_patch_accepts_only_exact_expected_payload(self):
+        with tempfile.TemporaryDirectory() as name:
+            original, installed = Path(name) / 'original.exe', Path(name) / 'installed.exe'
+            payload = b'MZ-original-prefix\0__TAURI_BUNDLE_TYPE_VAR_UNK\0original-suffix'
+            original.write_bytes(payload)
+            packaged = payload.replace(b'_UNK', b'_NSS')
+            installed.write_bytes(packaged)
+            self.assertTrue(verifier.verify_nsis_binary(installed, original)['only_expected_nsis_marker_changed'])
+            for changed in [payload, packaged + b'changed', packaged[:-1],
+                            packaged.replace(b'original-prefix', b'modified-prefix')]:
+                installed.write_bytes(changed)
+                with self.subTest(changed=changed), self.assertRaises(ValueError):
+                    verifier.verify_nsis_binary(installed, original)
+
+    def test_missing_or_ambiguous_build_marker_is_rejected(self):
+        with tempfile.TemporaryDirectory() as name:
+            original, installed = Path(name) / 'original.exe', Path(name) / 'installed.exe'
+            installed.write_bytes(b'__TAURI_BUNDLE_TYPE_VAR_NSS')
+            for payload in [b'original-no-marker', b'__TAURI_BUNDLE_TYPE_VAR_UNK' * 2]:
+                original.write_bytes(payload)
+                with self.assertRaisesRegex(ValueError, 'exactly one'):
+                    verifier.verify_nsis_binary(installed, original)
+
 
 if __name__ == '__main__':
     unittest.main()

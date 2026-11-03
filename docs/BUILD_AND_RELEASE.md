@@ -15,7 +15,7 @@ python scripts/verify_project.py --package basic --native
 
 Windows 签名契约使用当前 Rust 工具链生成原创未签名 EXE，检查无证书拒绝、文件不被修改、错误发布者与篡改签名拒绝，不需要历史安装包，也不执行真实项目签名。Microsoft SignTool 和 Windows SDK 仍是显式前置条件。
 
-GitHub 托管 Windows runner 在基础检查和安全审计通过后，运行 `python scripts/verify_installer.py`。它只允许一次性托管 runner，拒绝本机、自托管 runner、已有 OpenNovel 安装登记或应用数据；在新目录执行静默安装、同版本重装、默认卸载，并核对安装 EXE/许可摘要、原生原创自检、卸载登记移除，以及原创书库/TXT 保留。此过程会写安装登记和一次性测试数据，所以不提供绕过本机限制的参数。失败保留报告与日志，不强制清理；CI 上传检查日志，不上传书库。未在远端实际通过前只算工具已实现。托管 runner 带有开发工具与运行时，不能替代普通干净 Windows、WebView2 缺失分支或交互窗口验收。
+GitHub 托管 Windows runner 在基础检查后运行 `python scripts/verify_installer.py`。它只允许一次性托管 runner，拒绝本机、自托管 runner、已有 OpenNovel 安装登记或应用数据；在新目录执行静默安装、同版本重装、默认卸载，并核对安装 EXE/许可摘要、原生原创自检、卸载登记移除，以及原创书库/TXT 保留。安装 EXE 只允许 Tauri 2.10.1 规定的唯一 `UNK→NSS` 包类型标记变化，其余字节必须与构建完全一致；缺失/重复标记或任何其他差异均拒绝，不修改被验证文件。此过程会写安装登记和一次性测试数据，所以不提供绕过本机限制的参数。失败保留报告与日志，不强制清理；CI 上传检查日志，不上传书库。安装检查前移以尽早发现失败，依赖审计仍是安装包 artifact 输出的必需条件，失败时保留 Rust 构建缓存减少后续重复编译。未在远端实际通过前只算工具已实现。托管 runner 带有开发工具与运行时，不能替代普通干净 Windows、WebView2 缺失分支或交互窗口验收。
 
 Git 检出会记录实际提交和脏状态；不含 `.git` 的源码 ZIP 会明确记录来源元数据未知，不推断干净、不自动初始化仓库。发布时应保留源码 ZIP 与交付回执中的提交和摘要对应关系。
 

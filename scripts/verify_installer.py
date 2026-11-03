@@ -75,6 +75,25 @@ def verify_preserved(expected):
         raise ValueError('Original test library or export was changed or deleted')
 
 
+def verify_nsis_binary(installed, original):
+    # Tauri bundler 2.10.1 patches UNK -> NSS before NSIS compression, then
+    # restores the unpatched build output. Compare the entire expected payload,
+    # allowing exactly this documented patch, not arbitrary normalized bytes.
+    # https://github.com/tauri-apps/tauri/blob/tauri-bundler-v2.10.1/crates/tauri-bundler/src/bundle.rs
+    source = original.read_bytes()
+    marker = b'__TAURI_BUNDLE_TYPE_VAR_UNK'
+    if source.count(marker) != 1:
+        raise ValueError('Expected exactly one unpatched Tauri bundle marker')
+    expected = source.replace(marker, b'__TAURI_BUNDLE_TYPE_VAR_NSS', 1)
+    actual = installed.read_bytes()
+    if actual != expected:
+        raise ValueError('Installed executable differs beyond the expected NSIS bundle marker')
+    return {'original_sha256': hashlib.sha256(source).hexdigest(),
+            'installed_sha256': hashlib.sha256(actual).hexdigest(),
+            'bundle_marker_offset': source.index(marker),
+            'only_expected_nsis_marker_changed': True}
+
+
 def run(command, output, name):
     with (output / (name + '.log')).open('wb') as stream:
         result = subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT,
@@ -126,8 +145,7 @@ def main():
         for stage in ['install', 'reinstall']:
             run(command, output, stage)
             executable = contained(destination / 'opennovel-desktop.exe', destination)
-            if sha256(executable) != sha256(repo / 'target/release/opennovel-desktop.exe'):
-                raise ValueError('Installed executable differs from the tested build')
+            binary = verify_nsis_binary(executable, repo / 'target/release/opennovel-desktop.exe')
             for name, source in [('LICENSE', repo / 'LICENSE'),
                                  ('THIRD_PARTY_NOTICES.txt', repo / '.artifacts/release/THIRD_PARTY_NOTICES.txt')]:
                 if sha256(destination / name) != sha256(source):
@@ -138,7 +156,7 @@ def main():
             run([str(executable), '--check-installation', str(stage_output / 'native')], output, stage + '-native')
             inspect_native(stage_output, version)
             verify_preserved(expected)
-            report['steps'].append({'name': stage, 'passed': True})
+            report['steps'].append({'name': stage, 'passed': True, 'binary': binary})
         # Run a copy with NSIS _?= so it remains attached and targets only this
         # exact validated install directory. No recursive shell deletion is used.
         uninstaller = output / 'test-uninstall.exe'

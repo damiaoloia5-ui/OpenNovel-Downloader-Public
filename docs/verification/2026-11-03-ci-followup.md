@@ -42,4 +42,14 @@
 
 ## 剩余条件
 
-远端修复复验、托管安装链路、普通独立 Windows/缺失 WebView2、真实已购账户仍分别保留。没有创建 tag、推送新提交、发布 Release 或办理签名证书。本轮不能标记“全部平台与正式发布已完结”。
+远端修复复验、托管安装链路、普通独立 Windows/缺失 WebView2、真实已购账户仍分别保留。本轮不能标记“全部平台与正式发布已完结”。
+
+## 授权后的首次远端结果与校验修正
+
+用户明确授权 push 并继续远端验收，已推送 `e6236e47bc1a9252991865512b9392edcd3991e0` 并核对远端 main 摘要。[运行 41614544170](https://github.com/damiaoloia5-ui/OpenNovel-Downloader/actions/runs/41614544170) 的 13 项基础检查通过，依赖审计通过：npm 0 漏洞，Rust 0 漏洞，RustSec 1403 条公告、提交 `6c5fedf8ff03c485ed674d8f941e0180f3f72d70`。fxhash 维护状态警告仍在 Windows 依赖树内；proc-macro-error/glib 警告不在 Windows 树内。此 CI 未扫描独立引擎，不替代此前一体化组件审计。
+
+安装验收在首次安装后的 EXE 摘要核对处停止，没有完成重装/卸载。查明是测试预期错误：[Tauri bundler 2.10.1 源码](https://github.com/tauri-apps/tauri/blob/tauri-bundler-v2.10.1/crates/tauri-bundler/src/bundle.rs) 在打包前将唯一 `__TAURI_BUNDLE_TYPE_VAR_UNK` 改为 `__TAURI_BUNDLE_TYPE_VAR_NSS`，打包后恢复构建目录中的原始 EXE，所以两者不能直接要求原始 SHA-256 相等。
+
+修正为在内存构造唯一规定标记变化后的预期文件，再与已安装文件逐字节比较，记录两者摘要和偏移；不修改安装 EXE，不忽略未知字节变化。新增测试拒绝额外修改、截断、追加数据、未打包标记和缺失/多重标记。安装测试移到昂贵的审计工具编译之前，仍要求所有门禁成功才输出安装包 artifact；开启失败时缓存以减少重复构建。Python 全套本地复验为 88 项。安装生命周期最终状态等待下一次远端运行，不能以本地单元测试代替。
+
+已下载的首次远端报告和全部日志保存在 `.artifacts/ci-followup-20261103/remote-first/`。普通 `rg --files` 会按项目忽略规则隐藏 `.log`，但文件实际已经包含在远端上传的 30 个文件中。现有一体化交付三文件、原用户书库与桌面快捷方式摘要全部未变，记录在 `preserved-delivery.json`。未创建 tag 或发布 Release。
