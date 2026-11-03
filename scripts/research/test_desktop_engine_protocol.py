@@ -42,7 +42,13 @@ class ProtocolTests(unittest.TestCase):
         self.slow = False
         self.failure_kind = None
         self.failure_details = {}
+        self.readers = []
         owner = self
+
+        def input_thread(*args, **kwargs):
+            thread = threading.Thread(*args, **kwargs)
+            self.readers.append(thread)
+            return thread
 
         class Session:
             def __init__(self, book, items, **kwargs):
@@ -65,7 +71,9 @@ class ProtocolTests(unittest.TestCase):
                 self.closed = True
 
         self.patches = [patch.object(worker, 'sys', types.SimpleNamespace(stdin=types.SimpleNamespace(buffer=self.reader))),
-                        patch.object(worker, 'emit', self.events.put), patch.object(worker, 'EngineSession', Session)]
+                        patch.object(worker, 'emit', self.events.put), patch.object(worker, 'EngineSession', Session),
+                        patch.object(worker.native, 'present', return_value=False),
+                        patch.object(worker, 'threading', types.SimpleNamespace(Event=threading.Event, Thread=input_thread))]
         for value in self.patches:
             value.start()
         self.thread = threading.Thread(target=worker.serve)
@@ -75,6 +83,12 @@ class ProtocolTests(unittest.TestCase):
         self.input.close()
         self.thread.join(6)
         self.assertFalse(self.thread.is_alive())
+        # serve() owns a daemon input reader as well as the main worker. Close
+        # and join both before replacing global stdin/emit for the next test;
+        # otherwise a late reader can consume the next test's configuration.
+        for thread in self.readers:
+            thread.join(6)
+            self.assertFalse(thread.is_alive(), 'protocol input reader leaked across tests')
         self.reader.close()
         for value in reversed(self.patches):
             value.stop()

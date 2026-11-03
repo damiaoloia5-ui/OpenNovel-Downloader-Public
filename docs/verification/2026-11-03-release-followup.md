@@ -36,3 +36,11 @@ Tauri 打包签名后会恢复构建目录内未签名的独立桌面 EXE。原�
 新一体化候选的验证副本为 `.artifacts/release-followup-20261103/candidate/`，基础测试副本在 `basic-launcher-check/`。纯交付目录 `delivery/` 只复制已核对的程序、完整组件、许可和文档，不复制验收样本数据库或日志，附 SHA-256 清单。旧 `.artifacts/security-delivery-20261103` 中的主程序、CLI 和安装器，以及原用户书库、桌面快捷方式 SHA-256 全部未变，证据为 `preserved-delivery.json`。
 
 没有修改依赖，本轮不扩张已有安全审计范围；上一轮的依赖公告快照与引擎材料边界见[CI 与安全补验](2026-11-03-ci-followup.md)。仍待真实 CA 签名、普通干净 Windows/缺失 WebView2 分支、实际窗口与已购账号验收。不创建 tag，不发布 Release，不把这些自检称为全平台完整下载证明。
+
+## 首次远端验收发现的测试隔离问题
+
+用户授权后，`64ef389553734d995f0cf4e40f4332a36f2ab4c2` 已推送。[运行 41629657210](https://github.com/damiaoloia5-ui/OpenNovel-Downloader/actions/runs/41629657210) 的 fmt、Clippy、Rust、前端检查通过，Python 在已有 `test_stale_sequence_closes_without_requesting_content` 的就绪消息等待处失败；安装和审计尚未执行，不能称本轮远端通过。原始日志在 `remote-first/`。
+
+定位发现协议测试结束时只回收主工作线程，后台输入线程仍可能存活；全局 stdin/emit 在下一测试被替换，迟到的输入线程可能消费下一测试的配置。使用原创队列夹具延迟输入线程 0.2 秒，旧测试清理立即返回且线程仍活着；修复后等待约 0.203 秒，清理返回时线程已退出。测试同时固定使用原创 Session，避免本机是否存在可选引擎影响该测试。
+
+只修改测试夹具，未修改实际协议、超时、限流或下载实现。原有 3 秒消息断言仍保留，未通过增大超时掩盖问题。受控前后对比及 200 次连续协议测试通过，证据为 `protocol-isolation/report.json`。首次失败报告保留，不被后续结果覆盖。
