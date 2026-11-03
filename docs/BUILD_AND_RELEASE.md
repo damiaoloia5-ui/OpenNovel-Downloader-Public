@@ -25,7 +25,7 @@ Git 检出会记录实际提交和脏状态；不含 `.git` 的源码 ZIP 会明
 python scripts/verify_sources.py --live --executable "D:\OpenNovel\target\release\opennovel.exe" --output "D:\OpenNovel\.artifacts\source-check-new"
 ```
 
-请替换为实际绝对路径；输出目录必须尚不存在。固定样本覆盖番茄、七猫、晋江、纵横、17K、书旗，每来源两部作品。保存最多三个开放章及一个限制项，核对实际 TXT 全部已存段落和 EPUB ZIP；书旗只验目录及禁用正文守卫。同来源出现异常后不继续请求下一本。另检查起点、书旗、刺猬猫、飞卢、咪咕的官方入口 HTTP 状态。报告不保存会话 Cookie、响应头或登录信息，不执行登录、购买或验证码操作。
+请替换为实际绝对路径；输出目录必须尚不存在。固定样本覆盖番茄、七猫、晋江、纵横、17K、书旗，每来源两部作品。保存最多三个开放章及一个限制项，核对实际 TXT 全部已存段落和 EPUB ZIP；书旗同样只读取明确免费的章节。同来源出现异常后不继续请求下一本。另检查起点、书旗、刺猬猫、飞卢、咪咕的官方入口 HTTP 状态。报告不保存会话 Cookie、响应头或登录信息，不执行登录、购买或验证码操作。
 
 `public_checks_passed` 只说明本次公开样本通过；`entry_checks_completed` 只说明入口探测完成（可能返回验证），二者均不证明全站、账户权益或全书能力。番茄本地引擎另用显式原生验收。样本变化时由维护者核对官网再调整固定列表，不能把失效样本直接当平台全部失效。报告和正文仅留本地，不提交 Git。普通用户无需安装 Python 或运行此脚本。
 
@@ -71,6 +71,8 @@ npm run desktop:package:integrated
 主程序 Apache-2.0 与引擎 GPL-3.0 分别保留，公开分发前复核完整许可材料。清单、单元测试和成功构建不是法律或安全认证。
 
 ## 交付检查
+
+依赖和权限检查按 [SECURITY.md](../SECURITY.md) 执行；CI 基础包审计不能替代一体化内置引擎审计。安全刷新工具 `scripts/update_native_engine_dependencies.py --source-archive <当前锁定源码归档> --output <新目录>` 保留上游文件，更新独立 workspace 锁定依赖、完整 vendor 和许可材料，离线重建。新 manifest 仍需审查、固定并通过原生沙箱测试，不能直接分发未核验构建。
 
 1. 核对源码提交、版本一致、工作区和 staged diff；正文、凭据、缓存、构建产物不提交。
 2. 运行统一检查并保留新回执。`passed=true` 仅覆盖实际列出的命令与原创样本。

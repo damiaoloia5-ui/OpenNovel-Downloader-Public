@@ -25,12 +25,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: npm ci
       - run: python scripts/verify_project.py --package basic --native
+      - name: Install pinned dependency auditor
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Audit dependencies and desktop permission configuration
+        run: python scripts/verify_security.py --output .artifacts/security-ci
       - uses: actions/upload-artifact@v4
         if: always()
+        with:
+          name: opennovel-check-reports
+          include-hidden-files: true
+          path: |
+            .artifacts/checks/**/report.json
+            .artifacts/security-ci/**
+      - uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: opennovel-windows-x64-basic
           include-hidden-files: true
           path: |
             target/release/bundle/nsis/*-setup.exe
             .artifacts/release/THIRD_PARTY_NOTICES.txt
-            .artifacts/checks/**/report.json

@@ -180,7 +180,7 @@ fn epub_has_stored_mimetype_valid_xml_and_escaped_text() {
     let mut mimetype = String::new();
     {
         let mut first = archive.by_index(0).unwrap();
-        assert_eq!(first.name(), "mimetype");
+        assert_eq!(first.name().unwrap(), "mimetype");
         assert_eq!(first.compression(), zip::CompressionMethod::Stored);
         first.read_to_string(&mut mimetype).unwrap();
     }
@@ -190,7 +190,7 @@ fn epub_has_stored_mimetype_valid_xml_and_escaped_text() {
         let mut xml = String::new();
         file.read_to_string(&mut xml).unwrap();
         let parsed = roxmltree::Document::parse(&xml).unwrap();
-        if file.name() == "EPUB/chapter-0.xhtml" {
+        if file.name().unwrap() == "EPUB/chapter-0.xhtml" {
             assert!(!parsed.descendants().any(|node| node.has_tag_name("script")));
             assert!(
                 parsed

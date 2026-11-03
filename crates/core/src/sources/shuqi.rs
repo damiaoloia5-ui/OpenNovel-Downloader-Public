@@ -150,7 +150,9 @@ impl Shuqi {
                             "bookId" => v != book,
                             "chapterId" => v != id,
                             "num" | "ver" => v != "1",
-                            "ut" | "aut" => !page::numeric(v),
+                            "ut" => !page::numeric(v),
+                            // Anonymous official free links may explicitly use aut=0.
+                            "aut" => v != "0" && !page::numeric(v),
                             "sign" => v.len() != 32 || !v.bytes().all(|b| b.is_ascii_hexdigit()),
                             _ => true,
                         })
@@ -428,6 +430,24 @@ mod tests {
             x["chapterList"][0]["volumeList"][0]["contUrlSuffix"] = json!(suffix);
             assert!(parse(&x).is_err());
         }
+    }
+    #[test]
+    fn anonymous_zero_aut_is_valid_but_identity_and_permission_remain_required() {
+        let mut value = fixture();
+        let suffix = value["chapterList"][0]["volumeList"][0]["contUrlSuffix"]
+            .as_str()
+            .unwrap()
+            .replace("aut=123", "aut=0");
+        value["chapterList"][0]["volumeList"][0]["contUrlSuffix"] = json!(suffix);
+        assert_eq!(parse(&value).unwrap().free.len(), 1);
+        for invalid in ["aut=-1", "aut=", "aut=0&aut=123", "aut=other"] {
+            let mut bad = value.clone();
+            bad["chapterList"][0]["volumeList"][0]["contUrlSuffix"] =
+                json!(suffix.replace("aut=0", invalid));
+            assert!(parse(&bad).is_err());
+        }
+        value["chapterList"][0]["volumeList"][0]["payStatus"] = json!("3");
+        assert!(parse(&value).unwrap().free.is_empty());
     }
     #[test]
     fn free_response_decodes_original_text_and_rejects_short_or_error_data() {
