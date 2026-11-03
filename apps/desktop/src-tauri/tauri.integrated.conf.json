@@ -4,7 +4,7 @@
     "resources": {
       "../../../LICENSE": "LICENSE",
       "../../../.artifacts/release/THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt",
-      "../../../.artifacts/integrated-resources-0.3.16/opennovel-engine/": "opennovel-engine/"
+      "../../../.artifacts/integrated-resources-0.3.17/opennovel-engine/": "opennovel-engine/"
     },
     "windows": {
       "webviewInstallMode": {

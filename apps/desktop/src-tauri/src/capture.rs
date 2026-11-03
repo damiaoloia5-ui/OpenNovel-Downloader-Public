@@ -27,6 +27,70 @@ impl PendingCapture {
             && self.created.elapsed() < Duration::from_secs(600)
     }
 }
+
+/// Public metadata only; reading rights are checked later in the user's browser.
+#[tauri::command]
+pub async fn preview_platform_catalog(
+    id: String,
+    book_url: String,
+    state: State<'_, AppState>,
+) -> Result<CapturePreview, String> {
+    let account = state.library.account(&id).map_err(|e| e.to_string())?;
+    opennovel_core::session_source(&account.platform).map_err(|e| e.to_string())?;
+    let clean = opennovel_core::account_entry_url(&account.platform, &book_url)
+        .map_err(|e| e.to_string())?;
+    if book_url.trim().is_empty() || account.platform == "qidian" {
+        return Err("请通过起点目录流程或填写当前平台作品链接".into());
+    }
+    let (generation, reading) = {
+        let sessions = state.sessions.lock().map_err(|_| "会话不可用")?;
+        let s = sessions.get(&id).ok_or("请先打开当前平台官网会话")?;
+        (s.generation.clone(), Arc::clone(&s.reading))
+    };
+    if reading.swap(true, Ordering::AcqRel) {
+        return Err("该会话正在读取或保存，请先暂停".into());
+    }
+    let _guard = ReadingGuard(reading);
+    let platform = account.platform;
+    let catalog = tauri::async_runtime::spawn_blocking(move || {
+        let catalog = opennovel_core::sources::SourceHub::new().inspect(clean.as_str())?;
+        SessionCatalog::from_public(catalog, &platform)
+    })
+    .await
+    .map_err(|_| "目录读取中断")?
+    .map_err(|e| e.to_string())?;
+    if state
+        .sessions
+        .lock()
+        .map_err(|_| "会话不可用")?
+        .get(&id)
+        .is_none_or(|s| s.generation != generation)
+    {
+        return Err("官网会话已变化，请重新读取目录".into());
+    }
+    let token = uuid::Uuid::new_v4().to_string();
+    let preview = CapturePreview {
+        token: token.clone(),
+        kind: "catalog".into(),
+        catalog: Some(catalog.catalog().clone()),
+        chapter: None,
+    };
+    let mut pending = state.captures.lock().map_err(|_| "预览不可用")?;
+    pending.retain(|_, p| p.created.elapsed() < Duration::from_secs(600) && p.account != id);
+    if pending.len() >= 8 {
+        return Err("待确认目录过多，请稍后重试".into());
+    }
+    pending.insert(
+        token,
+        PendingCapture {
+            account: id,
+            generation,
+            created: Instant::now(),
+            page: CapturedPage::Catalog(catalog),
+        },
+    );
+    Ok(preview)
+}
 #[derive(Serialize)]
 pub struct CapturePreview {
     token: String,
@@ -187,9 +251,7 @@ pub async fn confirm_account_page(
     state: State<'_, AppState>,
 ) -> Result<CaptureReceipt, String> {
     let account = state.library.account(&id).map_err(|e| e.to_string())?;
-    if account.platform != "qidian" {
-        return Err("来源不匹配".into());
-    }
+    opennovel_core::session_source(&account.platform).map_err(|e| e.to_string())?;
     let capture = {
         let mut pending = state.captures.lock().map_err(|_| "页面预览不可用")?;
         if pending.get(&token).is_none_or(|p| p.account != id) {

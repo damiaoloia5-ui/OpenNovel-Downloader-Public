@@ -80,20 +80,20 @@ static SOURCES: [SourceInfo; 10] = [
     },
     SourceInfo {
         id: "ciweimao-web",
-        name: "刺猬猫当前页（账户实验）",
-        can_inspect: false,
+        name: "刺猬猫目录与账户实验",
+        can_inspect: true,
         can_download: false,
         can_search: false,
-        note: "桌面可打开独立官网会话，由本人登录后识别当前页；普通可见文字可单独存 TXT，图片呈现拒绝。完整目录、自动全书与已购实测未验收。",
+        note: "公开完整目录已接入；桌面提供登录后连续保存实验入口，仅普通可见完整文字通过校验后入库。图片正文不支持，真实已购全书未验收。",
         example: "https://www.ciweimao.com/book/作品ID",
     },
     SourceInfo {
         id: "faloo-web",
-        name: "飞卢当前页（账户实验）",
-        can_inspect: false,
+        name: "飞卢目录与账户实验",
+        can_inspect: true,
         can_download: false,
         can_search: false,
-        note: "桌面可本人登录后识别当前页，普通可见文字可单独存 TXT；不保证全章完整，不支持保护呈现。自动全书和已购实测未验收。",
+        note: "公开连续章节目录已接入；提供账户连续保存实验入口。实测样本为图片正文，当前不能完整保存此类章节；真实已购未验收。",
         example: "https://b.faloo.com/作品ID.html",
     },
     SourceInfo {
@@ -256,7 +256,10 @@ impl SourceHub {
             "jinjiang-web" => initialize(&self.jinjiang, Jinjiang::new)?.inspect(&id),
             "zongheng-web" => initialize(&self.zongheng, || PublicHtml::new(true))?.inspect(&id),
             "17k-web" => initialize(&self.seventeen, || PublicHtml::new(false))?.inspect(&id),
-            "ciweimao-web" | "faloo-web" | "migu-web" => Err(Error::Restricted(
+            "ciweimao-web" | "faloo-web" => {
+                super::inspect_session_catalog(source.trim_end_matches("-web"), &id)
+            }
+            "migu-web" => Err(Error::Restricted(
                 SOURCES
                     .iter()
                     .find(|s| s.id == source)

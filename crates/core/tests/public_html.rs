@@ -203,12 +203,8 @@ fn source_links_and_planned_capabilities_do_not_enable_downloads() {
         .iter()
         .filter(|s| ["ciweimao-web", "faloo-web", "migu-web"].contains(&s.id))
     {
-        assert!(!s.can_inspect && !s.can_download);
-        assert!(
-            SourceHub::new()
-                .inspect(&format!("{}:123", s.id.trim_end_matches("-web")))
-                .is_err()
-        );
+        assert!(!s.can_download);
+        assert_eq!(s.can_inspect, s.id != "migu-web");
         assert!(SourceHub::new().adapter(s.id).is_err());
     }
 }

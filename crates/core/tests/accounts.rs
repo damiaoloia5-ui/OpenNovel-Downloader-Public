@@ -26,7 +26,10 @@ fn qidian_empty_entry_avoids_homepage_overlay_without_accepting_arbitrary_links(
     assert_eq!(login.path(), "/bookcase/");
     assert!(login.query().is_none() && login.fragment().is_none());
     assert_eq!(account_login_url("qidian").unwrap(), login);
-    assert!(account_login_url("shuqi").is_err());
+    assert_eq!(
+        account_login_url("shuqi").unwrap().as_str(),
+        "https://www.shuqi.com/"
+    );
     assert!(account_login_url("unknown").is_err());
     assert!(account_navigation_allowed("qidian", &login));
     assert!(!account_navigation_allowed("shuqi", &login));

@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import {computed,onMounted,onUnmounted,ref,watch} from 'vue';
+import PlatformSavePanel from './PlatformSavePanel.vue';
 import CapturePanel from './CapturePanel.vue';
 import AutoSavePanel from './AutoSavePanel.vue';
 import OfficialReaderPanel from './OfficialReaderPanel.vue';
 import {accountList,createAccount,openAccount,closeAccount,previewAccountPage,confirmAccountPage,startAccountDownload,snapshot,type AccountStatus,type Book,type CapturePreview} from './api';
-import {qidianBookId,qidianBookLink,officialBookPlatform} from './workflow';
+import {qidianBookId,qidianBookLink,officialBookPlatform,sessionBookPlatform} from './workflow';
 import {readGuidedCatalog} from './guidedCatalog';
 const props=defineProps<{bookId?:string;initialUrl?:string;accountId?:string;embedded?:boolean}>();
 const emit=defineEmits<{saved:[bookId:string];read:[bookId:string];ready:[bookId:string,accountId:string];selected:[accountId:string]}>();
+const platformNames:Record<string,string>={qidian:'起点',shuqi:'书旗',zongheng:'纵横','17k':'17K',jinjiang:'晋江',qimao:'七猫',ciweimao:'刺猬猫',faloo:'飞卢',migu:'咪咕'};
 const accounts=ref<AccountStatus[]>([]);const chosen=ref('');const books=ref<Book[]>([]);const bookUrl=ref('');
 const busy=ref(false);const error=ref('');const notice=ref('');const preview=ref<CapturePreview|null>(null);const previewAccount=ref('');const previewUrl=ref('');const catalogRevision=ref(0);
 const platform=ref('qidian');const label=ref('');const loginAcknowledged=ref(false);const acknowledged=ref(false);let disposed=false;let readEpoch=0;
+const otherSession=computed(()=>books.value.find(b=>b.id===props.bookId&&b.source.endsWith('-session')&&b.source!=='qidian-session'));
 const qidianAccounts=computed(()=>accounts.value.filter(r=>r.account.platform==='qidian'));
 const existingBooks=computed(()=>books.value.filter(b=>b.source==='qidian-session'));
 const current=computed(()=>qidianAccounts.value.find(r=>r.account.id===chosen.value));
@@ -39,9 +42,10 @@ onMounted(()=>{void action(async()=>{await reload();applyInput();});window.addEv
 onUnmounted(()=>{disposed=true;readEpoch++;window.removeEventListener('focus',refocus);});
 </script>
 <template>
-  <OfficialReaderPanel v-if="!embedded&&officialBookPlatform(initialUrl||'')" :initial-url="initialUrl" />
-  <details v-else-if="!embedded"><summary>刺猬猫、飞卢、咪咕：登录后识别当前页</summary><OfficialReaderPanel /></details>
-  <section v-if="!officialBookPlatform(initialUrl||'')" class="account-panel" aria-label="起点保存引导">
+  <PlatformSavePanel v-if="otherSession||sessionBookPlatform(initialUrl||'')" :book-id="otherSession?.id" :initial-url="initialUrl" @saved="emit('saved',$event)" @read="emit('read',$event)" />
+  <OfficialReaderPanel v-else-if="!embedded&&officialBookPlatform(initialUrl||'')==='migu'" :initial-url="initialUrl" />
+  <details v-else-if="!embedded"><summary>其他平台：登录并连续保存</summary><PlatformSavePanel @saved="emit('saved',$event)" @read="emit('read',$event)" /><details><summary>当前页文字采集与咪咕识别</summary><OfficialReaderPanel /></details></details>
+  <section v-if="!otherSession&&!sessionBookPlatform(initialUrl||'')&&!officialBookPlatform(initialUrl||'')" class="account-panel" aria-label="起点保存引导">
     <h2>{{ embedded?'保存这本书':'跟着提示保存小说' }} <small>起点 · 实验性</small></h2>
     <p>可连续保存账号实际能完整阅读的章节，软件不按会员等级设置字数或每日下载配额。VIP 身份、包月和单章订阅的范围不同，以这本书在官网的实际阅读权益为准。</p>
     <ol v-if="!embedded" class="flow-steps" aria-label="起点保存步骤"><li :aria-current="step===1?'step':undefined"><b>1</b>登录起点</li><li :aria-current="step===2?'step':undefined"><b>2</b>核对这本书</li><li :aria-current="step===3?'step':undefined"><b>3</b>保存并得到 TXT</li></ol>
@@ -74,7 +78,7 @@ onUnmounted(()=>{disposed=true;readEpoch++;window.removeEventListener('focus',re
       <div class="actions"><button :disabled="busy||!bookUrl.trim()" @click="openBook">手动打开作品目录</button><button :disabled="busy||!opened||!qidianBookLink(bookUrl)" @click="readCatalog">手动读取当前目录</button></div>
       <CapturePanel v-if="current" :key="chosen" :account-id="chosen" :opened="!!opened" @saved="savedBook" @read="emit('read',$event)" />
       <h3>账户管理</h3><form class="account-form" @submit.prevent="add"><label>平台<select v-model="platform" :disabled="busy"><option value="qidian">起点中文网</option><option value="shuqi">书旗小说</option></select></label><label>本地别名<input v-model="label" maxlength="40" required :disabled="busy" placeholder="例如 第二个起点账户" /></label><button :disabled="busy||!label.trim()">添加账户记录</button></form>
-      <ul class="managed-accounts"><li v-for="row in accounts" :key="row.account.id"><strong>{{ row.account.label }} · {{ row.account.platform==='qidian'?'起点':'书旗' }}</strong><span>{{ row.session==='closed'?'会话已关闭':'窗口已打开，权限未验证' }}</span><div class="actions"><button v-if="row.account.platform==='shuqi'" :disabled="busy" @click="action(async()=>{await openAccount(row.account.id,'');notice='已打开书旗官网，正文保存尚不支持。';})">打开书旗官网</button><button :disabled="busy||row.session==='closed'" @click="close(row.account.id,false)">关闭官网会话</button><button :disabled="busy" @click="close(row.account.id,true)">移除本地账户记录</button></div></li></ul><button :disabled="busy" @click="action(reload)">刷新账户状态</button>
+      <ul class="managed-accounts"><li v-for="row in accounts" :key="row.account.id"><strong>{{ row.account.label }} · {{ platformNames[row.account.platform]||row.account.platform }}</strong><span>{{ row.session==='closed'?'会话已关闭':'窗口已打开，权限未验证' }}</span><div class="actions"><button v-if="row.account.platform==='shuqi'" :disabled="busy" @click="action(async()=>{await openAccount(row.account.id,'');notice='已打开书旗官网。匿名免费章节可从添加小说保存；其他平台连续保存入口提供实验性会话流程。';})">打开书旗官网</button><button :disabled="busy||row.session==='closed'" @click="close(row.account.id,false)">关闭官网会话</button><button :disabled="busy" @click="close(row.account.id,true)">移除本地账户记录</button></div></li></ul><button :disabled="busy" @click="action(reload)">刷新账户状态</button>
     </details>
   </section>
 </template>

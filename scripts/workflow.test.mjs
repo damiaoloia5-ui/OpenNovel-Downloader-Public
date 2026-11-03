@@ -14,7 +14,7 @@ test('local engine failures explain validation instead of sending users to an ac
 test('public access challenges never suggest an unrelated Qidian account window',()=>{
   const advice=saveRecovery('官网访问需处理：HTTP 403 验证','public');
   assert.match(advice,/保留进度/);assert.doesNotMatch(advice,/起点|官网窗口/);
-  assert.match(saveRecovery('需要登录','account'),/起点官网窗口/);
+  assert.match(saveRecovery('需要登录','account'),/当前平台官网窗口/);
 });
 
 test('routes clean official book and catalog links to the same guided work',()=>{

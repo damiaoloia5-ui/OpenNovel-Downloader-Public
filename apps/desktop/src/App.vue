@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import {version as appVersion} from '../package.json';
 import AppIcon from './AppIcon.vue';
 import {computed,nextTick,onMounted,onUnmounted,ref,watch} from 'vue';
 import {getCurrentWindow} from '@tauri-apps/api/window';
@@ -125,7 +126,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         <button :class="{ selected: page === 'tools' }" @click="page = 'tools'"><AppIcon name="archive" />备份与诊断</button>
         </details>
       </nav>
-      <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>综合功能候选版 · 0.3.7</p></div>
+      <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>综合功能候选版 · {{ appVersion }}</p></div>
     </aside>
 
     <main>
@@ -135,7 +136,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         <div v-if="error" class="message failure" role="alert">{{ error }}<button aria-label="关闭错误提示" @click="error = ''">×</button></div>
         <div v-if="notice" class="message success" role="status">{{ notice }}<button aria-label="关闭提示" @click="notice = ''">×</button></div>
         <div v-if="page!=='book'" class="page-heading">
-          <div><h1 ref="pageHeading" tabindex="-1">{{ page==='help'?'使用指引':page === 'download' ? '添加小说' : page === 'library' ? '我的书库' : page === 'tasks' ? '保存进度' : page==='accounts'?'登录与保存正文':page==='tools'?'备份与诊断':'小说来源' }}</h1><p class="intro">{{ page==='help'?'从添加到导出，按步骤完成。':page === 'download' ? '只需粘贴小说链接，软件会带你完成，最后得到 TXT。' : page === 'library' ? '选择作品，阅读或导出已经保存的正文。' : page === 'tasks' ? '查看保存进度，继续中断的任务。' : page==='accounts'?'起点按步骤引导；刺猬猫、飞卢和咪咕可在官网登录后识别当前页。':page==='tools'?'创建书库备份、恢复副本，查看诊断信息。':'查看各个平台已验证的支持范围。' }}</p></div>
+          <div><h1 ref="pageHeading" tabindex="-1">{{ page==='help'?'使用指引':page === 'download' ? '添加小说' : page === 'library' ? '我的书库' : page === 'tasks' ? '保存进度' : page==='accounts'?'登录与保存正文':page==='tools'?'备份与诊断':'小说来源' }}</h1><p class="intro">{{ page==='help'?'从添加到导出，按步骤完成。':page === 'download' ? '只需粘贴小说链接，软件会带你完成，最后得到 TXT。' : page === 'library' ? '选择作品，阅读或导出已经保存的正文。' : page === 'tasks' ? '查看保存进度，继续中断的任务。' : page==='accounts'?'选择平台，登录官网并核对目录；仅保存实际可读正文，已购能力仍需实测。':page==='tools'?'创建书库备份、恢复副本，查看诊断信息。':'查看各个平台已验证的支持范围。' }}</p></div>
           <button v-if="page==='library'" class="primary" @click="page='download'"><AppIcon name="plus" :size="18" />添加一本小说</button>
           <input ref="fileInput" type="file" accept=".json,application/json" class="file-input" aria-label="选择 JSON 书籍文件" @change="chooseFile" />
         </div>
@@ -191,7 +192,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
           <article v-for="job in visibleJobs" :key="job.id" class="task-card" :data-state="job.state">
             <div class="task-heading"><h3>{{ job.title }}</h3><span class="state-tag">{{ labels[job.state] || job.state }}</span></div>
             <progress :value="job.saved" :max="job.total" :aria-label="`${job.title}保存进度`"></progress>
-            <div class="task-bottom"><span>本次范围已保存 {{ job.saved }} / {{ job.total }} 章 · 受限 {{ job.blocked }} · 失败 {{ job.failed }}</span><div class="task-controls"><button v-if="job.state === 'running' || job.state === 'queued'" :disabled="working" @click="action(() => pauseJob(job.id))">暂停</button><button v-if="['running','queued','paused'].includes(job.state)" :disabled="working" @click="action(() => cancelJob(job.id))">取消任务</button><button v-if="job.source==='qidian-session' && !['running','queued','completed'].includes(job.state)" :disabled="working" @click="openAccountBook(job.book_id)">继续保存</button><button v-if="job.source!=='qidian-session' && !['running','queued','completed','blocked'].includes(job.state) && (job.state !== 'partial' || job.failed || job.saved + job.blocked < job.total)" :disabled="working" @click="action(() => resumeJob(job.id))">继续 / 重试</button></div></div>
+            <div class="task-bottom"><span>本次范围已保存 {{ job.saved }} / {{ job.total }} 章 · 受限 {{ job.blocked }} · 失败 {{ job.failed }}</span><div class="task-controls"><button v-if="job.state === 'running' || job.state === 'queued'" :disabled="working" @click="action(() => pauseJob(job.id))">暂停</button><button v-if="['running','queued','paused'].includes(job.state)" :disabled="working" @click="action(() => cancelJob(job.id))">取消任务</button><button v-if="job.source.endsWith('-session') && !['running','queued','completed'].includes(job.state)" :disabled="working" @click="openAccountBook(job.book_id)">继续保存</button><button v-if="!job.source.endsWith('-session') && !['running','queued','completed','blocked'].includes(job.state) && (job.state !== 'partial' || job.failed || job.saved + job.blocked < job.total)" :disabled="working" @click="action(() => resumeJob(job.id))">继续 / 重试</button></div></div>
             <div v-if="job.saved" class="task-controls task-export"><button :disabled="working" @click="showBook(job.book_id)">阅读与导出本书</button><details><summary>仅导出本次任务选章（高级）</summary><button :disabled="working" @click="saveJob(job.id,'txt')">导出本次选章 TXT</button><button :disabled="working" @click="saveJob(job.id,'epub')">导出本次选章 EPUB</button></details></div>
             <p v-if="job.error" class="task-error">{{ job.error }}</p>
             <button class="detail-toggle" :aria-expanded="openedJob === job.id" :disabled="working" @click="showDetails(job.id)">{{ openedJob === job.id ? '收起章节明细' : '查看章节明细' }}</button>
@@ -210,7 +211,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         </template>
 
         <template v-if="page === 'sources'">
-          <div class="source-intro"><h2>已接入与待适配平台</h2><p>纵横、17K、番茄、七猫、晋江与书旗提供实验性官网免费正文保存；起点提供账户内保存实验。刺猬猫、飞卢提供登录后当前页普通文字采集；咪咕目前可登录和识别作品页，正文仍待验证。所选范围完成不代表整本完整。</p></div>
+          <div class="source-intro"><h2>已接入与待适配平台</h2><p>纵横、17K、番茄、七猫、晋江与书旗提供实验性官网免费正文保存；起点提供账户内保存实验。刺猬猫、飞卢已接入目录和账户连续保存实验；纵横、17K、晋江、七猫、书旗也可尝试官网账户通道。真实已购全书未验收；咪咕仅作品页识别，正文未接通。所选范围完成不代表整本完整。</p></div>
           <div class="source-list">
             <article><span class="source-monogram">本</span><div><h3>本地 JSON 内容</h3><p>用户提供的作品与章节 · 任务恢复 · TXT / EPUB</p></div><span class="available">已接入</span></article>
             <article v-for="source in sourceInfos" :key="source.id"><span class="source-monogram">{{ source.name.slice(0,1) }}</span><div><h3>{{ source.name }}</h3><p>{{ source.note }}</p><small>{{ source.example }}</small></div><span :class="source.can_download ? 'available' : 'pending-label'">{{ source.id==='qidian-session'?'账户内自动保存':['ciweimao-web','faloo-web','migu-web'].includes(source.id)?'账户当前页实验':source.can_inspect===false?'待适配':source.can_download ? '实验性下载' : '仅详情/目录' }}</span></article>
@@ -219,7 +220,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         </template>
         <LibraryTools v-if="page==='tools'" />
         <AccountPanel v-if="page==='accounts'" :initial-url="accountUrl" @saved="refresh" @ready="(id,account)=>openWorkspace(id,'save',account)" @read="id=>openWorkspace(id,'read')" />
-        <BookWorkspace v-if="page==='book'&&workspaceBook" :key="workspaceBook" :book-id="workspaceBook" :initial-tab="workspaceTab" :account-id="workspaceAccount" :sources="sourceInfos" :jobs="data.jobs" :summary="data.books.find(b=>b.id===workspaceBook)" :preference="preferencesByBook.get(workspaceBook)" :automatic="automaticFiles.find(a=>a.book_id===workspaceBook)" @changed="refresh" @back="page='library'" @tasks="page='tasks'" @help="page='help'" @engine="openEngineBook" />
+        <BookWorkspace v-if="page==='book'&&workspaceBook" :key="workspaceBook" :book-id="workspaceBook" :initial-tab="workspaceTab" :account-id="workspaceAccount" :sources="sourceInfos" :jobs="data.jobs" :summary="data.books.find(b=>b.id===workspaceBook)" :preference="preferencesByBook.get(workspaceBook)" :automatic="automaticFiles.find(a=>a.book_id===workspaceBook)" @changed="refresh" @back="page='library'" @tasks="page='tasks'" @help="page='help'" @engine="openEngineBook" @account="accountUrl=$event;page='accounts'" />
         <HelpGuide v-if="page==='help'" @navigate="page=$event" @import="fileInput?.click()" />
         <footer>OpenNovel Downloader<span>开放的工具，长久的书库。</span></footer>
       </div>

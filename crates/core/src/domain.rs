@@ -180,50 +180,65 @@ impl BookSummary {
     pub fn platform_name(&self) -> &str {
         match self.source.as_str() {
             "fanqie-web" | "fanqie-app-local" => "番茄小说",
-            "qimao-web" => "七猫小说",
-            "shuqi-web" => "书旗小说",
-            "jinjiang-web" => "晋江文学城",
-            "zongheng-web" => "纵横中文网",
-            "17k-web" => "17K小说网",
+            "qimao-web" | "qimao-session" => "七猫小说",
+            "shuqi-web" | "shuqi-session" => "书旗小说",
+            "jinjiang-web" | "jinjiang-session" => "晋江文学城",
+            "zongheng-web" | "zongheng-session" => "纵横中文网",
+            "17k-web" | "17k-session" => "17K小说网",
             "qidian-session" => "起点中文网",
+            "ciweimao-web" | "ciweimao-session" => "刺猬猫",
+            "faloo-web" | "faloo-session" => "飞卢",
             "local-json" => "本地导入",
             _ => &self.source,
         }
     }
     pub fn source_label(&self) -> &str {
+        if crate::session_platform(&self.source).is_some() {
+            return "官网会话内可读正文（实验性）";
+        }
         match self.source.as_str() {
             "fanqie-web" => "番茄公开网页",
             "fanqie-app-local" => "番茄本地引擎（免费内容）",
-            "qimao-web" => "七猫公开网页",
-            "shuqi-web" => "书旗官网目录",
-            "jinjiang-web" => "晋江官网免费章节",
+            "qimao-web" | "qimao-session" => "七猫公开网页",
+            "shuqi-web" | "shuqi-session" => "书旗官网免费章节",
+            "jinjiang-web" | "jinjiang-session" => "晋江官网免费章节",
             "local-json" => "本地 JSON 导入",
-            "zongheng-web" => "纵横官网免费章节",
-            "17k-web" => "17K 官网免费章节",
+            "zongheng-web" | "zongheng-session" => "纵横官网免费章节",
+            "17k-web" | "17k-session" => "17K 官网免费章节",
             "qidian-session" => "起点当前可读章节（实验性）",
             _ => &self.source,
         }
     }
     pub fn source_url(&self) -> Option<String> {
         match self.source.as_str() {
-            "zongheng-web" => Some(format!(
+            "zongheng-web" | "zongheng-session" => Some(format!(
                 "https://www.zongheng.com/detail/{}",
                 self.remote_id
             )),
-            "17k-web" => Some(format!("https://www.17k.com/book/{}.html", self.remote_id)),
+            "17k-web" | "17k-session" => {
+                Some(format!("https://www.17k.com/book/{}.html", self.remote_id))
+            }
             "qidian-session" => Some(format!("https://www.qidian.com/book/{}/", self.remote_id)),
             "fanqie-web" | "fanqie-app-local" => {
                 Some(format!("https://fanqienovel.com/page/{}", self.remote_id))
             }
-            "qimao-web" => Some(format!("https://www.qimao.com/shuku/{}/", self.remote_id)),
-            "jinjiang-web" => Some(format!(
+            "qimao-web" | "qimao-session" => {
+                Some(format!("https://www.qimao.com/shuku/{}/", self.remote_id))
+            }
+            "jinjiang-web" | "jinjiang-session" => Some(format!(
                 "https://www.jjwxc.net/onebook.php?novelid={}",
                 self.remote_id
             )),
-            "shuqi-web" => Some(format!(
+            "shuqi-web" | "shuqi-session" => Some(format!(
                 "https://www.shuqi.com/book/{}.html",
                 self.remote_id
             )),
+            "ciweimao-web" | "ciweimao-session" => {
+                Some(format!("https://www.ciweimao.com/book/{}", self.remote_id))
+            }
+            "faloo-web" | "faloo-session" => {
+                Some(format!("https://b.faloo.com/{}.html", self.remote_id))
+            }
             _ => None,
         }
     }

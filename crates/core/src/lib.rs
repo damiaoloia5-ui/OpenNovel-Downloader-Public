@@ -1,6 +1,10 @@
 mod accounts;
 mod availability;
 mod batch;
+mod browser_sources;
+pub use browser_sources::{
+    clean_session_url, session_chapter_url, session_platform, session_source,
+};
 mod domain;
 mod downloads;
 mod export;

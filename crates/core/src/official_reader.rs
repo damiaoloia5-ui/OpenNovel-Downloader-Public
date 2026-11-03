@@ -15,6 +15,10 @@ pub fn official_platform_name(platform: &str) -> Option<&'static str> {
     match platform {
         "qidian" => Some("起点"),
         "shuqi" => Some("书旗"),
+        "zongheng" => Some("纵横"),
+        "17k" => Some("17K"),
+        "jinjiang" => Some("晋江"),
+        "qimao" => Some("七猫"),
         "ciweimao" => Some("刺猬猫"),
         "faloo" => Some("飞卢"),
         "migu" => Some("咪咕悦看"),

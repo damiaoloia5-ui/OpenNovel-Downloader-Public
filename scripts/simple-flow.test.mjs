@@ -48,7 +48,8 @@ await writeFile(windowFile,'export const getCurrentWindow=()=>({isMinimized:asyn
 const entry=join(output,'entry.mjs');
 await writeFile(entry,`export {default as Account} from ${JSON.stringify(resolve('apps/desktop/src/AccountPanel.vue'))};\nexport {default as AutoSave} from ${JSON.stringify(resolve('apps/desktop/src/AutoSavePanel.vue'))};\nexport {default as App} from ${JSON.stringify(resolve('apps/desktop/src/App.vue'))};`);
 await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as Official} from '+JSON.stringify(resolve('apps/desktop/src/OfficialReaderPanel.vue'))+';\n');
-const real=new Set(['AccountPanel.vue','AutoSavePanel.vue','App.vue','OfficialReaderPanel.vue']);
+await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as Platform} from '+JSON.stringify(resolve('apps/desktop/src/PlatformSavePanel.vue'))+';\n');
+const real=new Set(['AccountPanel.vue','AutoSavePanel.vue','App.vue','OfficialReaderPanel.vue','PlatformSavePanel.vue']);
 real.add('LocalEnginePanel.vue');
 real.add('AutomaticTxtPanel.vue');
 await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as AutoTxt} from '+JSON.stringify(resolve('apps/desktop/src/AutomaticTxtPanel.vue'))+';\n');
@@ -64,7 +65,7 @@ await build({configFile:false,logLevel:'error',plugins:[{
     return transformWithOxc(compiled.content,`${id}.ts`,{lang:'ts'});
   },
 }],build:{ssr:entry,outDir:output,emptyOutDir:false,rollupOptions:{output:{entryFileNames:'components.mjs'}}}});
-const {Account,AutoSave,App,Official,Supplement,Engine,AutoTxt}=await import(pathToFileURL(join(output,'components.mjs')).href);
+const {Account,AutoSave,App,Official,Supplement,Engine,AutoTxt,Platform}=await import(pathToFileURL(join(output,'components.mjs')).href);
 function element(tag,text=''){
   return {tag,tagName:tag.toUpperCase(),children:[],parent:null,props:{},text,listeners:{},value:'',checked:false,selected:false,
     get textContent(){return this.text+this.children.map(n=>n.textContent).join('');},
@@ -89,7 +90,7 @@ function fixture(){
   const state={accounts:[],books:[],jobs:[],automatic:[],calls:[],probe:async()=>structuredClone(preview),startError:null,resumeError:null};
   const api={
     accountList:async()=>structuredClone(state.accounts),snapshot:async()=>structuredClone({books:state.books,jobs:state.jobs}),
-    createAccount:async()=>{const account={id:'original-account',platform:'qidian',label:'我的起点账户'};state.accounts.push({account,session:'closed',blocked_navigation:false});return account;},
+    createAccount:async(platform='qidian',label='我的起点账户')=>{const account={id:'original-account',platform,label};state.accounts.push({account,session:'closed',blocked_navigation:false});return account;},
     openAccount:async(id,url,login)=>{state.calls.push(['open',id,url,login]);state.accounts.find(a=>a.account.id===id).session='open_unverified';},
     previewAccountPage:async()=>{state.calls.push(['preview']);return state.probe();},
     confirmAccountPage:async(...args)=>{state.calls.push(['confirm',...args]);state.books=[structuredClone(stored)];return {kind:'catalog',book_id:stored.id,save:null};},
@@ -400,8 +401,29 @@ test('late official exports stay with the original context and never appear unde
 test('new official links route to their account reader without public HTTP download',async()=>{
   for(const url of ['https://www.ciweimao.com/book/123','https://b.faloo.com/123.html','https://www.cmread.com/yuekan/novel/123.html']){
     const f=await mount(App);
-    try{const input=walk(f.root,true).find(n=>n.props.id==='novel-link');input.value=url;input.dispatch('input');await flush();walk(f.root,true).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();assert.match(f.root.textContent,/登录官网，识别当前页/);assert.equal(f.state.calls.filter(c=>c[0]==='inspect'||c[0]==='download').length,0);}finally{f.close();}
+    try{const input=walk(f.root,true).find(n=>n.props.id==='novel-link');input.value=url;input.dispatch('input');await flush();walk(f.root,true).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();assert.match(f.root.textContent,url.includes('cmread.com')?/登录官网，识别当前页/:/登录官网，连续保存/);assert.equal(f.state.calls.filter(c=>c[0]==='inspect'||c[0]==='download').length,0);}finally{f.close();}
   }
+});
+test('multi-platform catalog confirmation starts the matching session queue after explicit acknowledgement',async()=>{
+ const links={zongheng:'https://www.zongheng.com/detail/123','17k':'https://www.17k.com/book/123.html',jinjiang:'https://www.jjwxc.net/onebook.php?novelid=123',qimao:'https://www.qimao.com/shuku/123/',shuqi:'https://www.shuqi.com/book/123.html',ciweimao:'https://www.ciweimao.com/book/123',faloo:'https://b.faloo.com/123.html'};
+ for(const [p,url] of Object.entries(links)){
+  const b={...stored,source:p+'-session'};const f=await mount(Platform,{initialUrl:url},({state,api})=>{
+   api.previewPlatformCatalog=async(id,link)=>{state.calls.push(['platform-preview',id,link]);return {...preview,catalog:{...preview.catalog,source:p+'-session'}};};
+   api.confirmAccountPage=async(...args)=>{state.calls.push(['confirm',...args]);state.books=[b];return {kind:'catalog',book_id:b.id};};
+   api.startAccountDownload=async(...args)=>{state.calls.push(['start',...args]);state.jobs=[{id:'platform-job',book_id:b.id,source:b.source,title:b.title,state:'running',saved:0,total:2,failed:0,blocked:0}];return 'platform-job';};
+  });try{
+   await click(f.button('打开官网，去登录'));assert.equal(f.state.accounts[0].account.platform,p);
+   await click(f.button('我已登录，读取作品目录'));assert.equal(f.button('是这本，开始保存为 TXT').props.disabled,true);
+   await acknowledge(f);await click(f.button('是这本，开始保存为 TXT'));await flush();
+   assert.deepEqual(f.state.calls.find(c=>c[0]==='platform-preview'),['platform-preview','original-account',url]);
+   assert.deepEqual(f.state.calls.find(c=>c[0]==='start'),['start','original-account','original-book','',true,3000]);
+   assert.equal(f.state.calls.some(c=>c[0]==='download'),false);
+  }finally{f.close();}
+ }
+});
+test('a late multi-platform preview cannot attach to a newly selected work',async()=>{
+ let finish;const f=await mount(Platform,{initialUrl:'https://www.ciweimao.com/book/123'},({api})=>{api.previewPlatformCatalog=()=>new Promise(resolve=>{finish=()=>resolve(preview);});});
+ try{await click(f.button('打开官网，去登录'));await click(f.button('我已登录，读取作品目录'));f.props.initialUrl='https://b.faloo.com/456.html';await flush();finish();await flush();assert.equal(f.button('是这本，开始保存为 TXT'),undefined);assert.equal(f.state.calls.some(c=>c[0]==='start'),false);}finally{f.close();}
 });
 test('verification recovery preserves the page and job until manual completion then resumes the same task',async()=>{
   const f=await mount(AutoSave,{accountId:'original-account',preferredBook:stored.id,opened:true,revision:0,guided:true,hideExport:true},({state})=>{

@@ -14,7 +14,14 @@ fn platform_host(platform: &str) -> Result<&'static str> {
     match platform {
         "qidian" => Ok("qidian.com"),
         "shuqi" => Ok("shuqi.com"),
-        _ => Err(Error::Invalid("当前账户实验仅开放起点与书旗".into())),
+        "zongheng" => Ok("zongheng.com"),
+        "17k" => Ok("17k.com"),
+        "jinjiang" => Ok("jjwxc.net"),
+        "qimao" => Ok("qimao.com"),
+        "ciweimao" => Ok("ciweimao.com"),
+        "faloo" => Ok("faloo.com"),
+        "migu" => Ok("cmread.com"),
+        _ => Err(Error::Invalid("未知账户平台".into())),
     }
 }
 pub fn account_navigation_allowed(platform: &str, url: &Url) -> bool {
@@ -41,9 +48,11 @@ pub fn account_navigation_allowed(platform: &str, url: &Url) -> bool {
 pub fn account_login_url(platform: &str) -> Result<Url> {
     platform_host(platform)?;
     if platform != "qidian" {
-        return Err(Error::Invalid(
-            "该平台尚未验证独立登录入口，请使用官网窗口".into(),
-        ));
+        return match platform {
+            "ciweimao" | "faloo" | "migu" => crate::official_login_url(platform),
+            _ => Url::parse(&format!("https://www.{}/", platform_host(platform)?))
+                .map_err(|_| Error::Invalid("官网入口无效".into())),
+        };
     }
     Url::parse("https://my.qidian.com/bookcase/")
         .map_err(|_| Error::Invalid("平台登录地址无效".into()))
@@ -51,6 +60,26 @@ pub fn account_login_url(platform: &str) -> Result<Url> {
 /// Only accept clean book links at entry; tokens and arbitrary URLs are not persisted.
 pub fn account_entry_url(platform: &str, input: &str) -> Result<Url> {
     let host = platform_host(platform)?;
+    if platform != "qidian" && platform != "shuqi" {
+        if input.trim().is_empty() {
+            return account_login_url(platform);
+        }
+        if ["ciweimao", "faloo", "migu"].contains(&platform) {
+            return crate::official_book_link(platform, input);
+        }
+        let url =
+            Url::parse(input.trim()).map_err(|_| Error::Invalid("请输入官网作品链接".into()))?;
+        let (source, _) = crate::sources::identify(input)?;
+        if source != format!("{platform}-web")
+            || url.scheme() != "https"
+            || url.fragment().is_some()
+            || (platform != "jinjiang" && url.query().is_some())
+            || !account_navigation_allowed(platform, &url)
+        {
+            return Err(Error::Invalid("只接受当前平台的干净作品链接".into()));
+        }
+        return Ok(url);
+    }
     if input.trim().is_empty() {
         if platform == "qidian" {
             return account_login_url(platform);

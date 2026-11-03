@@ -3,7 +3,7 @@ import {onMounted,onUnmounted,ref,watch,computed} from 'vue';
 import ExportActions from './ExportActions.vue';
 import {snapshot,accountDownloadJobs,startAccountDownload,resumeAccountDownload,pauseJob,cancelJob,focusAccount,type Book,type Job} from './api';
 import {saveRecovery} from './workflow';
-const props=defineProps<{accountId:string;opened:boolean;preferredBook:string;revision:number;guided?:boolean;hideExport?:boolean}>();
+const props=defineProps<{accountId:string;opened:boolean;preferredBook:string;revision:number;guided?:boolean;hideExport?:boolean;sessionSource?:string}>();
 const emit=defineEmits<{saved:[bookId:string];read:[bookId:string];checkSession:[]}>();
 const books=ref<Book[]>([]);const bookId=ref('');const selection=ref('');const acknowledged=ref(false);const jobs=ref<Job[]>([]);const busy=ref(false);const error=ref('');const notice=ref('');const polling=ref(false);
 const active=computed(()=>jobs.value.some(j=>['queued','running'].includes(j.state)));
@@ -15,7 +15,7 @@ const newTask=ref(false);const intervalMs=ref(500);
 const interrupted=computed(()=>/验证|验证码|滑块|导航发生变化|页面被切换/.test(`${jobs.value[0]?.error||''} ${error.value}`));
 const labels:Record<string,string>={queued:'等待开始',running:'自动保存中',paused:'已暂停',cancelled:'已取消',failed:'已停止，需要处理',partial:'部分保存，已停止',blocked:'阅读受限，已停止',completed:'本次范围完成'};
 let timer:ReturnType<typeof setTimeout>|undefined;let disposed=false;
-async function loadBooks(){const result=await snapshot();if(disposed)return;books.value=result.books.filter(b=>b.source==='qidian-session'&&(!props.guided||b.id===props.preferredBook));if(books.value.some(b=>b.id===props.preferredBook))bookId.value=props.preferredBook;else if(!books.value.some(b=>b.id===bookId.value))bookId.value=books.value[0]?.id||'';}
+async function loadBooks(){const result=await snapshot();if(disposed)return;books.value=result.books.filter(b=>b.source===(props.sessionSource||'qidian-session')&&(!props.guided||b.id===props.preferredBook));if(books.value.some(b=>b.id===props.preferredBook))bookId.value=props.preferredBook;else if(!books.value.some(b=>b.id===bookId.value))bookId.value=books.value[0]?.id||'';}
 async function reload(){const chosen=bookId.value;if(!chosen){jobs.value=[];return;}const current=await accountDownloadJobs(chosen);if(disposed||bookId.value!==chosen)return;const before=jobs.value[0];jobs.value=current;if(current[0]&&(before?.saved!==current[0].saved||before.state!==current[0].state)){await loadBooks();if(!disposed)emit('saved',chosen);}}
 async function poll(){if(disposed)return;if(!document.hidden&&!polling.value){polling.value=true;try{await reload();}catch(e){error.value=String(e);}finally{polling.value=false;}}if(!disposed)timer=setTimeout(()=>void poll(),active.value?2000:5000);}
 async function action(work:()=>Promise<void>){if(busy.value)return;busy.value=true;error.value='';notice.value='';try{await work();await reload();}catch(e){error.value=String(e);}finally{busy.value=false;}}
@@ -30,7 +30,7 @@ onMounted(()=>{void action(async()=>{await loadBooks();});void poll();});
 onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);});
 </script>
 <template>
-  <section class="automatic-panel" aria-label="起点自动保存正文">
+  <section class="automatic-panel" aria-label="官网自动保存正文">
     <h3>{{ complete?'本书正文已保存完成':active?'正在自动保存，请保持官网窗口打开':resumable?'进度已保留，可以接着保存':'开始保存这本书' }}</h3>
     <p v-if="complete" role="status">不需要再下载，TXT 会自动生成。生成后点上方的“打开 TXT 所在文件夹”。</p>
     <template v-else>
@@ -39,7 +39,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);});
       <label v-if="!guided">要保存的小说<select v-model="bookId" :disabled="busy||active||!books.length"><option v-if="!books.length" value="">请先核对这本书</option><option v-for="b in books" :key="b.id" :value="b.id">{{ b.title }}</option></select></label>
       <template v-if="!active"><label class="ack"><input v-model="acknowledged" type="checkbox" :disabled="busy">我已在官网关闭自动订阅，确认只保存已有阅读权限的内容</label><p v-if="!acknowledged" class="footnote">先勾选上面的确认项，再点下面的保存按钮。</p></template>
       <p v-if="resumable&&interrupted" class="footnote">官网验证或页面变化中断了保存。先打开原窗口，由本人处理滑块或验证提示；完成后再继续原进度。已建议改用标准 3 秒节奏，可在更多设置调整。</p><div class="actions"><button v-if="resumable&&interrupted" :disabled="busy" @click="showVerification">打开验证窗口</button><button v-if="!pending&&(!resumable||newTask)" class="primary" :disabled="busy||!opened||!bookId||!acknowledged" @click="start">{{ selection.trim()?'保存所选章节为 TXT':'开始保存为 TXT' }}</button><button v-if="resumable&&!newTask" class="primary" :disabled="busy||active||!opened||!acknowledged" @click="resume(resumable)">{{ interrupted?'我已完成验证，继续保存':'继续保存' }}</button><button v-if="book?.saved_chapters&&!hideExport" :disabled="busy" @click="emit('read',bookId)">阅读已保存正文</button></div>
-      <p v-if="!opened" class="footnote">先打开起点官网并登录，再回来保存。</p>
+      <p v-if="!opened" class="footnote">先打开当前平台官网并登录，再回来保存。</p>
       <ol class="auto-jobs"><li v-for="job in jobs.slice(0,1)" :key="job.id"><strong>{{ labels[job.state]||job.state }} · 本次已保存 {{ job.saved }}/{{ job.total }} 章</strong><progress :value="job.saved" :max="job.total" :aria-label="`${job.title} 自动保存进度`"></progress><p v-if="job.error" class="recovery" role="status">下一步：{{ saveRecovery(job.error) }}</p><details v-if="job.error||job.blocked||job.failed"><summary>查看停止原因</summary><p>{{ job.error }}</p><p>受限 {{ job.blocked }} 章，失败 {{ job.failed }} 章；未保存正文不会填造。</p></details><div class="actions"><button v-if="['running','queued'].includes(job.state)" :disabled="busy" @click="action(()=>pauseJob(job.id))">暂停保存</button></div></li></ol>
     </template>
     <p v-if="error" class="message failure" role="alert">{{ error }}<br>下一步：{{ saveRecovery(error) }}</p><p v-if="notice" class="message success" role="status">{{ notice }}</p>

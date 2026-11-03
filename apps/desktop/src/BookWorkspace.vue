@@ -9,10 +9,10 @@ import TxtSupplementPanel from './TxtSupplementPanel.vue';
 import type {AutoTxtStatus} from './api';
 import {bookDetails,readChapter,jobDetails,pauseJob,resumeJob,cancelJob,updateBook,retryChapters,revealExport,organizeBook,type Book,type BookDetails,type BookPreferences,type ChapterContent,type Job,type JobDetails,type SourceInfo} from './api';
 import {saveMode,workbenchStatus,publicAccessLimited,type WorkbenchTab} from './workbenchModel';
-import {saveRecovery} from './workflow';
+import {saveRecovery,sessionBookLink,isSessionSource} from './workflow';
 
 const props=defineProps<{bookId:string;initialTab?:WorkbenchTab;accountId?:string;sources:SourceInfo[];jobs:Job[];summary?:Book;preference?:BookPreferences;automatic?:AutoTxtStatus}>();
-const emit=defineEmits<{changed:[];back:[];tasks:[];help:[];engine:[input:string]}>();
+const emit=defineEmits<{changed:[];back:[];tasks:[];help:[];engine:[input:string];account:[input:string]}>();
 const tab=ref<WorkbenchTab>(props.initialTab||'save');
 const selectedAccount=ref(props.accountId||'');
 const detail=ref<BookDetails|null>(null);const busy=ref(false);const error=ref('');const notice=ref('');
@@ -127,6 +127,7 @@ onUnmounted(()=>{disposed=true;loadSequence++;readSequence++;jobSequence++;});
             <article v-if="currentJob&&(active||book.saved_chapters<book.total_chapters)" class="workspace-task"><h3>{{ labels[currentJob.state]||currentJob.state }}</h3><p>本次任务范围已保存 {{ currentJob.saved }}/{{ currentJob.total }} 章，受限 {{ currentJob.blocked }}，失败 {{ currentJob.failed }}。</p><progress :value="currentJob.saved" :max="currentJob.total" aria-label="当前任务范围进度"></progress><p v-if="currentJob.error" class="recovery">下一步：{{ recovery }}</p><div class="actions"><button v-if="['queued','running'].includes(currentJob.state)" :disabled="busy" @click="control(currentJob,'pause')">暂停本书任务</button><button v-if="recoverable&&mode!=='unavailable'" class="primary" :disabled="busy||active" @click="control(currentJob,'resume')">继续保存</button></div></article>
           </template>
           <section v-if="book.source==='fanqie-web'&&book.saved_chapters<book.total_chapters" class="workspace-advanced"><h3>尝试保存更多免费章节</h3><p>可查看本地组件是否就绪，主动启用后重新核对免费目录；使用独立来源保存，原网页版本保留。</p><button :disabled="busy||pending" @click="emit('engine',`https://fanqienovel.com/page/${encodeURIComponent(book.remote_id)}`)">查看本地组件保存方式</button></section>
+          <section v-if="book.source.endsWith('-web')&&isSessionSource(book.source.replace('-web','-session'))&&book.saved_chapters<book.total_chapters" class="workspace-advanced"><h3>官网登录后能完整阅读？</h3><p>可尝试账户连续保存，使用独立书库版本。仅限官网实际显示的普通文字；App 专属、图片正文和未购买章节不会因登录而开放。</p><button :disabled="busy||pending" @click="emit('account',sessionBookLink(book.source.replace('-web',''),book.remote_id))">登录本平台，尝试保存可读章节</button></section>
           <TxtSupplementPanel v-if="book.source==='fanqie-web'&&book.saved_chapters<book.total_chapters" :key="book.id" :book-id="book.id" :disabled="busy||pending" @saved="exported" />
           <details class="workspace-advanced"><summary>为什么有些章节没保存？</summary><AvailabilityPanel :chapters="detail.chapters" :busy="busy" @save="selectTab('save')" @read="readSaved" @job="relatedJob" /></details>
           <details class="workspace-advanced" :open="!!openedJob">

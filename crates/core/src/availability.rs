@@ -1,4 +1,4 @@
-use crate::{ChapterAvailability, QIDIAN_SESSION_SOURCE, ReadingChapter, Result};
+use crate::{ChapterAvailability, ReadingChapter, Result};
 use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};
 
@@ -32,7 +32,7 @@ pub(crate) fn annotate(
         })?
         .collect::<std::result::Result<HashMap<_, _>, _>>()?;
     let supported = crate::sources::download_supported(source)
-        || source == QIDIAN_SESSION_SOURCE
+        || crate::session_platform(source).is_some()
         || source == "local-json";
     for chapter in chapters {
         let item = evidence.get(&chapter.id);
@@ -79,7 +79,7 @@ pub(crate) fn annotate(
                 },
                 _ => ("unverified", "未找到本地正文，请核对任务与来源".into()),
             }
-        } else if source == QIDIAN_SESSION_SOURCE {
+        } else if crate::session_platform(source).is_some() {
             (
                 "unattempted",
                 "尚未保存；需在官网核对登录与本章阅读权益，不能仅凭目录判断".into(),

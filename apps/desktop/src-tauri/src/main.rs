@@ -11,7 +11,7 @@ mod local_engine;
 mod official_reader;
 use account_download::{account_download_jobs, resume_account_download, start_account_download};
 use accounts::{account_list, close_account, create_account, open_account};
-use capture::{confirm_account_page, preview_account_page};
+use capture::{confirm_account_page, preview_account_page, preview_platform_catalog};
 
 use opennovel_core::sources::{Catalog, SourceHub, SourceInfo, identify, source_infos};
 use opennovel_core::{
@@ -650,8 +650,8 @@ async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> 
     let library = Arc::clone(&state.library);
     let requested = job.to_owned();
     let snapshot = blocking(move || library.job(&requested)).await?;
-    if snapshot.source == opennovel_core::QIDIAN_SESSION_SOURCE {
-        return Err("起点自动任务请在平台账户选择官网会话后继续".into());
+    if opennovel_core::session_platform(&snapshot.source).is_some() {
+        return Err("官网自动任务请在对应平台账户选择官网会话后继续".into());
     }
     if matches!(snapshot.state.as_str(), "partial" | "blocked")
         && snapshot.blocked > 0
@@ -873,6 +873,7 @@ fn main() {
                     account_list,
                     preview_account_page,
                     confirm_account_page,
+                    preview_platform_catalog,
                     start_account_download,
                     resume_account_download,
                     account_download_jobs,

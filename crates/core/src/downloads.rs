@@ -47,12 +47,12 @@ impl Library {
     ) -> Result<String> {
         catalog.validate()?;
         let session_authorized = matches!(authorization, DownloadAuthorization::QidianSession)
-            && catalog.source == crate::QIDIAN_SESSION_SOURCE
+            && crate::session_platform(&catalog.source).is_some()
             && batch.is_none();
         let explicitly_authorized = batch.is_none()
             && match authorization {
                 DownloadAuthorization::QidianSession => {
-                    catalog.source == crate::QIDIAN_SESSION_SOURCE
+                    crate::session_platform(&catalog.source).is_some()
                 }
                 DownloadAuthorization::LocalEngine => {
                     catalog.source == crate::sources::LOCAL_ENGINE_SOURCE
@@ -231,7 +231,7 @@ impl Library {
                     position: row.get::<_, u32>(1)? + 1,
                     title: row.get(2)?,
                     retryable: job.source != "local-json"
-                        && job.source != crate::QIDIAN_SESSION_SOURCE
+                        && crate::session_platform(&job.source).is_none()
                         && state == "failed"
                         && job.state != "running",
                     state,
@@ -290,7 +290,7 @@ impl Library {
                 ));
             }
             transaction.execute("UPDATE job_items SET state='queued',error=NULL,error_kind=NULL WHERE job_id=?1 AND state='failed' AND (?2 IS NULL OR chapter_id IN (SELECT value FROM json_each(?2)))",params![job_id,selected])?;
-            if job.source == crate::QIDIAN_SESSION_SOURCE {
+            if crate::session_platform(&job.source).is_some() {
                 // A blocked page is revisited only after an explicit account-bound resume.
                 transaction.execute("UPDATE job_items SET state='queued',error=NULL,error_kind=NULL WHERE job_id=?1 AND state='blocked'", [job_id])?;
             }
@@ -354,25 +354,26 @@ impl Library {
                 return self.finish_cancel(job_id);
             }
             let chapter: ChapterRef = serde_json::from_str(&metadata)?;
-            let fetched = if chapter.restricted {
-                Err(Error::Restricted(
-                    "官网目录标记网页受限，不保存截断预览".into(),
-                ))
-            } else {
-                source.fetch_chapter(&remote_id, &chapter, cancelled)
-            }
-            .and_then(|content| {
-                if content.id != chapter.id {
-                    return Err(Error::SourceChanged("正文身份与任务不一致".into()));
+            let fetched =
+                if chapter.restricted && crate::session_platform(source.source_id()).is_none() {
+                    Err(Error::Restricted(
+                        "官网目录标记网页受限，不保存截断预览".into(),
+                    ))
+                } else {
+                    source.fetch_chapter(&remote_id, &chapter, cancelled)
                 }
-                if source.source_id() == crate::QIDIAN_SESSION_SOURCE
-                    && content.title.split_whitespace().collect::<String>()
-                        != chapter.title.split_whitespace().collect::<String>()
-                {
-                    return Err(Error::SourceChanged("正文标题与已确认目录不一致".into()));
-                }
-                validate_content(&remote_id, content)
-            });
+                .and_then(|content| {
+                    if content.id != chapter.id {
+                        return Err(Error::SourceChanged("正文身份与任务不一致".into()));
+                    }
+                    if crate::session_platform(source.source_id()).is_some()
+                        && content.title.split_whitespace().collect::<String>()
+                            != chapter.title.split_whitespace().collect::<String>()
+                    {
+                        return Err(Error::SourceChanged("正文标题与已确认目录不一致".into()));
+                    }
+                    validate_content(&remote_id, content)
+                });
             if cancelled.load(Ordering::Acquire) || matches!(fetched, Err(Error::Cancelled)) {
                 return self.finish_cancel(job_id);
             }
@@ -409,7 +410,7 @@ impl Library {
                     )?;
                     last_error = Some(format!("{}：{message}", chapter.title));
                     // A rate limit or changed page can affect every chapter; stop the run instead of hammering the source.
-                    if source.source_id() == crate::QIDIAN_SESSION_SOURCE
+                    if crate::session_platform(source.source_id()).is_some()
                         || !matches!(error, Error::Restricted(_))
                     {
                         break;

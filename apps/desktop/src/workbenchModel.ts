@@ -1,4 +1,5 @@
 import type {Book,Job,SourceInfo} from './api';
+import {isSessionSource} from './workflow.ts';
 
 export type WorkbenchTab='overview'|'save'|'read'|'export';
 export type SaveMode='account'|'public'|'local'|'unavailable';
@@ -10,7 +11,7 @@ export function publicAccessLimited(job:Job|undefined,mode:SaveMode):boolean {
 
 export function saveMode(source:string,sources:readonly SourceInfo[]):SaveMode {
   if(source==='local-json')return 'local';
-  if(source==='qidian-session')return 'account';
+  if(isSessionSource(source))return 'account';
   return sources.some(s=>s.id===source&&s.can_download)?'public':'unavailable';
 }
 

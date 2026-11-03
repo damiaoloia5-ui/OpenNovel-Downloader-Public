@@ -102,6 +102,18 @@ fn same_page(actual: &str, expected: &str) -> Result<(String, Option<String>)> {
 }
 
 impl SessionCatalog {
+    pub fn from_public(mut catalog: Catalog, platform: &str) -> Result<Self> {
+        if catalog.source != format!("{platform}-web") {
+            return Err(Error::Invalid("目录不属于当前平台".into()));
+        }
+        catalog.validate()?;
+        if !numeric_id(&catalog.remote_id) || catalog.chapters.iter().any(|c| !numeric_id(&c.id)) {
+            return Err(Error::Invalid("目录身份无效".into()));
+        }
+        catalog.source = crate::session_source(platform)?.into();
+        Ok(Self(catalog))
+    }
+
     pub fn parse(raw: &str, expected_url: &str) -> Result<Self> {
         let page: CatalogPage = parse_page(raw)?;
         let (book, chapter) = same_page(&page.url, expected_url)?;
@@ -155,6 +167,38 @@ impl SessionChapter {
         let page: ChapterPage = parse_page(raw)?;
         let (book, chapter) = same_page(&page.url, expected_url)?;
         let chapter = chapter.ok_or_else(|| Error::Invalid("请先打开一章完整正文".into()))?;
+        Self::from_page(page, book, chapter)
+    }
+    pub fn parse_for(
+        raw: &str,
+        expected: &str,
+        platform: &str,
+        book: &str,
+        chapter: &str,
+    ) -> Result<Self> {
+        if platform == "qidian" {
+            return Self::parse(raw, expected);
+        }
+        let page: ChapterPage = parse_page(raw)?;
+        let target = crate::session_chapter_url(platform, book, chapter)?;
+        let target = if platform == "jinjiang"
+            && expected.starts_with("https://www.jjwxc.net/onebook.php?")
+        {
+            target.replace(
+                "https://my.jjwxc.net/onebook_vip.php?",
+                "https://www.jjwxc.net/onebook.php?",
+            )
+        } else {
+            target
+        };
+        if crate::clean_session_url(platform, &page.url)? != target
+            || crate::clean_session_url(platform, expected)? != target
+        {
+            return Err(Error::Conflict("读取章节不属于当前平台、作品或任务".into()));
+        }
+        Self::from_page(page, book.into(), chapter.into())
+    }
+    fn from_page(page: ChapterPage, book: String, chapter: String) -> Result<Self> {
         if page.declared_words == 0 || page.paragraphs.len() > 10_000 {
             return Err(Error::SourceChanged(
                 "正文标注字数缺失或段落数量超过处理容量".into(),
@@ -212,7 +256,11 @@ impl SessionChapter {
 
 impl Library {
     pub fn is_session_download(&self, job_id: &str) -> Result<bool> {
-        Ok(self.connection()?.query_row("SELECT EXISTS(SELECT 1 FROM jobs j JOIN books b ON b.id=j.book_id JOIN job_items i ON i.job_id=j.id WHERE j.id=?1 AND b.source=?2 AND CASE WHEN json_valid(i.payload) THEN json_extract(i.payload,'$.automatic_session') ELSE 0 END=1)",params![job_id,QIDIAN_SESSION_SOURCE],|r|r.get(0))?)
+        let job = self.job(job_id)?;
+        if crate::session_platform(&job.source).is_none() {
+            return Ok(false);
+        }
+        Ok(self.connection()?.query_row("SELECT EXISTS(SELECT 1 FROM job_items WHERE job_id=?1 AND CASE WHEN json_valid(payload) THEN json_extract(payload,'$.automatic_session') ELSE 0 END=1)",[job_id],|r|r.get(0))?)
     }
 
     pub fn session_download_jobs(&self, book_id: &str) -> Result<Vec<crate::JobSnapshot>> {
@@ -222,17 +270,19 @@ impl Library {
     }
 
     pub fn session_catalog(&self, book_id: &str) -> Result<Catalog> {
-        let raw: String = self.connection()?.query_row(
-            "SELECT c.catalog FROM source_catalogs c JOIN books b ON b.id=c.book_id WHERE b.id=?1 AND b.source=?2",
-            params![book_id,QIDIAN_SESSION_SOURCE],|r|r.get(0)
-        ).optional()?.ok_or_else(||Error::Invalid("请先确认保存起点的完整目录".into()))?;
+        let (raw, source, remote): (String, String, String) = self.connection()?.query_row(
+            "SELECT c.catalog,b.source,b.remote_id FROM source_catalogs c JOIN books b ON b.id=c.book_id WHERE b.id=?1",
+            params![book_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))
+        ).optional()?.ok_or_else(||Error::Invalid("请先确认保存该平台的完整目录".into()))?;
         let catalog: Catalog = serde_json::from_str(&raw)?;
         catalog.validate()?;
-        if catalog.source != QIDIAN_SESSION_SOURCE
+        if catalog.source != source
+            || catalog.remote_id != remote
+            || crate::session_platform(&catalog.source).is_none()
             || !numeric_id(&catalog.remote_id)
             || catalog.chapters.iter().any(|c| !numeric_id(&c.id))
         {
-            return Err(Error::Invalid("保存的起点目录身份无效".into()));
+            return Err(Error::Invalid("保存的官网目录身份无效".into()));
         }
         Ok(catalog)
     }
@@ -264,7 +314,7 @@ impl Library {
         let existing: Option<String> = tx
             .query_row(
                 "SELECT id FROM books WHERE source=?1 AND remote_id=?2",
-                params![QIDIAN_SESSION_SOURCE, catalog.remote_id],
+                params![catalog.source, catalog.remote_id],
                 |r| r.get(0),
             )
             .optional()?;
@@ -304,7 +354,7 @@ impl Library {
             id
         } else {
             let id = uuid::Uuid::new_v4().to_string();
-            tx.execute("INSERT INTO books(id,source,remote_id,title,author,total) VALUES(?1,?2,?3,?4,?5,?6)",params![id,QIDIAN_SESSION_SOURCE,catalog.remote_id,catalog.title,catalog.author,catalog.chapters.len()])?;
+            tx.execute("INSERT INTO books(id,source,remote_id,title,author,total) VALUES(?1,?2,?3,?4,?5,?6)",params![id,catalog.source,catalog.remote_id,catalog.title,catalog.author,catalog.chapters.len()])?;
             tx.execute(
                 "INSERT INTO source_catalogs(book_id,catalog) VALUES(?1,?2)",
                 params![id, raw],

@@ -53,9 +53,7 @@ async fn prepare_resume(
     state: &AppState,
 ) -> std::result::Result<ResumeTicket, String> {
     let account = state.library.account(id).map_err(|e| e.to_string())?;
-    if account.platform != "qidian" {
-        return Err("自动官网保存实验目前只支持起点".into());
-    }
+    opennovel_core::session_source(&account.platform).map_err(|e| e.to_string())?;
     let window = app
         .get_webview_window(&window_label(id))
         .ok_or("官网窗口已关闭，请重新登录后继续；保存进度保留")?;
@@ -73,8 +71,8 @@ async fn prepare_resume(
     }
     let _lease = PageLease(Some(reading));
     let before = window.url().map_err(|_| "无法确认官网当前地址")?;
-    if !opennovel_core::account_navigation_allowed("qidian", &before) {
-        return Err("当前页面不是受支持的起点官网页面，请重新登录后继续".into());
+    if !opennovel_core::account_navigation_allowed(&account.platform, &before) {
+        return Err("当前页面不是受支持的平台官网页面，请重新登录后继续".into());
     }
     if before.host_str() == Some("passport.qidian.com") {
         let _ = crate::accounts::show_existing(&window);
@@ -117,6 +115,8 @@ async fn prepare_resume(
 }
 
 struct AccountReader {
+    platform: String,
+    source: String,
     interval: Duration,
     app: tauri::AppHandle,
     account: String,
@@ -160,7 +160,13 @@ fn wait(duration: Duration, cancelled: &AtomicBool) -> Result<()> {
 }
 
 /// None means DOM is still loading. Errors never include page text, tokens, or URLs.
-fn decode_page(raw: &str, expected: &str, chapter: &ChapterRef) -> Result<Option<ImportChapter>> {
+fn decode_page_for(
+    raw: &str,
+    expected: &str,
+    chapter: &ChapterRef,
+    platform: &str,
+    book: &str,
+) -> Result<Option<ImportChapter>> {
     if raw.len() > opennovel_core::MAX_CAPTURE_BYTES {
         return Err(Error::SourceChanged(
             "页面超过读取上限，自动保存已停止".into(),
@@ -177,12 +183,18 @@ fn decode_page(raw: &str, expected: &str, chapter: &ChapterRef) -> Result<Option
             "verification" => Err(Error::Restricted(
                 "官网要求验证，自动保存已停止；请本人处理后继续".into(),
             )),
+            "word_count" => Err(Error::SourceChanged(
+                "官网未提供可核验的章节字数，无法确认正文完整性；本章未保存".into(),
+            )),
+            "identity" => Err(Error::SourceChanged(
+                "官网章节身份无法核对；请核对当前作品及登录状态，本章未保存".into(),
+            )),
             _ => Err(Error::SourceChanged(
                 "页面结构无法识别，自动保存已停止".into(),
             )),
         };
     }
-    let captured = SessionChapter::parse(raw, expected)?;
+    let captured = SessionChapter::parse_for(raw, expected, platform, book, &chapter.id)?;
     if captured.chapter.id != chapter.id
         || captured
             .chapter
@@ -198,14 +210,31 @@ fn decode_page(raw: &str, expected: &str, chapter: &ChapterRef) -> Result<Option
     Ok(Some(captured.chapter))
 }
 
+#[cfg(test)]
+fn decode_page(raw: &str, expected: &str, chapter: &ChapterRef) -> Result<Option<ImportChapter>> {
+    decode_page_for(raw, expected, chapter, "qidian", "")
+}
 struct StableCapture<'a> {
+    platform: &'a str,
+    book: &'a str,
     expected: &'a str,
     chapter: &'a ChapterRef,
     previous: Option<(String, ImportChapter)>,
 }
 impl<'a> StableCapture<'a> {
+    #[cfg(test)]
     fn new(expected: &'a str, chapter: &'a ChapterRef) -> Self {
+        Self::for_platform(expected, chapter, "qidian", "")
+    }
+    fn for_platform(
+        expected: &'a str,
+        chapter: &'a ChapterRef,
+        platform: &'a str,
+        book: &'a str,
+    ) -> Self {
         Self {
+            platform,
+            book,
             expected,
             chapter,
             previous: None,
@@ -222,7 +251,9 @@ impl<'a> StableCapture<'a> {
             return Ok(self.previous.take().map(|(_, content)| content));
         }
         self.previous = None;
-        if let Some(content) = decode_page(&raw, self.expected, self.chapter)? {
+        if let Some(content) =
+            decode_page_for(&raw, self.expected, self.chapter, self.platform, self.book)?
+        {
             self.previous = Some((raw, content));
         }
         Ok(None)
@@ -250,13 +281,13 @@ impl AccountReader {
             .get_webview_window(&window_label(&self.account))
             .ok_or_else(|| Error::Network("官网窗口已关闭，自动保存已停止".into()))
     }
-    fn current_url(window: &tauri::WebviewWindow) -> Result<String> {
-        let mut url = window
+    fn current_url(&self, window: &tauri::WebviewWindow) -> Result<String> {
+        let url = window
             .url()
             .map_err(|_| Error::Network("无法确认官网地址".into()))?;
-        if !opennovel_core::account_navigation_allowed("qidian", &url) {
+        if !opennovel_core::account_navigation_allowed(&self.platform, &url) {
             return Err(Error::Restricted(
-                "页面已离开起点官网，自动保存已停止".into(),
+                "页面已离开当前平台官网，自动保存已停止".into(),
             ));
         }
         if url.host_str() == Some("passport.qidian.com") {
@@ -264,14 +295,12 @@ impl AccountReader {
                 "官网要求重新登录，请本人登录后继续".into(),
             ));
         }
-        url.set_query(None);
-        url.set_fragment(None);
-        Ok(url.to_string())
+        opennovel_core::clean_session_url(&self.platform, url.as_str())
     }
 }
 impl SourceAdapter for AccountReader {
     fn source_id(&self) -> &str {
-        opennovel_core::QIDIAN_SESSION_SOURCE
+        &self.source
     }
     fn fetch_chapter(
         &self,
@@ -279,8 +308,18 @@ impl SourceAdapter for AccountReader {
         chapter: &ChapterRef,
         cancelled: &AtomicBool,
     ) -> Result<ImportChapter> {
-        let expected = format!("https://www.qidian.com/chapter/{book}/{}/", chapter.id);
-        opennovel_core::qidian_capture_url(&expected)?;
+        if self.platform == "jinjiang" && chapter.title.contains("[锁定]") {
+            return Err(Error::Restricted("官网目录标记章节锁定，进度保留".into()));
+        }
+        let expected = opennovel_core::session_chapter_url(&self.platform, book, &chapter.id)?;
+        let expected = if self.platform == "jinjiang" && !chapter.restricted {
+            expected.replace(
+                "https://my.jjwxc.net/onebook_vip.php?",
+                "https://www.jjwxc.net/onebook.php?",
+            )
+        } else {
+            expected
+        };
         let delay = self
             .last_navigation
             .lock()
@@ -290,7 +329,7 @@ impl SourceAdapter for AccountReader {
         wait(delay, cancelled)?;
         let window = self.window(cancelled)?;
         // Reading normal pages must never turn a login page into an unattended login flow.
-        if Self::current_url(&window)? != expected {
+        if self.current_url(&window)? != expected {
             window
                 .navigate(
                     expected
@@ -305,11 +344,17 @@ impl SourceAdapter for AccountReader {
         }
         let deadline = Instant::now() + PAGE_TIMEOUT;
         let mut arrived = false;
-        let mut stable = StableCapture::new(&expected, chapter);
-        let script = include_str!("capture_page.js").replace("__MODE__", "chapter");
+        let mut stable = StableCapture::for_platform(&expected, chapter, &self.platform, book);
+        let script = if self.platform == "qidian" {
+            include_str!("capture_page.js").replace("__MODE__", "chapter")
+        } else {
+            include_str!("session_page.js")
+                .replace("__PLATFORM__", &self.platform)
+                .replace("__BOOK__", book)
+        };
         while Instant::now() < deadline {
             let window = self.window(cancelled)?;
-            let current = Self::current_url(&window)?;
+            let current = self.current_url(&window)?;
             if current != expected {
                 if arrived {
                     return Err(Error::Network(
@@ -340,7 +385,7 @@ impl SourceAdapter for AccountReader {
                     Err(_) => return Err(Error::Network("页面读取中断".into())),
                 }
             };
-            if Self::current_url(&window)? != expected
+            if self.current_url(&window)? != expected
                 || self.revision.load(Ordering::Acquire) != epoch
             {
                 return Err(Error::Network(
@@ -418,9 +463,7 @@ fn launch(
     state: &AppState,
 ) -> std::result::Result<String, String> {
     let account = state.library.account(&id).map_err(|e| e.to_string())?;
-    if account.platform != "qidian" {
-        return Err("自动官网保存实验目前只支持起点".into());
-    }
+    opennovel_core::session_source(&account.platform).map_err(|e| e.to_string())?;
     if app.get_webview_window(&window_label(&id)).is_none() {
         return Err("请先打开本账户官网窗口并自行登录".into());
     }
@@ -446,6 +489,26 @@ fn launch(
     let mut registrations = state.cancellations.lock().map_err(|_| "任务管理器不可用")?;
     if registrations.values().any(|r| r.account_id.is_some()) {
         return Err("已有官网自动任务执行或停止中，请稍候".into());
+    }
+    let expected_source =
+        opennovel_core::session_source(&account.platform).map_err(|e| e.to_string())?;
+    let requested_book = if let Some((book, _)) = &new {
+        book.clone()
+    } else {
+        state
+            .library
+            .job(resume.as_deref().ok_or("缺少任务")?)
+            .map_err(|e| e.to_string())?
+            .book_id
+    };
+    if state
+        .library
+        .session_catalog(&requested_book)
+        .map_err(|e| e.to_string())?
+        .source
+        != expected_source
+    {
+        return Err("当前账户平台与这本书不一致，未启动任务".into());
     }
     let job_id = if let Some((book, selection)) = new {
         if registrations.values().any(|r| r.book_id == book) {
@@ -496,6 +559,8 @@ fn launch(
         job_id: job_id.clone(),
     };
     let reader = AccountReader {
+        platform: account.platform,
+        source: expected_source.into(),
         interval,
         app,
         account: id,
