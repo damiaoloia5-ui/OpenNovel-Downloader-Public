@@ -126,7 +126,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         <button :class="{ selected: page === 'tools' }" @click="page = 'tools'"><AppIcon name="archive" />备份与诊断</button>
         </details>
       </nav>
-      <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>综合功能候选版 · {{ appVersion }}</p></div>
+      <div class="sidebar-note"><span class="dot"></span>本地保存，离线导出<p>OpenNovel Downloader · {{ appVersion }}</p></div>
     </aside>
 
     <main>
