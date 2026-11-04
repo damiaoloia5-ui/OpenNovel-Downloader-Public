@@ -130,5 +130,5 @@ export function previewAccountPage(id:string,kind:'catalog'|'chapter'):Promise<C
 export function previewPlatformCatalog(id:string,bookUrl:string):Promise<CapturePreview> {return invoke('preview_platform_catalog',{id,bookUrl});}
 export function confirmAccountPage(id:string,token:string):Promise<CaptureReceipt> {return invoke('confirm_account_page',{id,token});}
 export function accountDownloadJobs(bookId:string):Promise<Job[]> {return invoke('account_download_jobs',{bookId});}
-export function startAccountDownload(id:string,bookId:string,selection:string,noAutoPurchase:boolean,intervalMs=500,destination?:SaveDestination):Promise<string> {return invoke('start_account_download',{id,bookId,selection:selection.trim()||null,noAutoPurchase,intervalMs,destination:destination??null});}
-export function resumeAccountDownload(id:string,jobId:string,noAutoPurchase:boolean,intervalMs=500):Promise<string> {return invoke('resume_account_download',{id,jobId,noAutoPurchase,intervalMs});}
+export function startAccountDownload(id:string,bookId:string,selection:string,noAutoPurchase:boolean,intervalMs=3000,destination?:SaveDestination):Promise<string> {return invoke('start_account_download',{id,bookId,selection:selection.trim()||null,noAutoPurchase,intervalMs,destination:destination??null});}
+export function resumeAccountDownload(id:string,jobId:string,noAutoPurchase:boolean,intervalMs=3000):Promise<string> {return invoke('resume_account_download',{id,jobId,noAutoPurchase,intervalMs});}

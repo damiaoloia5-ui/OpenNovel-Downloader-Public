@@ -236,7 +236,7 @@ test('new-book guide logs in, reads automatically, and starts once only after ex
   const f=await mount(Account,{initialUrl:link});try{
     await loginAndRead(f);assert.ok(f.button('是这本，开始保存为 TXT').props.disabled);assert.equal(f.state.calls.filter(c=>c[0]==='start').length,0);
     await acknowledge(f);const button=f.button('是这本，开始保存为 TXT');button.props.onClick();button.props.onClick();await flush();await flush();
-    const starts=f.state.calls.filter(c=>c[0]==='start');assert.equal(starts.length,1);assert.deepEqual(starts[0].slice(1),['original-account','original-book','',true,500,{directory:null,format:'txt',selection_only:false}]);assert.equal(f.state.calls.filter(c=>c[0]==='confirm').length,1);
+    const starts=f.state.calls.filter(c=>c[0]==='start');assert.equal(starts.length,1);assert.deepEqual(starts[0].slice(1),['original-account','original-book','',true,3000,{directory:null,format:'txt',selection_only:false}]);assert.equal(f.state.calls.filter(c=>c[0]==='confirm').length,1);
     assert.ok(f.button('暂停保存'));assert.equal(f.button('是这本，开始保存为 TXT'),undefined);
   }finally{f.close();}
 });
@@ -534,7 +534,7 @@ test('invalid or out of catalog range cannot create a public download',async()=>
 test('account confirmation sends the chosen chapter range and Word format before the worker starts',async()=>{
  const f=await mount(Account,{initialUrl:link});try{
   await loginAndRead(f);await selectSaveOptions(f);await acknowledge(f);await click(f.button('是这本，开始保存为 Word'));
-  assert.deepEqual(f.state.calls.find(c=>c[0]==='start'),['start','original-account','original-book','2-2',true,500,{directory:null,format:'docx',selection_only:true}]);
+  assert.deepEqual(f.state.calls.find(c=>c[0]==='start'),['start','original-account','original-book','2-2',true,3000,{directory:null,format:'docx',selection_only:true}]);
  }finally{f.close();}
 });
 test('Word automatic result is labeled as Word and uses its recorded file',async()=>{

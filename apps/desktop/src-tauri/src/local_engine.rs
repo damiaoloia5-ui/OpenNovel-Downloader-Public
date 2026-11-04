@@ -11,11 +11,11 @@ use std::{
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{
-        Mutex,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Default)]
@@ -24,6 +24,63 @@ pub struct EngineControl {
     remembered: AtomicBool,
     preference: Option<PathBuf>,
     choice_revision: Mutex<u64>,
+    cooldown: Mutex<u64>,
+}
+
+fn epoch_seconds() -> Result<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|v| v.as_secs())
+        .map_err(|_| Error::Invalid("系统时间异常，暂停来源访问".into()))
+}
+
+impl EngineControl {
+    // Only a deadline is stored; never book IDs, account data or response text.
+    fn cooldown_path(&self) -> Option<PathBuf> {
+        self.preference
+            .as_ref()
+            .and_then(|p| p.parent())
+            .map(|p| p.join("source-cooldown.json"))
+    }
+    fn deadline(&self, memory: u64) -> Result<u64> {
+        let Some(path) = self.cooldown_path() else {
+            return Ok(memory);
+        };
+        match std::fs::metadata(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(memory),
+            Err(e) => Err(e.into()),
+            Ok(m) if m.len() <= 32 => {
+                Ok(memory.max(serde_json::from_slice::<u64>(&std::fs::read(path)?)?))
+            }
+            Ok(_) => Err(Error::Invalid("来源冷却记录异常，已停止访问".into())),
+        }
+    }
+    fn check_cooldown(&self) -> Result<()> {
+        let mut memory = self.cooldown.lock().map_err(|_| stopped())?;
+        *memory = self.deadline(*memory)?;
+        let remaining = memory.saturating_sub(epoch_seconds()?);
+        if remaining > 0 {
+            return Err(Error::Network(format!(
+                "来源冷却中，请至少等待 {remaining} 秒再继续；重启不会取消等待"
+            )));
+        }
+        Ok(())
+    }
+    fn defer(&self, seconds: u64) -> Result<()> {
+        let mut memory = self.cooldown.lock().map_err(|_| stopped())?;
+        *memory = self
+            .deadline(*memory)?
+            .max(epoch_seconds()? + seconds.clamp(1, 86400) + 1);
+        if let Some(path) = self.cooldown_path() {
+            let parent = path.parent().ok_or_else(stopped)?;
+            std::fs::create_dir_all(parent)?;
+            let mut file = tempfile::NamedTempFile::new_in(parent)?;
+            file.write_all(serde_json::to_string(&*memory)?.as_bytes())?;
+            file.as_file().sync_all()?;
+            file.persist(path).map_err(|e| e.error)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Serialize)]
@@ -150,6 +207,7 @@ impl EngineControl {
     }
 
     pub fn require_ready(&self) -> Result<Runtime> {
+        self.check_cooldown()?;
         let (ticket, prepare) = self.activation_ticket()?;
         let runtime = Runtime::discover()?;
         if prepare {
@@ -708,6 +766,8 @@ pub struct EngineAdapter {
     runtime: Runtime,
     book: String,
     items: Vec<String>,
+    approved: std::collections::HashSet<String>,
+    control: Option<Arc<EngineControl>>,
     worker: Mutex<Option<Worker>>,
 }
 
@@ -716,9 +776,15 @@ impl EngineAdapter {
         Self {
             runtime,
             book,
+            approved: items.iter().cloned().collect(),
+            control: None,
             items,
             worker: Mutex::new(None),
         }
+    }
+    pub fn with_control(mut self, control: Arc<EngineControl>) -> Self {
+        self.control = Some(control);
+        self
     }
 }
 
@@ -736,7 +802,10 @@ impl SourceAdapter for EngineAdapter {
         if cancelled.load(Ordering::Acquire) {
             return Err(Error::Cancelled);
         }
-        if book != self.book || !self.items.contains(&chapter.id) {
+        if let Some(control) = &self.control {
+            control.check_cooldown()?;
+        }
+        if book != self.book || !self.approved.contains(&chapter.id) {
             return Err(stopped());
         }
         let mut slot = self.worker.lock().map_err(|_| stopped())?;
@@ -756,6 +825,15 @@ impl SourceAdapter for EngineAdapter {
             return Err(Error::Cancelled);
         }
         if value["op"] == "error" {
+            if let Some(control) = &self.control {
+                match value["kind"].as_str() {
+                    Some("rate_limited") => {
+                        control.defer(value["retry_after_seconds"].as_u64().unwrap_or(60))?
+                    }
+                    Some("access_challenge") => control.defer(60)?,
+                    _ => (),
+                }
+            }
             return Err(match value["kind"].as_str() {
                 Some("access_challenge") => Error::AccessChallenge(
                     "来源要求验证或拒绝访问，已停止；请核对官网提示后再继续".into(),
@@ -805,6 +883,32 @@ impl SourceAdapter for EngineAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_cooldown_survives_new_control_and_cannot_be_shortened() {
+        let root = tempfile::tempdir().unwrap();
+        let control = EngineControl::for_directory(root.path());
+        control.check_cooldown().unwrap();
+        control.defer(120).unwrap();
+        let path = root.path().join("source-cooldown.json");
+        let first: u64 = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        control.defer(1).unwrap();
+        let second: u64 = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(second >= first);
+        assert!(
+            EngineControl::for_directory(root.path())
+                .check_cooldown()
+                .unwrap_err()
+                .to_string()
+                .contains("冷却中")
+        );
+        std::fs::write(&path, b"invalid").unwrap();
+        assert!(
+            EngineControl::for_directory(root.path())
+                .check_cooldown()
+                .is_err()
+        );
+    }
 
     #[test]
     fn diagnostics_keep_consent_and_distinguish_environment_recovery() {

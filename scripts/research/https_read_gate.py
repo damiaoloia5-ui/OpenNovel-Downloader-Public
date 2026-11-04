@@ -88,6 +88,36 @@ def retry_after_seconds(value):
     return min(86400, max(1, seconds))
 
 
+class RequestPacer:
+    """One shared start budget for all prefetch sessions, including retries."""
+    def __init__(self, *, clock=time.monotonic, sleep=time.sleep):
+        self.clock, self.sleep = clock, sleep
+        self.lock = threading.Lock()
+        self.next_start = self.cooldown = 0.0
+
+    def acquire(self, stop_requested):
+        while not stop_requested():
+            with self.lock:
+                now = self.clock()
+                if self.cooldown > now:
+                    return {'outcome': 'rate_limited', 'retry_after_seconds': math.ceil(self.cooldown - now)}
+                delay = self.next_start - now
+                if delay <= 0:
+                    self.next_start = now + 0.5
+                    return None
+            self.sleep(min(delay, 0.03))
+        return {'outcome': 'cancelled'}
+
+    def observe(self, report):
+        if report.get('outcome') in {'rate_limited', 'access_challenge'}:
+            seconds = report.get('retry_after_seconds', 60)
+            with self.lock:
+                self.cooldown = max(self.cooldown, self.clock() + min(86400, max(1, seconds)))
+
+
+_PACER = RequestPacer()
+
+
 class ChapterTransport:
     """One sequential keep-alive connection, owned and closed by one engine session."""
     def __init__(self):
@@ -177,7 +207,12 @@ def fetch_with_retries(request, expected_item, *, stop_requested=lambda: False, 
     for attempt in (1, 2):
         if stop_requested() or time.monotonic() >= deadline:
             return {'status': 503, 'headers': [], 'body': ''}, {'outcome': 'cancelled', 'attempts': attempt - 1}
+        refusal = _PACER.acquire(stop_requested)
+        if refusal is not None:
+            refusal['attempts'] = attempt - 1
+            return {'status': 429 if refusal['outcome'] == 'rate_limited' else 503, 'headers': [], 'body': ''}, refusal
         result, report = fetch_once(request, expected_item, timeout=max(0.01, deadline - time.monotonic()), transport=transport)
+        _PACER.observe(report)
         report['attempts'] = attempt
         transient = report['outcome'] in {'transport_failed', 'empty_response'} or (
             report['outcome'] == 'http_error' and report.get('http_status') in (408, 502, 503, 504))

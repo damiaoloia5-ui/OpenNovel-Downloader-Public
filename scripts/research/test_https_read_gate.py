@@ -4,12 +4,40 @@ import ssl
 from unittest.mock import patch
 from urllib.parse import urlencode
 
-from https_read_gate import ChapterTransport, LIMIT, PinnedConnection, classify, fetch_once, fetch_with_retries, validate_request
+from https_read_gate import ChapterTransport, LIMIT, PinnedConnection, RequestPacer, classify, fetch_once, fetch_with_retries, validate_request
 from local_engine_gate import ITEM, PARAMS, PATH
 from run_https_read_gate import METADATA_FIELDS, split_engine_output
 
 
 class HttpsReadGateTests(unittest.TestCase):
+    def setUp(self):
+        self.pacer_patch = patch('https_read_gate._PACER', RequestPacer())
+        self.pacer_patch.start()
+        self.addCleanup(self.pacer_patch.stop)
+
+    def test_pacing_is_shared_and_cancelable_without_a_real_request(self):
+        clock = [0.0]
+        def sleep(seconds): clock[0] += seconds
+        pacer = RequestPacer(clock=lambda: clock[0], sleep=sleep)
+        starts=[]
+        for _ in range(4):
+            self.assertIsNone(pacer.acquire(lambda: False)); starts.append(clock[0])
+        self.assertEqual(starts, [0, .5, 1, 1.5])
+        self.assertEqual(pacer.acquire(lambda: True)['outcome'], 'cancelled')
+        pacer.observe({'outcome':'rate_limited','retry_after_seconds':120})
+        pacer.observe({'outcome':'rate_limited','retry_after_seconds':1})
+        self.assertEqual(pacer.acquire(lambda: False)['retry_after_seconds'],120)
+        clock[0] += 120
+        self.assertIsNone(pacer.acquire(lambda: False))
+
+    def test_new_call_during_cooldown_never_reaches_transport(self):
+        with patch('https_read_gate.fetch_once', return_value=({'status':429}, {'outcome':'rate_limited','retry_after_seconds':60})) as fetch:
+            fetch_with_retries(self.request(), ITEM)
+            result,report=fetch_with_retries(self.request(), ITEM)
+            self.assertEqual(fetch.call_count,1)
+            self.assertEqual(result['status'],429)
+            self.assertEqual(report['attempts'],0)
+
     def test_keep_alive_reuses_only_successful_fully_read_responses(self):
         class Response:
             will_close = False
@@ -82,7 +110,7 @@ class HttpsReadGateTests(unittest.TestCase):
 
     def test_challenges_limits_redirects_and_oversize_are_never_retried(self):
         for outcome in ['access_challenge', 'rate_limited', 'redirect_refused', 'oversized']:
-            with patch('https_read_gate.fetch_once', return_value=({'status': 403, 'headers': [], 'body': ''}, {'outcome': outcome})) as fetch:
+            with patch('https_read_gate._PACER', RequestPacer()), patch('https_read_gate.fetch_once', return_value=({'status': 403, 'headers': [], 'body': ''}, {'outcome': outcome})) as fetch:
                 fetch_with_retries(self.request(), ITEM)
             self.assertEqual(fetch.call_count, 1)
 

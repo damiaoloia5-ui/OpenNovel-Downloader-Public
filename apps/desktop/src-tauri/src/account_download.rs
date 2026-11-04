@@ -541,6 +541,9 @@ fn launch(
     {
         return Err("当前账户平台与这本书不一致，未启动任务".into());
     }
+    if registrations.values().any(|r| r.source == expected_source) {
+        return Err("该平台已有自动保存任务，请完成或暂停后再继续，避免多账号叠加访问".into());
+    }
     let job_id = if let Some((book, selection, destination)) = new {
         if registrations.values().any(|r| r.book_id == book) {
             return Err("该书有任务正在停止中，请稍候".into());
@@ -584,6 +587,7 @@ fn launch(
         job_id.clone(),
         ActiveTask {
             book_id,
+            source: expected_source.into(),
             token: Arc::clone(&token),
             account_id: Some(id.clone()),
         },

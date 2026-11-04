@@ -46,7 +46,7 @@ fn retry_after_seconds(headers: &reqwest::header::HeaderMap) -> u64 {
             })
         })
         .unwrap_or(60)
-        .min(86400)
+        .clamp(1, 86400)
 }
 
 pub(super) fn allowed(url: &Url, hosts: &[&str]) -> bool {
@@ -322,6 +322,15 @@ mod tests {
     const OK: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
     const BUSY: &[u8] =
         b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+    #[test]
+    fn retry_after_never_creates_a_zero_delay_retry_loop() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        for (value, expected) in [("0", 1), ("9", 9), ("999999", 86400), ("invalid", 60)] {
+            headers.insert("retry-after", value.parse().unwrap());
+            assert_eq!(retry_after_seconds(&headers), expected);
+        }
+    }
 
     #[test]
     fn accepted_socket_waits_for_delayed_http_headers() {

@@ -14,6 +14,47 @@ pub(crate) enum DownloadAuthorization {
 }
 
 impl Library {
+    /// Plan only missing, permitted work for a bounded prefetcher. Never send the
+    /// whole catalog: retrying one failed chapter must not prefetch its neighbours.
+    pub fn pending_download_ids(
+        &self,
+        job_id: &str,
+        selection: Option<&[String]>,
+    ) -> Result<Vec<String>> {
+        let selected = selection.map(serde_json::to_string).transpose()?;
+        let connection = self.connection()?;
+        let source: String = connection
+            .query_row(
+                "SELECT b.source FROM jobs j JOIN books b ON b.id=j.book_id WHERE j.id=?1",
+                [job_id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| Error::Invalid("任务不存在".into()))?;
+        if source != crate::sources::LOCAL_ENGINE_SOURCE {
+            return Err(Error::Invalid(
+                "预取计划仅适用于明确免费本地增强任务".into(),
+            ));
+        }
+        if let Some(ids) = selection {
+            let count: usize = connection.query_row(
+                "SELECT COUNT(*) FROM job_items WHERE job_id=?1 AND state='failed' AND chapter_id IN (SELECT value FROM json_each(?2))",
+                params![job_id, selected], |r| r.get(0),
+            )?;
+            if ids.is_empty() || count != ids.len() {
+                return Err(Error::Conflict("只能重试当前任务中不重复的失败章节".into()));
+            }
+        }
+        Ok(connection.prepare(
+            "SELECT i.chapter_id FROM job_items i JOIN jobs j ON j.id=i.job_id
+             WHERE i.job_id=?1 AND i.state IN ('queued','failed')
+             AND json_extract(i.payload,'$.restricted')=0
+             AND (?2 IS NULL OR i.chapter_id IN (SELECT value FROM json_each(?2)))
+             AND NOT EXISTS(SELECT 1 FROM chapters c WHERE c.book_id=j.book_id AND c.chapter_id=i.chapter_id)
+             ORDER BY i.position",
+        )?.query_map(params![job_id, selected], |r| r.get(0))?.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     /// Persist the catalog and selected remote chapter identities before any text request.
     pub fn create_download(&self, catalog: &Catalog, first: usize, last: usize) -> Result<String> {
         if first == 0 || last < first || last > catalog.chapters.len() {

@@ -18,7 +18,7 @@ const pending=computed(()=>jobs.value.some(j=>['queued','running','paused'].incl
 const book=computed(()=>books.value.find(b=>b.id===bookId.value));
 const resumable=computed(()=>{const job=jobs.value[0];return job&&['paused','cancelled','failed','partial','blocked'].includes(job.state)&&job.saved<job.total?job:null;});
 const complete=computed(()=>!!book.value&&book.value.total_chapters>0&&book.value.saved_chapters===book.value.total_chapters);
-const newTask=ref(false);const intervalMs=ref(500);
+const newTask=ref(false);const intervalMs=ref(3000);
 const interrupted=computed(()=>/验证|验证码|滑块|导航发生变化|页面被切换/.test(`${jobs.value[0]?.error||''} ${error.value}`));
 const labels:Record<string,string>={queued:'等待开始',running:'自动保存中',paused:'已暂停',cancelled:'已取消',failed:'已停止，需要处理',partial:'部分保存，已停止',blocked:'阅读受限，已停止',completed:'本次范围完成'};
 let timer:ReturnType<typeof setTimeout>|undefined;let disposed=false;
@@ -52,7 +52,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);});
     <p v-if="error" class="message failure" role="alert">{{ error }}<br>下一步：{{ saveRecovery(error) }}</p><p v-if="notice" class="message success" role="status">{{ notice }}</p>
     <details class="save-settings">
 <summary>更多设置：速度、选章、取消任务</summary>
-      <label>保存节奏<select v-model.number="intervalMs" :disabled="busy||active"><option :value="500">极速 · 最小翻页间隔 0.5 秒（实验）</option><option :value="1000">快速 · 最小翻页间隔 1 秒（实验）</option><option :value="3000">标准 · 最小翻页间隔 3 秒</option><option :value="6000">缓慢 · 最小翻页间隔 6 秒</option></select></label><p class="footnote">默认极速。实际速度还取决于网页加载与完整性确认。遇到限流或验证仍会停止；可暂停后改用标准或缓慢节奏继续。</p>
+      <label>保存节奏<select v-model.number="intervalMs" :disabled="busy||active"><option :value="500">极速 · 最小翻页间隔 0.5 秒（实验）</option><option :value="1000">快速 · 最小翻页间隔 1 秒（实验）</option><option :value="3000">标准 · 最小翻页间隔 3 秒</option><option :value="6000">缓慢 · 最小翻页间隔 6 秒</option></select></label><p class="footnote">默认标准（3 秒）。更快节奏由你主动选择，可能增加平台验证或限制账号的风险。实际速度取决于网页加载与完整性确认；遇到限流或验证仍会停止，任何节奏都不能保证不触发风控。</p>
       <label v-if="resumable" class="ack"><input v-model="newTask" type="checkbox" :disabled="busy||pending">另建任务并保留旧记录（高级，不会改变原任务范围）</label><label>只保存部分章节（留空就是全书缺章）<input v-model="selection" :disabled="busy||pending||!!resumable&&!newTask" placeholder="例如 1-3 或 1,3,5-8" /></label>
       <div v-for="job in jobs.filter(j=>['running','queued','paused'].includes(j.state))" :key="job.id" class="actions"><button :disabled="busy" @click="action(()=>cancelJob(job.id))">取消此任务（已保存正文保留）</button></div>
     </details>

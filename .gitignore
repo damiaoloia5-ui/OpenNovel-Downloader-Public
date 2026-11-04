@@ -16,6 +16,7 @@ __pycache__/
 *.db-wal
 *.db.lock
 local-engine-choice.json
+source-cooldown.json
 profiles.json
 profiles.lock
 profiles/

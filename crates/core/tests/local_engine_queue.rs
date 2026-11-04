@@ -125,3 +125,134 @@ fn catalog_restricted_items_remain_missing_and_are_not_requested() {
         ["10000000002", "10000000004"]
     );
 }
+
+#[test]
+fn prefetch_plan_excludes_saved_restricted_and_unselected_chapters() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("library.db");
+    let lib = Library::open(&path).unwrap();
+    let job = lib.create_engine_download(&catalog(), &[1, 2, 3]).unwrap();
+    lib.run_job(&job, &adapter(Some(2)), &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(
+        lib.pending_download_ids(&job, None).unwrap(),
+        ["10000000003", "10000000004"]
+    );
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute(
+        "UPDATE job_items SET state='failed' WHERE job_id=?1 AND chapter_id='10000000003'",
+        [&job],
+    )
+    .unwrap();
+    let selected = vec!["10000000003".to_string()];
+    assert_eq!(
+        lib.pending_download_ids(&job, Some(&selected)).unwrap(),
+        selected
+    );
+    for invalid in [
+        vec![],
+        vec!["10000000003".into(), "10000000003".into()],
+        vec!["10000000004".into()],
+    ] {
+        assert!(lib.pending_download_ids(&job, Some(&invalid)).is_err());
+    }
+    // Another task may already have saved a body while this old item is queued.
+    db.execute(
+        "UPDATE job_items SET state='queued' WHERE job_id=?1 AND chapter_id='10000000002'",
+        [&job],
+    )
+    .unwrap();
+    db.execute("UPDATE job_items SET payload=json_set(payload,'$.restricted',json('true')) WHERE job_id=?1 AND chapter_id='10000000004'", [&job]).unwrap();
+    assert_eq!(
+        lib.pending_download_ids(&job, None).unwrap(),
+        ["10000000003"]
+    );
+    assert!(lib.pending_download_ids("missing", None).is_err());
+}
+
+#[test]
+fn preparation_failure_is_persisted_without_overriding_a_user_pause() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("library.db");
+    let lib = Library::open(&path).unwrap();
+    let job = lib.create_engine_download(&catalog(), &[1, 2, 3]).unwrap();
+    lib.record_worker_failure(&job, "原创组件冷却中").unwrap();
+    assert_eq!(lib.job(&job).unwrap().state, "failed");
+    assert_eq!(lib.pending_download_ids(&job, None).unwrap().len(), 3);
+    let mut other = catalog();
+    other.remote_id = "10000000009".into();
+    let paused = lib.create_engine_download(&other, &[1]).unwrap();
+    lib.pause_job(&paused).unwrap();
+    lib.record_worker_failure(&paused, "迟到的准备失败")
+        .unwrap();
+    assert_eq!(lib.job(&paused).unwrap().state, "paused");
+    drop(lib);
+    let lib = Library::open(&path).unwrap();
+    let resumed = lib
+        .run_job(&job, &adapter(None), &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(resumed.saved, 3);
+    assert_eq!(resumed.state, "completed");
+}
+
+#[test]
+#[ignore = "explicit offline prefetch planning benchmark"]
+fn prefetch_planning_benchmark() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("library.db");
+    let lib = Library::open(&path).unwrap();
+    let mut cat = catalog();
+    cat.chapters = (0..10000)
+        .map(|n| ChapterRef {
+            id: (10000000002_u64 + n).to_string(),
+            title: "原创基准章".into(),
+            restricted: false,
+        })
+        .collect();
+    let job = lib
+        .create_engine_download(&cat, &(1..=10000).collect::<Vec<_>>())
+        .unwrap();
+    let book = lib.job(&job).unwrap().book_id;
+    let mut db = rusqlite::Connection::open(&path).unwrap();
+    let tx = db.transaction().unwrap();
+    for (i, chapter) in cat.chapters.iter().take(9000).enumerate() {
+        tx.execute("INSERT INTO chapters(book_id,chapter_id,position,title,paragraphs) VALUES(?1,?2,?3,'原创基准章','[\"原创性能文字\"]')",rusqlite::params![book,chapter.id,i]).unwrap();
+    }
+    tx.execute(
+        "UPDATE job_items SET state='failed' WHERE job_id=?1 AND position>=9000 AND position<9005",
+        [&job],
+    )
+    .unwrap();
+    tx.commit().unwrap();
+    let selection = cat.chapters[9000..9005]
+        .iter()
+        .map(|c| c.id.clone())
+        .collect::<Vec<_>>();
+    for sample in 1..=5 {
+        let now = std::time::Instant::now();
+        for _ in 0..20 {
+            std::hint::black_box(lib.book_details(&book).unwrap());
+            let old = lib
+                .job_details(&job)
+                .unwrap()
+                .items
+                .into_iter()
+                .map(|i| i.chapter_id)
+                .collect::<Vec<_>>();
+            assert_eq!(old.len(), 10000);
+        }
+        let old = now.elapsed().as_secs_f64() * 1000.;
+        let now = std::time::Instant::now();
+        for _ in 0..20 {
+            std::hint::black_box(lib.book_summary(&book).unwrap());
+            assert_eq!(
+                lib.pending_download_ids(&job, Some(&selection)).unwrap(),
+                selection
+            );
+        }
+        println!(
+            "sample={sample} old_plan_ms={old:.3} selected_plan_ms={:.3} old_authorized_ids=10000 new_authorized_ids=5 iterations=20",
+            now.elapsed().as_secs_f64() * 1000.
+        );
+    }
+}

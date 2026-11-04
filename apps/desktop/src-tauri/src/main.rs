@@ -386,6 +386,7 @@ async fn save_diagnostics(state: State<'_, AppState>) -> Result<String, String> 
 
 struct ActiveTask {
     book_id: String,
+    source: String,
     token: Arc<AtomicBool>,
     account_id: Option<String>,
 }
@@ -710,10 +711,21 @@ async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> 
         {
             return Err("该作品的任务仍在执行或停止中，请稍候".into());
         }
+        if snapshot.source == opennovel_core::sources::LOCAL_ENGINE_SOURCE
+            && registrations.values().any(|r| r.source == snapshot.source)
+        {
+            let message = "本地增强已有保存任务，请完成或暂停后再保存另一本，避免叠加平台请求";
+            state
+                .library
+                .record_worker_failure(job, message)
+                .map_err(|e| e.to_string())?;
+            return Err(message.into());
+        }
         registrations.insert(
             job.to_owned(),
             ActiveTask {
                 book_id: snapshot.book_id.clone(),
+                source: snapshot.source.clone(),
                 token: Arc::clone(&token),
                 account_id: None,
             },
@@ -727,11 +739,16 @@ async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> 
             if let Ok(mut entries) = state.cancellations.lock() {
                 entries.remove(job);
             }
-            return Err(if token.load(std::sync::atomic::Ordering::Acquire) {
+            let message = if token.load(std::sync::atomic::Ordering::Acquire) {
                 "本次准备已取消，原进度保留".into()
             } else {
                 prepared.err().unwrap_or_else(|| "本地组件准备失败".into())
-            });
+            };
+            state
+                .library
+                .record_worker_failure(job, &message)
+                .map_err(|e| e.to_string())?;
+            return Err(message);
         }
         Some(prepared.map_err(|e| e.to_string())?)
     } else {
@@ -741,20 +758,17 @@ async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> 
     let cancellations = Arc::clone(&state.cancellations);
     let job_id = job.to_owned();
     let handle = Arc::clone(&state.source);
+    let engine_control = Arc::clone(&state.engine);
     tauri::async_runtime::spawn_blocking(move || {
         // Errors are recorded by the core in the persisted task; never log the input text.
         let result = if snapshot.source == "local-json" {
             library.run_import(&job_id, &token)
         } else if let Some(runtime) = engine_runtime {
             (|| {
-                let book = library.book_details(&snapshot.book_id)?.book;
-                let items = library
-                    .job_details(&job_id)?
-                    .items
-                    .into_iter()
-                    .map(|i| i.chapter_id)
-                    .collect();
-                let client = local_engine::EngineAdapter::new(runtime, book.remote_id, items);
+                let book = library.book_summary(&snapshot.book_id)?;
+                let items = library.pending_download_ids(&job_id, selection.as_deref())?;
+                let client = local_engine::EngineAdapter::new(runtime, book.remote_id, items)
+                    .with_control(engine_control);
                 if let Some(chapters) = selection {
                     library.retry_chapters(&job_id, &client, &token, &chapters)
                 } else {
@@ -864,6 +878,9 @@ fn main() {
     }
     tauri::Builder::default()
         .setup(|app| {
+            if std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_some() {
+                return Err("检测到全局 WebView2 数据目录覆盖，无法保证用户隔离。请移除 WEBVIEW2_USER_DATA_FOLDER 后重启。".into());
+            }
             let args = std::env::args().skip(1).collect::<Vec<_>>();
             let store = opennovel_core::profiles::ProfileStore::new(app.path().app_data_dir()?)?;
             let (paths, marker) = match args.as_slice() {
