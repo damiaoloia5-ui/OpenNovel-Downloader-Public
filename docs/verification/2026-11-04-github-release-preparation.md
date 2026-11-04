@@ -36,7 +36,10 @@
 应用业务代码未改动，不重新构建或把旧运行结果写成本次新运行结果。
 
 `5dcbc93` 远端 CI：https://github.com/damiaoloia5-ui/OpenNovel-Downloader/actions/runs/41755176674 。
-记录建立时仍在运行，不能标为通过；公开仓库目的地和 tag 授权尚待用户选择，
-本记录不代表已经公开源码或存在可下载 Release。
+现已成功，下载报告复核 `source_commit=5dcbc93` 且工作区干净；基础包安装、重装、
+空 PATH 自检、卸载后多用户书库/导出/注册表及节流数据保留均通过。
+npm 和主程序 Rust 审计为 0 已知漏洞，仍有 fxhash 不再维护告警；此 CI 没有扫描独立引擎，
+不能替代一体化组件审计或独立普通用户系统验收。
+公开仓库目的地和 tag 授权尚待用户选择，本记录不代表已经公开源码或存在可下载 Release。
 未签名、独立普通 Windows、真实已购全书及最终对外许可审核边界仍保留，
 归档 `ready_for_stable_release=false`，没有绕过发布就绪门禁。
