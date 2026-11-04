@@ -1,5 +1,14 @@
 import type {Catalog,SourceInfo,ReadingChapter} from './api';
 
+// A display hint only; the backend independently validates the complete URL.
+export function sourceHint(input:string,sources:readonly SourceInfo[]):SourceInfo|undefined {
+  try {
+    const url=new URL(input.trim());
+    if(url.protocol!=='https:'||url.username||url.password||url.port)return;
+    return sources.find(source=>{try{return new URL(source.example).hostname===url.hostname;}catch{return false;}});
+  } catch {return;}
+}
+
 export function catalogAvailability(catalog:Catalog,sources:readonly SourceInfo[]) {
   const supported=sources.some(s=>s.id===catalog.source&&s.can_download);
   const positions=catalog.chapters.flatMap((c,i)=>supported&&!c.restricted?[i+1]:[]);

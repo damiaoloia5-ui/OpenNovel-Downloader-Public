@@ -19,6 +19,7 @@ pub(crate) const SCHEMA_VERSION: u32 = 11;
 
 pub struct Library {
     connection: Mutex<Connection>,
+    instance_id: String,
     pub(crate) export_lock: Mutex<()>,
     _lock: File,
 }
@@ -185,6 +186,7 @@ impl Library {
         )?;
         Ok(Self {
             connection: Mutex::new(connection),
+            instance_id: Uuid::new_v4().to_string(),
             export_lock: Mutex::new(()),
             _lock: lock,
         })
@@ -428,6 +430,32 @@ impl Library {
 
     pub fn snapshot(&self) -> Result<LibrarySnapshot> {
         let connection = self.connection()?;
+        Self::snapshot_locked(&connection)
+    }
+
+    /// The token is local to this open library; a restart always invalidates it.
+    /// Hold the connection lock across the token and snapshot to avoid missed writes.
+    pub fn snapshot_if_changed(
+        &self,
+        known: Option<&str>,
+    ) -> Result<Option<crate::VersionedSnapshot>> {
+        let connection = self.connection()?;
+        let external: u64 = connection.pragma_query_value(None, "data_version", |r| r.get(0))?;
+        let revision = format!(
+            "{}:{}:{external}",
+            self.instance_id,
+            connection.total_changes()
+        );
+        if known == Some(revision.as_str()) {
+            return Ok(None);
+        }
+        Ok(Some(crate::VersionedSnapshot {
+            revision,
+            snapshot: Self::snapshot_locked(&connection)?,
+        }))
+    }
+
+    fn snapshot_locked(connection: &Connection) -> Result<LibrarySnapshot> {
         let mut books_query = connection.prepare(
             "SELECT b.id,b.title,b.author,b.source,COUNT(c.chapter_id),b.total,b.remote_id FROM books b
              LEFT JOIN chapters c ON c.book_id=b.id GROUP BY b.id ORDER BY b.rowid DESC",
@@ -472,6 +500,16 @@ impl Library {
     }
 
     pub(crate) fn content(&self, book_id: &str) -> Result<BookContent> {
+        self.content_selected(book_id, None)
+    }
+
+    /// Filter before decoding bodies so a small selection does not load a whole novel.
+    pub(crate) fn content_selected(
+        &self,
+        book_id: &str,
+        ids: Option<&[&str]>,
+    ) -> Result<BookContent> {
+        let selected = ids.map(serde_json::to_string).transpose()?;
         let connection = self.connection()?;
         let transaction = connection.unchecked_transaction()?;
         let summary = transaction
@@ -494,9 +532,9 @@ impl Library {
             .optional()?
             .ok_or_else(|| Error::Invalid("作品不存在".into()))?;
         let chapters = {
-            let mut query = transaction.prepare("SELECT chapter_id,title,paragraphs FROM chapters WHERE book_id=?1 ORDER BY position")?;
+            let mut query = transaction.prepare("SELECT chapter_id,title,paragraphs FROM chapters WHERE book_id=?1 AND (?2 IS NULL OR chapter_id IN (SELECT value FROM json_each(?2))) ORDER BY position")?;
             let raw = query
-                .query_map([book_id], |row| {
+                .query_map(params![book_id, selected], |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,

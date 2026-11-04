@@ -37,9 +37,12 @@ impl Library {
         };
         let directory = directory.as_ref();
         std::fs::create_dir_all(directory)?;
-        let digest = match format {
-            ExportFormat::Txt => txt_digest(&content)?,
-            _ => file_digest(render_file(directory, &content, format)?.path())?,
+        let prepared = match format {
+            ExportFormat::Txt => (txt_digest(&content)?, None),
+            _ => {
+                let file = render_file(directory, &content, format)?;
+                (file_digest(file.path())?, Some(file))
+            }
         };
         self.persist_export_inner(
             book_id,
@@ -47,7 +50,7 @@ impl Library {
             content,
             directory,
             format,
-            Some(&digest),
+            Some(prepared),
         )
     }
     /// Generate a TXT snapshot without overwriting any previous or edited file.
@@ -65,7 +68,7 @@ impl Library {
             content,
             directory.as_ref(),
             ExportFormat::Txt,
-            Some(&digest),
+            Some((digest, None)),
         )
     }
     pub fn export(
@@ -99,14 +102,13 @@ impl Library {
         let details = self.book_details(book_id)?;
         let positions = crate::parse_selection(selection, details.book.total_chapters as usize)?;
         let positions: std::collections::HashSet<_> = positions.into_iter().collect();
-        let ids: std::collections::HashSet<_> = details
+        let ids: Vec<_> = details
             .chapters
             .iter()
             .filter(|c| positions.contains(&(c.position as usize)))
             .map(|c| c.id.as_str())
             .collect();
-        let mut content = self.content(book_id)?;
-        content.chapters.retain(|c| ids.contains(c.id.as_str()));
+        let mut content = self.content_selected(book_id, Some(&ids))?;
         if content.chapters.is_empty() {
             return Err(Error::Conflict("所选范围尚无已保存正文".into()));
         }
@@ -165,7 +167,7 @@ impl Library {
         content: BookContent,
         directory: &Path,
         format: ExportFormat,
-        automatic_digest: Option<&str>,
+        prepared: Option<(String, Option<NamedTempFile>)>,
     ) -> Result<ExportReceipt> {
         let _guard = self
             .export_lock
@@ -180,15 +182,13 @@ impl Library {
             ExportFormat::Epub => "epub",
             ExportFormat::Docx => "docx",
         };
-        let automatic = automatic_digest.is_some();
-        let mut temporary = None;
-        let digest = if let Some(expected) = automatic_digest {
-            expected.to_owned()
+        let automatic = prepared.is_some();
+        let (digest, temporary) = if let Some(prepared) = prepared {
+            prepared
         } else {
             let file = render_file(&directory, &content, format)?;
             let digest = file_digest(file.path())?;
-            temporary = Some(file);
-            digest
+            (digest, Some(file))
         };
         let known = self.connection()?.prepare("SELECT path FROM exports WHERE book_id=?1 AND format=?2 AND automatic=?3 AND content_hash=?4 AND job_id IS ?5 ORDER BY rowid DESC")?
             .query_map(rusqlite::params![book_id,extension,automatic,digest,job_id], |r| r.get::<_,String>(0))?

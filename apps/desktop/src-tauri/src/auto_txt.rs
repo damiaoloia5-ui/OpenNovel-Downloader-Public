@@ -29,6 +29,8 @@ impl AutoTxtService {
             .name("automatic-txt".into())
             .spawn(move || {
                 let mut observed = HashMap::new();
+                let mut revision = None;
+                let mut cached = None;
                 let mut forced = HashSet::new();
                 let mut next_file_check = Instant::now() + Duration::from_secs(5);
                 loop {
@@ -36,7 +38,23 @@ impl AutoTxtService {
                     if check_files {
                         next_file_check = Instant::now() + Duration::from_secs(5);
                     }
-                    if let Ok(snapshot) = library.snapshot() {
+                    let mut readable = true;
+                    let changed = match library.snapshot_if_changed(revision.as_deref()) {
+                        Ok(Some(value)) => {
+                            revision = Some(value.revision);
+                            cached = Some(value.snapshot);
+                            true
+                        }
+                        Ok(None) => false,
+                        Err(_) => {
+                            readable = false;
+                            false
+                        }
+                    };
+                    if let Some(snapshot) = cached
+                        .as_ref()
+                        .filter(|_| readable && (changed || check_files || !forced.is_empty()))
+                    {
                         let mut by_book: HashMap<&str, Vec<_>> = HashMap::new();
                         for job in &snapshot.jobs {
                             by_book.entry(&job.book_id).or_default().push(job);

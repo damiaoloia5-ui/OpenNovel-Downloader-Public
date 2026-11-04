@@ -30,3 +30,10 @@ test('old payloads fall back to unknown, never infer login or subscription from 
   const r=chapterEvidence({saved:false});assert.equal(r.state,'unverified');assert.equal(r.job_id,null);
   assert.equal(missingGroups([]).length,0);
 });
+import {sourceHint} from '../apps/desktop/src/availabilityModel.ts';
+
+test('source hint is exact-host display metadata, not a download permission',()=>{
+  const sources=[{id:'qidian-session',name:'起点',example:'https://www.qidian.com/book/作品ID/',can_download:false,note:'全书待验收'}];
+  assert.equal(sourceHint('https://www.qidian.com/book/123/',sources)?.can_download,false);
+  for(const input of ['https://www.qidian.com.evil/book/1/','https://user@www.qidian.com/book/1/','http://www.qidian.com/book/1/','not a url'])assert.equal(sourceHint(input,sources),undefined);
+});

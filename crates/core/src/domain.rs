@@ -268,6 +268,12 @@ pub struct LibrarySnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionedSnapshot {
+    pub revision: String,
+    pub snapshot: LibrarySnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportReceipt {
     pub path: String,
     pub saved_chapters: u32,

@@ -41,7 +41,14 @@ export function qidianBookId(input: string): string | null {
   return qidianBookLink(input)?.split('/')[4] || null;
 }
 
-export function saveRecovery(error:string,context:'account'|'public'|'engine'='account'):string {
+export function saveRecovery(error:string,context:'account'|'public'|'engine'='account',kind?:string|null):string {
+  // Prefer persisted backend categories; old tasks still use the text fallback below.
+  if(kind==='io'||/文件错误|磁盘空间|目录.*不可写|PermissionDenied/.test(error))return '已保存正文保留。检查磁盘空间和保存位置的写入权限，必要时选择其他文件夹；保存失败可继续原任务，导出失败只需重新导出。';
+  if(/限流|频繁|429|冷却/.test(error))return '请求已暂停，进度保留。按原始提示等待冷却结束后再继续；重启或反复点击不会缩短等待。';
+  if(kind==='source_changed'||kind==='invalid_content')return '本章内容未通过校验，未入库；已保存正文保留。查看原始原因并检查来源适配，反复继续不会修复内容校验问题。';
+  if(kind==='restricted')return '当前通道无法保存这一章。请核对官网的开放状态与本人阅读权益；受限不一定表示需要付费，反复继续不会解除限制。';
+  if(kind==='network')return '检查网络后继续保存，已有正文会自动跳过；若原始提示要求等待，请先等待。';
+  if(kind==='access_challenge')return context==='account'?'在当前平台官网窗口完成登录或验证，再回到这里继续保存。':context==='engine'?'来源拒绝本地引擎访问，已保留进度；此通道不使用官网登录窗口的会话，请稍后再试。':'官网当前拒绝程序访问，已停止后续请求并保留进度。请稍后继续；外部浏览器登录不等于程序已获得访问权限。';
   if(context==='engine'){
     if(/校验|标题.*不一致|未识别字形|异常结构/.test(error))return '本地引擎返回的内容未通过校验，本章未入库。已保存正文保留；请保留下面的具体原因用于排查，反复点击继续不会修复校验问题。';
     if(/限流|频繁|429/.test(error))return '来源暂时限制请求频率，已保留进度。请按提示等待后再继续保存。';

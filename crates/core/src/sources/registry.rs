@@ -48,7 +48,7 @@ static SOURCES: [SourceInfo; 10] = [
         name: "晋江官网免费章节",
         can_download: true,
         can_search: true,
-        note: "官网完整目录与公开免费正文；VIP、锁定章节明确受限，未接入已购正文。",
+        note: "本网页通道保存公开免费正文，VIP、锁定章节不请求；另有官网账户实验入口，真实已购全书未验收。",
         example: "https://www.jjwxc.net/onebook.php?novelid=作品ID",
     },
     SourceInfo {
@@ -57,7 +57,7 @@ static SOURCES: [SourceInfo; 10] = [
         name: "书旗官网免费章节",
         can_download: true,
         can_search: false,
-        note: "保存官方阅读目录明确开放的免费正文；未开放、付费及会员章节不请求，尚未接入登录权益。",
+        note: "本网页通道保存明确开放的免费正文；另有官网账户实验入口，真实已购与会员全书未验收。",
         example: "https://www.shuqi.com/book/作品ID.html",
     },
     SourceInfo {
@@ -93,7 +93,7 @@ static SOURCES: [SourceInfo; 10] = [
         can_inspect: true,
         can_download: false,
         can_search: false,
-        note: "公开连续章节目录已接入；提供账户连续保存实验入口。实测样本为图片正文，当前不能完整保存此类章节；真实已购未验收。",
+        note: "公开目录与账户连续保存实验已接入，普通文字样本已识别；真正图片正文不支持，真实已购全书未验收。",
         example: "https://b.faloo.com/作品ID.html",
     },
     SourceInfo {

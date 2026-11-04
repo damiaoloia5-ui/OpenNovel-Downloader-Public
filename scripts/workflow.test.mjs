@@ -2,6 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {qidianBookLink,qidianBookId,saveRecovery} from '../apps/desktop/src/workflow.ts';
 
+test('persisted error categories guide recovery without depending on error wording',()=>{
+  assert.match(saveRecovery('opaque failure','public','source_changed'),/未通过校验/);
+  assert.doesNotMatch(saveRecovery('opaque failure','public','source_changed'),/官网窗口/);
+  assert.match(saveRecovery('opaque failure','public','io'),/磁盘空间/);
+  assert.match(saveRecovery('opaque failure','account','access_challenge'),/平台官网窗口/);
+  assert.match(saveRecovery('opaque failure','engine','access_challenge'),/不使用官网登录窗口/);
+  assert.match(saveRecovery('opaque failure','public','restricted'),/不一定表示需要付费/);
+  assert.match(saveRecovery('冷却中，等待 59 秒','public','network'),/等待冷却/);
+});
+
 test('local engine failures explain validation instead of sending users to an account window',()=>{
   const advice=saveRecovery('第2章：本地引擎正文长度未通过校验（实际 3031，声明 3027）','engine');
   assert.match(advice,/未通过校验/);assert.match(advice,/已保存正文保留/);

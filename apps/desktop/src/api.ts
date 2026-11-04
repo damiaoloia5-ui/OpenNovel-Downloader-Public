@@ -95,6 +95,7 @@ export function cancelSoftwareDownload():Promise<void> {return invoke('cancel_so
 export function openSoftwareReleases():Promise<void> {return invoke('open_software_releases');}
 
 export function snapshot(): Promise<Snapshot> { return invoke('library_snapshot'); }
+export function snapshotIfChanged(known:string|null):Promise<{revision:string;snapshot:Snapshot}|null> {return invoke('library_snapshot_if_changed',{known});}
 export function inspectBook(input: string): Promise<Catalog> { return invoke('inspect_book', { input }); }
 export function downloadBook(input: string, first: number, last: number,selection?:string,destination?:SaveDestination): Promise<string> { return invoke('download_book', { input, first, last,selection:selection || null,destination:destination??null }); }
 export function bookDetails(bookId:string):Promise<BookDetails> {return invoke('book_details',{bookId});}

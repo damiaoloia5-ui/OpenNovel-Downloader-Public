@@ -17,10 +17,10 @@ import HelpGuide from './HelpGuide.vue';
 import LocalEnginePanel from './LocalEnginePanel.vue';
 import BookWorkspace from './BookWorkspace.vue';
 import {automaticTxtSnapshot,localEngineStatus,setLocalEngine,type AutoTxtStatus,type LocalEngineStatus} from './api';
-import {catalogAvailability} from './availabilityModel';
+import {catalogAvailability,sourceHint} from './availabilityModel';
 import {qidianBookLink,qidianBookId,officialBookPlatform} from './workflow';
 import type {WorkbenchTab} from './workbenchModel';
-import {preferences,sourceCapabilities,cancelJob,desktopAvailable,downloadBook,exportJob,importBook,inspectBook,jobDetails,pauseJob,resumeJob,retryChapters,revealExport,snapshot,type BookPreferences,type SourceInfo,type JobDetails,type Snapshot,type Catalog} from './api';
+import {preferences,sourceCapabilities,cancelJob,desktopAvailable,downloadBook,exportJob,importBook,inspectBook,jobDetails,pauseJob,resumeJob,retryChapters,revealExport,snapshotIfChanged,type BookPreferences,type SourceInfo,type JobDetails,type Snapshot,type Catalog} from './api';
 
 const page=ref<'download'|'library'|'tasks'|'sources'|'tools'|'accounts'|'help'|'book'>('download');
 const pageHeading=ref<HTMLElement|null>(null);
@@ -28,6 +28,7 @@ const workspaceBook=ref('');const workspaceTab=ref<WorkbenchTab>('overview');con
 const saveOptions=ref<SaveOptions>(defaultSaveOptions());const optionsTouched=ref(false);
 const saveDirectory=ref<string|null>(null);const choosingDirectory=ref(false);const directoryTouched=ref(false);
 const accountUrl=ref('');const bookInput=ref('');const inspectedInput=ref('');const catalog=ref<Catalog|null>(null);
+const inputSource=computed(()=>sourceHint(bookInput.value,sourceInfos.value));
 const engineStatus=ref<LocalEngineStatus|null>(null);
 const engineOffer=computed(()=>catalog.value?.source==='fanqie-web'&&catalog.value.chapters.some(c=>c.restricted)&&(engineStatus.value?.ready||engineStatus.value?.installed)&&!engineStatus.value?.enabled);
 const sourceInfos=ref<SourceInfo[]>([]);const bookPreferences=ref<BookPreferences[]>([]);
@@ -60,9 +61,10 @@ function openWorkspace(id:string,tab:WorkbenchTab='overview',account=''){workspa
 function showBook(id:string){openWorkspace(id,'save');}
 function openTxt(id:string){const exportId=automaticFiles.value.find(f=>f.book_id===id&&f.state==='ready')?.export_id;if(exportId)void action(()=>revealExport(exportId));}
 function openAccountBook(id:string){openWorkspace(id,'save');}
+let libraryRevision:string|null=null;
 async function refresh(){
   if(!desktopAvailable||refreshing)return;refreshing=true;
-  try{const [s,p,a]=await Promise.all([snapshot(),preferences(),automaticTxtSnapshot()]);if(disposed)return;data.value=s;bookPreferences.value=p;automaticFiles.value=a;await refreshDetails();}
+  try{const [change,a]=await Promise.all([snapshotIfChanged(libraryRevision),automaticTxtSnapshot()]);if(disposed)return;automaticFiles.value=a;if(change){const p=await preferences();if(disposed)return;data.value=change.snapshot;bookPreferences.value=p;await refreshDetails();libraryRevision=change.revision;}}
   catch(e){error.value=String(e);}finally{refreshing=false;schedulePoll();}
 }
 function schedulePoll(){if(!disposed){if(timer)clearTimeout(timer);timer=setTimeout(()=>void poll(),active.value&&!document.hidden&&!minimized?800:5000);}}
@@ -160,6 +162,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
             <label for="novel-link">粘贴小说的官网作品链接</label>
             <div class="link-row"><input id="novel-link" v-model="bookInput" type="text" placeholder="粘贴官网作品链接，例如纵横、17K、番茄、七猫、晋江或起点" :disabled="working" required /></div>
             <SaveOptionsPanel v-model="saveOptions" :disabled="working" :total="bookInput.trim()===inspectedInput?catalog?.chapters.length:undefined" @update:model-value="optionsTouched=true" /><SaveLocation v-model="saveDirectory" :disabled="working" @busy="choosingDirectory=$event" @update:model-value="directoryTouched=true" />
+             <p v-if="inputSource" class="message warning" role="status">当前平台：{{ inputSource.name }}。{{ inputSource.note }} 具体可保存章数需读取目录并逐章核验，识别链接不代表全书可下载。</p>
             <button class="primary" :disabled="!desktopAvailable || working || choosingDirectory || !bookInput.trim()">{{ working ? '正在识别，请稍等…' : `开始保存为 ${formatLabel(saveOptions.format)}` }}</button>
             <p class="footnote">免费网页会直接开始保存；起点会提示你登录。完成后按上方选择自动生成 TXT 或 Word。</p><p class="footnote">不知道复制哪个链接？打开小说的作品介绍页，复制浏览器顶部地址，粘贴到这里。书旗可保存官网明确开放的免费章节，其他章节会标注未保存。</p>
             <details class="optional-options"><summary>只想先看看能保存多少？</summary><button type="button" :disabled="!desktopAvailable||working||!bookInput.trim()" @click="inspect()">只看获取范围</button></details>

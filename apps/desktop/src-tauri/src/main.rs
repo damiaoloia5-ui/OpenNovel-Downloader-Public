@@ -510,6 +510,15 @@ async fn library_snapshot(state: State<'_, AppState>) -> Result<LibrarySnapshot,
 }
 
 #[tauri::command]
+async fn library_snapshot_if_changed(
+    known: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Option<opennovel_core::VersionedSnapshot>, String> {
+    let library = Arc::clone(&state.library);
+    blocking(move || library.snapshot_if_changed(known.as_deref())).await
+}
+
+#[tauri::command]
 async fn book_details(book_id: String, state: State<'_, AppState>) -> Result<BookDetails, String> {
     let library = Arc::clone(&state.library);
     blocking(move || library.book_details(&book_id)).await
@@ -1037,6 +1046,7 @@ fn main() {
                     local_engine_status,
                     set_local_engine,
                     library_snapshot,
+                    library_snapshot_if_changed,
                     book_details,
                     read_chapter,
                     export_job,

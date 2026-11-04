@@ -97,6 +97,7 @@ function fixture(){
   const api={
     localProfiles:async()=>({current_id:'original-user',profiles:[{id:'original-user',name:'原创用户',database:null}],data_directory:'D:/OriginalUser/profiles/original-user'}),
     accountList:async()=>structuredClone(state.accounts),snapshot:async()=>structuredClone({books:state.books,jobs:state.jobs}),
+    snapshotIfChanged:async known=>{const snapshot=structuredClone({books:state.books,jobs:state.jobs});const revision=JSON.stringify(snapshot);return known===revision?null:{revision,snapshot};},
     createAccount:async(platform='qidian',label='我的起点账户')=>{const account={id:'original-account',platform,label};state.accounts.push({account,session:'closed',blocked_navigation:false});return account;},
     openAccount:async(id,url,login)=>{state.calls.push(['open',id,url,login]);state.accounts.find(a=>a.account.id===id).session='open_unverified';},
     previewAccountPage:async()=>{state.calls.push(['preview']);return state.probe();},
@@ -269,6 +270,24 @@ test('beginner home keeps advanced entry points collapsed and reuses an existing
     const form=walk(f.root,true).find(n=>n.tag==='form');form.props.onSubmit({preventDefault(){}});await flush();
     assert.ok(walk(f.root).find(n=>n.props['data-stub']==='BookWorkspace.vue'&&n.textContent===stored.id));assert.equal(f.state.calls.length,0);
   }finally{f.close();}
+});
+
+test('unchanged refresh skips preferences, keeps automatic status live and retries a failed changed refresh',async()=>{
+  let reads=0,fail=false;
+  const f=await mount(App,{},({api})=>{api.preferences=async()=>{reads++;if(fail)throw '原创暂时不可读';return [];};});
+  try {
+    assert.equal(reads,1);
+    await click(f.button('保存进度'));
+    await click(f.button('刷新状态'));assert.equal(reads,1);
+    f.state.books=[{...stored,saved_chapters:2}];fail=true;
+    await click(f.button('刷新状态'));assert.equal(reads,2);assert.match(f.root.textContent,/原创暂时不可读/);
+    fail=false;await click(f.button('刷新状态'));assert.equal(reads,3);
+    f.state.automatic=[{book_id:stored.id,...txtReady}];
+    await click(f.button('刷新状态'));assert.equal(reads,3);
+    await click(walk(f.root,true).find(n=>n.tag==='button'&&n.textContent.startsWith('我的书库')));
+    await click(f.button('打开文件夹'));
+    assert.deepEqual(f.state.calls,[['reveal','original-txt']]);
+  } finally {f.close();}
 });
 test('changing the book during a pending catalog read cannot confirm or start the old book',async()=>{
   let finish;const f=await mount(Account,{initialUrl:link},({state})=>{state.probe=()=>new Promise(resolve=>{finish=resolve;});});try{
