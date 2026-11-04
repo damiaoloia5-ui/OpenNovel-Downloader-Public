@@ -12,6 +12,7 @@ mod export;
 mod export_settings;
 mod maintenance;
 mod official_reader;
+pub mod profiles;
 mod reading;
 mod revisions;
 mod session_capture;

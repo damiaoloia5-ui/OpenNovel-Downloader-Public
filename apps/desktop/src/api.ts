@@ -61,6 +61,11 @@ export interface Receipt { path: string; saved_chapters: number; total_chapters:
 export interface AutoTxtStatus {book_id:string;state:string;receipt:Receipt|null;export_id:string|null;error:string|null}
 export function automaticTxtSnapshot():Promise<AutoTxtStatus[]> {return invoke('automatic_txt_snapshot');}
 export interface SaveDestination {directory:string|null;format?:string;selection_only?:boolean}
+export interface LocalProfile {id:string;name:string;database:string|null}
+export interface ProfileOverview {current_id:string;profiles:LocalProfile[];data_directory:string}
+export function localProfiles():Promise<ProfileOverview> {return invoke('local_profiles');}
+export function createLocalProfile(name:string):Promise<LocalProfile> {return invoke('create_local_profile',{name});}
+export function switchLocalProfile(id:string):Promise<void> {return invoke('switch_local_profile',{id});}
 export function defaultExportRoot():Promise<string> {return invoke('default_export_root');}
 export function chooseSaveDirectory(current:string|null):Promise<string|null> {return invoke('choose_save_directory',{current});}
 export interface ExportDestination {directory:string;custom:boolean;filename:string;format?:string}

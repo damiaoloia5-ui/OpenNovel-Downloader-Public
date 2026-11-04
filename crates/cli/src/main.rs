@@ -8,8 +8,11 @@ use std::{io::Read, path::PathBuf, sync::atomic::AtomicBool};
 #[derive(Parser)]
 #[command(version, about = "OpenNovel 多来源下载与本地书库")]
 struct Arguments {
-    #[arg(long, default_value = ".artifacts/library.db")]
-    database: PathBuf,
+    #[arg(long, conflicts_with = "profile")]
+    database: Option<PathBuf>,
+    /// 使用软件内的独立用户；省略时使用上次选择的用户
+    #[arg(long)]
+    profile: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -38,8 +41,8 @@ enum Command {
         snapshot_id: String,
         #[arg(long, default_value = "epub")]
         format: String,
-        #[arg(long, default_value = ".artifacts/exports")]
-        output: PathBuf,
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
     /// 从逐行作品链接文件创建有界批次，默认仅选择每本前 3 章
     Batch {
@@ -128,16 +131,16 @@ enum Command {
         job_id: String,
         #[arg(long, default_value = "epub")]
         format: String,
-        #[arg(long, default_value = ".artifacts/exports")]
-        output: PathBuf,
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
     /// 从本地保存内容导出；现有文件不会被覆盖
     Export {
         book_id: String,
         #[arg(long, default_value = "txt", value_parser = ["txt", "epub", "docx"])]
         format: String,
-        #[arg(long, default_value = ".artifacts/exports")]
-        output: PathBuf,
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
 }
 
@@ -161,7 +164,18 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
         );
         return Ok(0);
     }
-    let library = Library::open(args.database)?;
+    let (database, exports) = if let Some(database) = args.database {
+        let database = std::path::absolute(database)?;
+        let exports = database.with_extension("data").join("exports");
+        (database, exports)
+    } else {
+        let store = opennovel_core::profiles::ProfileStore::new(
+            opennovel_core::profiles::user_data_root()?,
+        )?;
+        let paths = store.resolve(args.profile.as_deref())?;
+        (paths.database, paths.exports)
+    };
+    let library = Library::open(database)?;
     let hub = SourceHub::new();
     let result = match args.command {
         Command::SupplementTxt {
@@ -221,7 +235,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
             output,
         } => serde_json::to_value(library.export_history(
             &snapshot_id,
-            output,
+            output.unwrap_or_else(|| exports.clone()),
             ExportFormat::parse(&format)?,
         )?)?,
         Command::Batch { file, chapters } => {
@@ -306,7 +320,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
             output,
         } => serde_json::to_value(library.export_job(
             &job_id,
-            output,
+            output.unwrap_or_else(|| exports.clone()),
             ExportFormat::parse(&format)?,
         )?)?,
         Command::Details { job_id } => serde_json::to_value(library.job_details(&job_id)?)?,
@@ -346,7 +360,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
             output,
         } => serde_json::to_value(library.export(
             &book_id,
-            output,
+            output.unwrap_or_else(|| exports.clone()),
             ExportFormat::parse(&format)?,
         )?)?,
     };

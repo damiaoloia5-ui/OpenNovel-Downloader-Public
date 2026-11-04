@@ -13,7 +13,7 @@ async function choose(){if(props.disabled||picking.value)return;picking.value=tr
     <div class="location-heading"><strong>文件保存到哪里？</strong><span>{{ modelValue?'自选文件夹':'默认位置' }}</span></div>
     <output class="location-path" aria-live="polite">{{ modelValue||root }}</output>
     <div class="location-actions"><button type="button" :disabled="disabled||picking||!desktopAvailable" @click="choose">{{ picking?'请选择文件夹…':'选择文件夹' }}</button><button v-if="modelValue" type="button" :disabled="disabled||picking" @click="emit('update:modelValue',null)">使用默认位置</button></div>
-    <p class="location-note">{{ modelValue?'文件会直接保存到所选文件夹。':'默认放在应用目录的 exports 下，每本书一个子文件夹。' }}文件名：平台－书名－作者（扩展名随格式变化）。选好位置后再开始保存。</p>
+    <p class="location-note">{{ modelValue?'文件会直接保存到所选文件夹；选择公共位置时请注意文件共享。':'默认放在当前用户数据目录的 exports 下，每本书一个子文件夹，与其他用户分开。' }}文件名：平台－书名－作者（扩展名随格式变化）。选好位置后再开始保存。</p>
     <p v-if="error" class="location-error" role="alert">{{ error }}</p>
   </section>
 </template>

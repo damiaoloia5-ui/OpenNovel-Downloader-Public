@@ -53,6 +53,8 @@ const real=new Set(['AccountPanel.vue','AutoSavePanel.vue','App.vue','OfficialRe
 real.add('LocalEnginePanel.vue');
 real.add('SaveLocation.vue');
 real.add('SaveOptions.vue');
+real.add('ProfilePanel.vue');
+await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as Profiles} from '+JSON.stringify(resolve('apps/desktop/src/ProfilePanel.vue'))+';\n');
 real.add('ExportActions.vue');
 await writeFile(entry,(await readFile(entry,'utf8'))+'\nexport {default as ExportActions} from '+JSON.stringify(resolve('apps/desktop/src/ExportActions.vue'))+';\n');
 real.add('AutomaticTxtPanel.vue');
@@ -69,7 +71,7 @@ await build({configFile:false,logLevel:'error',plugins:[{
     return transformWithOxc(compiled.content,`${id}.ts`,{lang:'ts'});
   },
 }],build:{ssr:entry,outDir:output,emptyOutDir:false,rollupOptions:{output:{entryFileNames:'components.mjs'}}}});
-const {Account,AutoSave,App,Official,Supplement,Engine,AutoTxt,Platform,ExportActions}=await import(pathToFileURL(join(output,'components.mjs')).href);
+const {Account,AutoSave,App,Official,Supplement,Engine,AutoTxt,Platform,ExportActions,Profiles}=await import(pathToFileURL(join(output,'components.mjs')).href);
 function element(tag,text=''){
   return {tag,tagName:tag.toUpperCase(),children:[],parent:null,props:{},text,listeners:{},value:'',checked:false,selected:false,
     get textContent(){return this.text+this.children.map(n=>n.textContent).join('');},
@@ -93,6 +95,7 @@ function walk(node,visible=false){return [node,...node.children.filter(c=>!visib
 function fixture(){
   const state={accounts:[],books:[],jobs:[],automatic:[],calls:[],probe:async()=>structuredClone(preview),startError:null,resumeError:null};
   const api={
+    localProfiles:async()=>({current_id:'original-user',profiles:[{id:'original-user',name:'原创用户',database:null}],data_directory:'D:/OriginalUser/profiles/original-user'}),
     accountList:async()=>structuredClone(state.accounts),snapshot:async()=>structuredClone({books:state.books,jobs:state.jobs}),
     createAccount:async(platform='qidian',label='我的起点账户')=>{const account={id:'original-account',platform,label};state.accounts.push({account,session:'closed',blocked_navigation:false});return account;},
     openAccount:async(id,url,login)=>{state.calls.push(['open',id,url,login]);state.accounts.find(a=>a.account.id===id).session='open_unverified';},
@@ -544,4 +547,30 @@ test('already saved books export only the requested range as Word without a down
  const f=await mount(ExportActions,{bookId:'original-book',saved:2,total:2,initialOptions:{range:'range',first:2,last:2,format:'docx'}},({state,api})=>{
   api.exportBook=async(...args)=>{state.calls.push(['export',...args]);return {path:'D:/original.docx',saved_chapters:1,total_chapters:1,partial:false};};api.bookDetails=async()=>({exports:[]});
  });try{await click(f.button('导出文件'));assert.deepEqual(f.state.calls,[['export','original-book','docx','2-2']]);assert.match(f.root.textContent,/1\/1/);}finally{f.close();}
+});
+
+test('local profile creation does not copy books or switch until requested',async()=>{
+ const profiles=[{id:'a',name:'原创甲',database:null}];
+ const f=await mount(Profiles,{},({state,api})=>{
+  api.localProfiles=async()=>({current_id:'a',profiles:structuredClone(profiles),data_directory:'D:/original/a'});
+  api.createLocalProfile=async name=>{const p={id:'b',name,database:null};profiles.push(p);state.calls.push(['create-profile',name]);return p;};
+  api.switchLocalProfile=async id=>{state.calls.push(['switch-profile',id]);};
+ });try{
+  walk(f.root).find(n=>n.tag==='details').props.open=true;
+  const input=walk(f.root).find(n=>n.tag==='input');input.value='原创乙';input.dispatch('input');await flush();
+  walk(f.root).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();await flush();
+  assert.deepEqual(f.state.calls,[['create-profile','原创乙']]);assert.match(f.root.textContent,/书库为空/);
+  await click(f.button('切换用户'));assert.deepEqual(f.state.calls.at(-1),['switch-profile','b']);
+  assert.match(f.root.textContent,/重新打开所选用户/);
+ }finally{f.close();}
+});
+test('a blocked profile switch keeps the current user and shows recovery',async()=>{
+ const f=await mount(Profiles,{},({api})=>{
+  api.localProfiles=async()=>({current_id:'a',profiles:[{id:'a',name:'原创甲'},{id:'b',name:'原创乙'}],data_directory:'D:/original/a'});
+  api.switchLocalProfile=async()=>{throw new Error('请先暂停当前保存任务');};
+ });try{
+  walk(f.root).find(n=>n.tag==='details').props.open=true;
+  const select=walk(f.root).find(n=>n.tag==='select');select.options[0].selected=false;select.options[1].selected=true;select.dispatch('change');await flush();
+  await click(f.button('切换用户'));assert.match(f.root.textContent,/当前用户：原创甲/);assert.match(f.root.textContent,/请先暂停/);assert.ok(f.button('切换用户'));
+ }finally{f.close();}
 });

@@ -16,6 +16,12 @@ __pycache__/
 *.db-wal
 *.db.lock
 local-engine-choice.json
+profiles.json
+profiles.lock
+profiles/
+exports/
+ui-webview/
+session-cache/
 *.log
 output/playwright/
 apps/desktop/src-tauri/gen/

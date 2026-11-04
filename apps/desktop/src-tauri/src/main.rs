@@ -9,6 +9,7 @@ mod folder_dialog;
 mod install_check;
 mod local_engine;
 mod official_reader;
+mod profiles;
 use account_download::{account_download_jobs, resume_account_download, start_account_download};
 use accounts::{account_list, close_account, create_account, open_account};
 use capture::{confirm_account_page, preview_account_page, preview_platform_catalog};
@@ -831,6 +832,25 @@ async fn export_book(
 
 fn main() {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if args.first().is_some_and(|a| a == "--adopt-library") {
+        let result = (|| -> opennovel_core::Result<()> {
+            let [_, path] = args.as_slice() else {
+                return Err(opennovel_core::Error::Invalid(
+                    "需要一个原有书库路径".into(),
+                ));
+            };
+            let path = PathBuf::from(path);
+            if !path.is_absolute() || !path.is_file() {
+                return Err(opennovel_core::Error::Invalid("原有书库文件不存在".into()));
+            }
+            let store = opennovel_core::profiles::ProfileStore::new(
+                opennovel_core::profiles::user_data_root()?,
+            )?;
+            let profile = store.adopt(&path)?;
+            store.select(&profile.id)
+        })();
+        std::process::exit(if result.is_ok() { 0 } else { 1 });
+    }
     if args.first().is_some_and(|a| a == "--check-installation") {
         let code = match args.as_slice() {
             [_, output] => match install_check::run(&PathBuf::from(output)) {
@@ -845,18 +865,26 @@ fn main() {
     tauri::Builder::default()
         .setup(|app| {
             let args = std::env::args().skip(1).collect::<Vec<_>>();
-            let database = match args.as_slice() {
-                [] => app.path().app_data_dir()?.join("library.db"),
-                [flag, path] if flag == "--database" => std::path::absolute(path)?,
-                _ => return Err("参数无效；可使用 --database <path> 打开独立书库".into()),
+            let store = opennovel_core::profiles::ProfileStore::new(app.path().app_data_dir()?)?;
+            let (paths, marker) = match args.as_slice() {
+                [] => (store.resolve(None)?, None),
+                [flag, id] if flag == "--profile" => (store.resolve(Some(id))?, None),
+                [flag, id, handoff, token] if flag == "--profile" && handoff == "--handoff" => {
+                    (store.resolve(Some(id))?, Some(store.startup_marker(token)?))
+                }
+                [flag, path] if flag == "--database" => {
+                    let profile = store.adopt(&std::path::absolute(path)?)?;
+                    (store.resolve(Some(&profile.id))?, None)
+                }
+                _ => return Err("参数无效；可使用 --profile <id> 或 --database <path>".into()),
             };
-            let directory = database.parent().ok_or("书库目录无效")?;
-            let library = Arc::new(Library::open(&database)?);
-            let exports = export_destination::application_export_root()?;
+            let library = Arc::new(Library::open(&paths.database)?);
+            std::fs::create_dir_all(&paths.directory)?;
+            let exports = paths.exports.clone();
             let auto_txt = auto_txt::AutoTxtService::start(Arc::clone(&library), exports.clone())?;
             app.manage(official_reader::OfficialReaderState::default());
             app.manage(AppState {
-                engine: Arc::new(local_engine::EngineControl::for_directory(directory)),
+                engine: Arc::new(local_engine::EngineControl::for_directory(&paths.directory)),
                 library,
                 auto_txt,
                 source: Arc::default(),
@@ -867,18 +895,38 @@ fn main() {
                 batches: Arc::default(),
                 proposals: Mutex::default(),
                 sessions: Mutex::default(),
-                session_root: directory.join("session-cache"),
+                session_root: paths.sessions.clone(),
                 captures: Mutex::default(),
             });
+            let webview = paths.webview.clone();
+            let current_profile = paths.profile.id.clone();
+            app.manage(profiles::ProfileState {
+                store: store.clone(),
+                paths,
+                switching: AtomicBool::new(false),
+            });
             tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
-                .data_directory(directory.join("ui-webview"))
+                .data_directory(webview)
                 .on_navigation(|url| accounts::local_ipc_allowed("main", url))
                 .build()?;
+            store.select(&current_profile)?;
+            if let Some(marker) = marker {
+                use std::io::Write;
+                let mut ready = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(marker)?;
+                ready.write_all(current_profile.as_bytes())?;
+                ready.sync_all()?;
+            }
             Ok(())
         })
         .invoke_handler({
             let dispatch: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
                 Box::new(tauri::generate_handler![
+                    profiles::local_profiles,
+                    profiles::create_local_profile,
+                    profiles::switch_local_profile,
                     official_reader::open_official_reader,
                     official_reader::inspect_official_reader,
                     official_reader::save_official_reader,
@@ -945,6 +993,10 @@ fn main() {
                 ]);
             move |invoke: tauri::ipc::Invoke<tauri::Wry>| {
                 let webview = invoke.message.webview_ref();
+                if profiles::is_switching(webview.app_handle()) {
+                    invoke.resolver.reject("正在切换用户，请在新窗口继续操作");
+                    return true;
+                }
                 if !webview
                     .url()
                     .is_ok_and(|url| accounts::local_ipc_allowed(webview.label(), &url))

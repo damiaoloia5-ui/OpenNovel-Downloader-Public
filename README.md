@@ -64,7 +64,7 @@ python scripts/verify_project.py --package basic --native
 | `apps/desktop/src-tauri` | 原生系统接口、官网会话及后台 TXT |
 | `scripts` | 检查、构建、组件准备与原创受控测试 |
 
-默认桌面书库位于系统应用数据目录 `org.opennovel.downloader/library.db`，导出默认在同目录 `exports/平台－书名－作者`，可在工作台按书更改；自定义启动参数可能指定其他书库。同一书库只允许一个写入实例。升级前备份，卸载默认保留数据；删除应用数据前先导出一致性备份。
+默认书库位于当前系统用户的应用数据目录 `org.opennovel.downloader/profiles/<用户ID>/library.db`，导出位于该用户的 `exports/平台－书名－作者`。侧栏可以新建空白用户、切换独立书库；原有书库登记后保留原位置，不复制给新用户。界面偏好、官网会话和任务也按用户隔离。同一书库只允许一个写入实例。软件内用户不是密码保护，需要互相保密时使用独立 Windows 账号。升级前备份，卸载默认保留数据。详见 [本地用户与干净分发](docs/local-users.md)。
 
 v0.3.18 首次打开旧库会自动备份并升级到 schema 10。回退程序时应使用升级前备份的副本，旧程序不能直接打开已升级的书库。
 

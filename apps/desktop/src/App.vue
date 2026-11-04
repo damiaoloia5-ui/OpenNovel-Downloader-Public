@@ -3,6 +3,7 @@ import {version as appVersion} from '../package.json';
 import AppIcon from './AppIcon.vue';
 import SaveLocation from './SaveLocation.vue';
 import SaveOptionsPanel from './SaveOptions.vue';
+import ProfilePanel from './ProfilePanel.vue';
 import {defaultSaveOptions,resolveSaveRange,formatLabel,type SaveOptions} from './saveOptions';
 import {setBookExportDirectory} from './api';
 import {computed,nextTick,onMounted,onUnmounted,ref,watch} from 'vue';
@@ -121,6 +122,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         <span class="brand-mark" aria-hidden="true"><AppIcon name="book" :size="25" /></span>
         <span>OpenNovel<small>属于你的本地书库</small></span>
       </a>
+      <ProfilePanel />
       <div class="nav-label">开始使用</div>
       <nav aria-label="主导航">
         <button :class="{ selected: page === 'download' }" :aria-current="page==='download'?'page':undefined" @click="page = 'download'"><AppIcon name="plus" />添加小说</button>

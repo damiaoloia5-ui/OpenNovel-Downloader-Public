@@ -1,14 +1,6 @@
 use opennovel_core::ExportDestination;
 use std::path::Path;
 
-pub fn application_export_root() -> std::io::Result<std::path::PathBuf> {
-    let executable = std::env::current_exe()?;
-    Ok(executable
-        .parent()
-        .ok_or_else(|| std::io::Error::other("无法确定应用目录"))?
-        .join("exports"))
-}
-
 pub fn preflight(
     destination: Option<&opennovel_core::SaveDestination>,
     default_root: &Path,
@@ -146,15 +138,7 @@ mod tests {
     use opennovel_core::SaveDestination;
 
     #[test]
-    fn default_is_beside_executable_and_preflight_rejects_unusable_paths() {
-        assert_eq!(
-            application_export_root().unwrap(),
-            std::env::current_exe()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .join("exports")
-        );
+    fn preflight_rejects_unusable_paths() {
         let root = tempfile::tempdir().unwrap();
         let default = root.path().join("exports");
         preflight(

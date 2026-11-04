@@ -24,7 +24,8 @@ pub struct Library {
 }
 
 impl Library {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+    /// Acquire only the exclusive lease, without reading or migrating the database.
+    pub fn check_available(path: impl AsRef<Path>) -> Result<File> {
         let path = path.as_ref();
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)?;
@@ -38,6 +39,12 @@ impl Library {
             .truncate(false)
             .open(Path::new(&lock_name))?;
         lock.try_lock_exclusive().map_err(|_| Error::Locked)?;
+        Ok(lock)
+    }
+
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        let lock = Self::check_available(path)?;
         let mut connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;

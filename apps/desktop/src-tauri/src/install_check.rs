@@ -131,6 +131,42 @@ fn word_roundtrip(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     }
 }
 
+fn profile_roundtrip(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let store = opennovel_core::profiles::ProfileStore::new(root.join("original-users"))?;
+    let first = store.resolve(None)?;
+    let original = Library::open(&first.database)?;
+    let job = original.create_import(include_str!("../../../../examples/local-book.json"))?;
+    let book = original.run_import(&job, &AtomicBool::new(false))?.book_id;
+    original.create_account("qidian", "原创用户甲账号")?;
+    original.export(&book, &first.exports, opennovel_core::ExportFormat::Txt)?;
+    let second = store.create("原创用户乙")?;
+    store.select(&second.id)?;
+    let other = store.resolve(None)?;
+    let empty = Library::open(&other.database)?;
+    if !empty.snapshot()?.books.is_empty()
+        || !empty.snapshot()?.jobs.is_empty()
+        || !empty.accounts()?.is_empty()
+        || other.exports.exists()
+        || first.sessions == other.sessions
+        || first.webview == other.webview
+        || first.database == other.database
+        || first.exports == other.exports
+    {
+        return Err("用户数据隔离检查失败".into());
+    }
+    store.select(&first.profile.id)?;
+    if store.resolve(None)?.database != first.database || original.snapshot()?.books.len() != 1 {
+        return Err("切回原用户时书库未保留".into());
+    }
+    let another_os_user =
+        opennovel_core::profiles::ProfileStore::new(root.join("another-os-user"))?;
+    let independent = Library::open(another_os_user.resolve(None)?.database)?;
+    if !independent.snapshot()?.books.is_empty() {
+        return Err("系统用户隔离失败".into());
+    }
+    Ok(())
+}
+
 pub fn run(output: &Path) -> Result<bool, Box<dyn std::error::Error>> {
     if !output.is_absolute() {
         return Err("检查输出目录必须是绝对路径".into());
@@ -141,13 +177,18 @@ pub fn run(output: &Path) -> Result<bool, Box<dyn std::error::Error>> {
     let webview = tauri::webview_version().map_err(|e| e.to_string());
     let local = local_roundtrip(&root).map_err(|e| e.to_string());
     let word = word_roundtrip(&root).map_err(|e| e.to_string());
+    let profiles = profile_roundtrip(&root).map_err(|e| e.to_string());
     #[cfg(windows)]
     let folder_dialog = crate::folder_dialog::check(&root);
     #[cfg(not(windows))]
     let folder_dialog: Result<(), String> = Ok(());
     // Optional readiness only: no enabling, chapter requests, image pulls or installation.
     let engine = EngineControl::default().status();
-    let passed = webview.is_ok() && local.is_ok() && word.is_ok() && folder_dialog.is_ok();
+    let passed = webview.is_ok()
+        && local.is_ok()
+        && word.is_ok()
+        && profiles.is_ok()
+        && folder_dialog.is_ok();
     let report = json!({
         "schema_version": 1, "version": env!("CARGO_PKG_VERSION"),
         "required_checks_passed": passed,
@@ -155,6 +196,7 @@ pub fn run(output: &Path) -> Result<bool, Box<dyn std::error::Error>> {
         "original_sample_txt": {"ready": local.is_ok(), "result": local},
         "original_sample_word": {"ready": word.is_ok(), "result": word},
         "selected_word_range_checked": word.is_ok(),
+        "local_user_isolation": {"ready": profiles.is_ok(), "result": profiles},
         "deleted_sample_txt_recovered": local.is_ok(),
         "chosen_directory_and_simple_filename_checked": local.is_ok(),
         "directory_selected_before_save_checked": local.is_ok(),
