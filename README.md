@@ -1,8 +1,10 @@
 # OpenNovel Downloader
 
-**下载：[Windows x64 安装包](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public/releases/download/v0.3.19/OpenNovel-0.3.19-Windows-x64-setup.exe) · [便携 ZIP](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public/releases/download/v0.3.19/OpenNovel-0.3.19-Windows.zip) · [全部历史版本及校验值](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public/releases)**
+**下载：[Windows x64 安装包](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public/releases/download/v0.3.20/OpenNovel-0.3.20-Windows-x64-setup.exe) · [便携 ZIP](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public/releases/download/v0.3.20/OpenNovel-0.3.20-Windows.zip) · [全部历史版本及校验值](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public/releases)**
 
-公开源码位于 [OpenNovel-Downloader-Public](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public)。v0.3.19 已发布，安装包尚未正式代码签名；支持范围及未完成验收见下文。每个版本独立保存安装包、便携包、完整对应源码与校验值，并启用 Release 不可变保护。主程序和引擎分别保留许可证。
+公开源码位于 [OpenNovel-Downloader-Public](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public)。v0.3.20 已发布，已启用更新签名，Windows Authenticode 尚未办理；支持范围及未完成验收见下文。每个版本独立保存安装包、便携包、完整对应源码与校验值，并启用 Release 不可变保护。主程序和引擎分别保留许可证。
+
+2026-11-04 · **v0.3.20 自动更新**：连接公开 GitHub Release，用户点击后下载、验签、备份各本地用户书库并安装。两仓库 CI、基础安装器更新模式及数据保留通过；11 项公开附件匿名下载与实际 EXE 验签通过。0.3.19 及以前需先手动安装本版一次。见[更新与发布指南](docs/automatic-updates.md)和[验证记录](docs/verification/2026-11-04-automatic-updates.md)。
 
 2026-11-03 · **v0.3.19 Windows x64 一体化版**：更新主程序及独立引擎的安全依赖，收紧主窗口 CSP，加入可重复依赖审计及 CI 检查，修复书旗官方免费链接 `aut=0` 被误拒绝。全量受控检查、原生权限隔离通过；新引擎实测免费样本 117/117 章并核对自动 TXT。本轮书旗正文复测遇限流，真实已购全书、独立干净系统和正式签名仍未完成，**不标为正式稳定版或全平台完整下载**。见[发布前功能与安全验收](docs/verification/2026-11-03-release-security.md)及[安全说明](SECURITY.md)。
 
@@ -16,8 +18,8 @@
 
 ## 使用
 
-0.3.20 源码新增“软件更新”：连接公开 GitHub Release，验签后备份各用户书库再安装。
-旧版需要先手动安装带更新功能的版本一次；当前公开下载链接仍指向已发布的 0.3.19。
+0.3.20 新增“软件更新”：连接公开 GitHub Release，验签后备份各用户书库再安装。
+旧版需要先手动安装带更新功能的版本一次；上方公开下载链接已更新为 0.3.20。
 维护者发布时需要同时提供安装包、签名和更新清单，见[自动更新指南](docs/automatic-updates.md)。
 
 1. 运行维护者提供的 Windows x64 安装包，安装后打开软件。

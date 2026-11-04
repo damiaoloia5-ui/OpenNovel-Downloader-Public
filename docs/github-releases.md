@@ -1,7 +1,7 @@
 # GitHub 下载与历史版本
 
 公开下载入口：[全部版本](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public/releases)，
-首个发布版本：[v0.3.19](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public/releases/tag/v0.3.19)。
+当前更新版：[v0.3.20](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public/releases/tag/v0.3.20)，软件提交 `32ca070`；首个发布版本：[v0.3.19](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public/releases/tag/v0.3.19)。
 原仓库保持私有（本地 `origin`）；公开仓库使用独立 `public` 远端。仅推送已审查且明确获准公开的提交，
 不自动镜像后续私有开发。两仓库的 `v0.3.19` 均指向 `5dcbc93`，未来版本使用新标签。
 

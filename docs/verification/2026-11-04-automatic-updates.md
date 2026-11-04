@@ -1,6 +1,6 @@
 # 0.3.20 自动更新与数据保护验证
 
-基线 `d9242b4`，2026-11-04。新增代码以同轮本地提交为准，本报告不声明已推送或发布。
+基线 `d9242b4`，2026-11-04。软件源码提交 `32ca070ac7b712f09d2001af2fa4760b58f3477b`，已发布为 v0.3.20；后续文档提交不改变软件标签和资产。
 
 ## 实现
 
@@ -36,7 +36,7 @@
 
 签名回执 `.artifacts/signed-updates/v0.3.20/verification.json`；交付回执 `.artifacts/updater-delivery-20261104/delivery-check.json`。
 前轮因缺少 tauri-plugin 的上游许可文本停止打包，补齐固定源码提交的 MIT/Apache 文本及摘要后重新构建；原失败记录保留。
-检查工具运行时工作区含本轮待提交改动，不能把报告中的基线 HEAD 误当作最终软件源码提交；归档会记录后续完成提交的具体 SHA。
+本地检查工具运行时工作区含本轮待提交改动，不能把报告中的基线 HEAD 误当作最终软件源码提交；归档已记录软件提交 `32ca070`，后续远端检查针对该提交的干净检出。
 
 ## 依赖审计
 
@@ -47,10 +47,23 @@ RustSec 本轮联网刷新失败，原始失败日志保留；复核明确使用
 ## 未验证及交付条件
 
 - 未在本机执行升级覆盖真实安装，没有打开或修改真实书库。原生自检不等于真实窗口交互或用户账户验收；未使用 Computer Use。
-- 已扩展一次性 GitHub Windows runner 检查：安装、重装、NSIS `/UPDATE` 模式、卸载，并校验原创书库、导出、用户列表、临时会话标记、历史备份保留。当前新提交尚未推送，此项尚未运行。
+- 已扩展一次性 GitHub Windows runner 检查：安装、重装、NSIS `/UPDATE` 模式、卸载，并校验原创书库、导出、用户列表、临时会话标记、历史备份保留。本地首轮时此项尚未运行；后续已通过，见下方发布复核。
 - 尚未验证真实 GitHub 新版发现、下载、关闭应用、跨版本安装与重启的完整交互；需新版本发布及独立系统测试，不能由验签成功推断安装必然成功。
 - Windows Authenticode 仍未办理；更新签名已经启用，两者不是一项认证。
 - 0.3.19 及以前必须先手动安装一次；未来发布必须使用同一私钥，上传 EXE、.sig 和 latest.json，且使用新的稳定版本号。
 - 备份不复制外部导出文件或 Cookie；官网临时会话会依原规则清理，可能需重新登录。磁盘损坏/断电不在零损失保证范围；维护者应另存系统与签名密钥恢复备份。
 
 用户与维护者步骤见[自动更新指南](../automatic-updates.md)。
+
+## 公开发布复核
+
+用户明确授权 push、v0.3.20 标签及验收后的发布。Git HTTPS 连接重置后使用 GitHub Git Data API 非强制同步，逐一核对 blob/tree/commit 哈希；两个远端的软件标签均精确指向 `32ca070`，未重写原历史。
+
+- 私有 [CI 41771069147](https://github.com/damiaoloia5-ui/OpenNovel-Downloader/actions/runs/41771069147) 与公开 [CI 41771249924](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public/actions/runs/41771249924) 均成功；下载报告核对版本 0.3.20、源码提交与干净工作区一致。
+- 两边基础安装器的 install、reinstall、updater-mode、uninstall-preserves-original-library-and-export 全通过，原创书库、导出、用户列表、会话标记与备份样本保持一致；没有打开真实用户书库。
+- 远端 npm/RustSec 联网审计成功，主程序 0 条已知漏洞；RustSec 返回与本机固定快照相同的 1403 条公告。独立引擎的审计仍以本地固定源码锁复核为准。
+- [v0.3.20 Release](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public/releases/tag/v0.3.20)，ID 433513593，公开、非草稿、immutable=true，11 项资产服务器摘要匹配本地归档。
+- 11 项附件再次匿名下载，全部大小和 SHA-256 匹配；`/releases/latest/download/latest.json` 返回本版清单；实际发布 EXE 对匿名下载的安装包验签通过，未执行安装器。
+- 原 v0.3.19 及其 9 项资产保持原样。所有发布资产、源码、签名与摘要按版本独立保存。
+
+证据：`.artifacts/updater-ci-evidence/summary.json`、`.artifacts/updater-published.json`、`.artifacts/updater-public-downloads-v0.3.20/verification.json`。匿名脚本下载与实际 EXE 的只读验签现已实测，不等同于点击软件更新的一体化全流程；真实跨版本安装与用户界面重启、独立普通 Windows、正式 Authenticode 的边界仍按上文保留。
