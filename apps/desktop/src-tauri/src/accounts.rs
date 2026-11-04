@@ -1,4 +1,5 @@
 use crate::AppState;
+use crate::operation::OperationState as State;
 use opennovel_core::{
     AccountRecord, account_entry_url, account_login_url, account_navigation_allowed,
 };
@@ -7,7 +8,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
-use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub struct BrowserSession {
     pub _directory: opennovel_core::session_directory::SessionDirectory,

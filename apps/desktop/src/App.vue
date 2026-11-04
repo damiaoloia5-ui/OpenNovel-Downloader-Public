@@ -4,6 +4,7 @@ import AppIcon from './AppIcon.vue';
 import SaveLocation from './SaveLocation.vue';
 import SaveOptionsPanel from './SaveOptions.vue';
 import ProfilePanel from './ProfilePanel.vue';
+import SoftwareUpdatePanel from './SoftwareUpdatePanel.vue';
 import {defaultSaveOptions,resolveSaveRange,formatLabel,type SaveOptions} from './saveOptions';
 import {setBookExportDirectory} from './api';
 import {computed,nextTick,onMounted,onUnmounted,ref,watch} from 'vue';
@@ -142,6 +143,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
     <main>
       <header class="topbar"><span class="breadcrumb"><span>个人工作空间</span><span aria-hidden="true">/</span><strong>{{ page==='book'?'作品工作台':page==='help'?'使用指引':page === 'download' ? '添加小说' : page === 'library' ? '书库' : page === 'tasks' ? '任务' : page==='tools' ? '备份与诊断' : page==='accounts'?'账户':'来源' }}</strong></span><button class="help-entry" @click="page='help'"><AppIcon name="help" :size="16" />不会操作？查看指引</button></header>
       <div class="main-content">
+        <SoftwareUpdatePanel :busy="working" />
         <div v-if="!desktopAvailable" class="message warning" role="status">当前是浏览器界面预览。请运行桌面应用以使用本地书库和导出功能。</div>
         <div v-if="error" class="message failure" role="alert">{{ error }}<button aria-label="关闭错误提示" @click="error = ''">×</button></div>
         <div v-if="notice" class="message success" role="status">{{ notice }}<button aria-label="关闭提示" @click="notice = ''">×</button></div>

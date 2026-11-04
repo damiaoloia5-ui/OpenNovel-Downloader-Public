@@ -86,6 +86,14 @@ export function saveDiagnostics():Promise<string> {return invoke('save_diagnosti
 
 export const desktopAvailable = isTauri();
 
+export interface SoftwareUpdateStatus {phase:string;current_version:string;version:string|null;notes:string;downloaded:number;total:number|null;message:string;backup_directory:string|null;portable:boolean}
+export function softwareUpdateStatus():Promise<SoftwareUpdateStatus> {return invoke('software_update_status');}
+export function checkSoftwareUpdate():Promise<SoftwareUpdateStatus> {return invoke('check_software_update');}
+export function downloadSoftwareUpdate():Promise<SoftwareUpdateStatus> {return invoke('download_software_update');}
+export function installSoftwareUpdate(convertPortable:boolean):Promise<void> {return invoke('install_software_update',{convertPortable});}
+export function cancelSoftwareDownload():Promise<void> {return invoke('cancel_software_download');}
+export function openSoftwareReleases():Promise<void> {return invoke('open_software_releases');}
+
 export function snapshot(): Promise<Snapshot> { return invoke('library_snapshot'); }
 export function inspectBook(input: string): Promise<Catalog> { return invoke('inspect_book', { input }); }
 export function downloadBook(input: string, first: number, last: number,selection?:string,destination?:SaveDestination): Promise<string> { return invoke('download_book', { input, first, last,selection:selection || null,destination:destination??null }); }

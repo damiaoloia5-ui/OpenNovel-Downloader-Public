@@ -1,3 +1,4 @@
+use crate::operation::OperationState as State;
 use crate::{
     AppState,
     accounts::{open_official_window, window_label},
@@ -13,7 +14,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tauri::{Manager, State};
+use tauri::Manager;
 
 struct Preview {
     account: String,

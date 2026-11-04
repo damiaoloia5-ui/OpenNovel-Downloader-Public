@@ -85,6 +85,8 @@ def seed_profile_state(root):
             {'id': second, 'name': 'Original B', 'database': None}]}).encode(),
         root / 'profiles' / second / 'exports' / 'original.txt': b'Original second profile export',
         root / 'traffic-v1' / 'qidian.json': b'{"next_ms":0,"cooldown_ms":0}',
+        root / 'profiles' / second / 'webview' / 'original-session.fixture': b'Original session marker; no real cookie',
+        root / 'update-backups' / 'original-backup.fixture': b'Original backup marker',
     }
     for path, content in files.items():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -169,8 +171,9 @@ def main():
             raise ValueError('Original export fixture is incomplete')
         expected = {database: sha256(database), exported: sha256(exported)}
         expected.update(seed_profile_state(appdata[0]))
-        command = nsis_command(installer, ['/S', '/NS'], '/D=' + str(destination))
-        for stage in ['install', 'reinstall']:
+        for stage in ['install', 'reinstall', 'updater-mode']:
+            flags = ['/S', '/NS', *(['/UPDATE'] if stage == 'updater-mode' else [])]
+            command = nsis_command(installer, flags, '/D=' + str(destination))
             run(command, output, stage)
             executable = contained(destination / 'opennovel-desktop.exe', destination)
             binary = verify_nsis_binary(executable, repo / 'target/release/opennovel-desktop.exe')

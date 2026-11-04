@@ -1,6 +1,6 @@
 {
   "name": "opennovel-downloader",
-  "version": "0.3.19",
+  "version": "0.3.20",
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
@@ -15,7 +15,7 @@
     "lint": "eslint apps/desktop/src apps/desktop/vite.config.ts",
     "typecheck": "npm run typecheck --workspace @opennovel/desktop",
     "test": "cargo test --workspace",
-    "test:frontend": "node --experimental-strip-types --test scripts/workflow.test.mjs scripts/workbench.test.mjs scripts/availability.test.mjs scripts/availability-render.test.mjs scripts/novel-reader.test.mjs scripts/automatic-txt.test.mjs scripts/performance-ui.test.mjs scripts/qidian-capture.test.mjs scripts/official-page.test.mjs scripts/session-page.test.mjs scripts/simple-flow.test.mjs scripts/release-privacy.test.mjs",
+    "test:frontend": "node --experimental-strip-types --test scripts/workflow.test.mjs scripts/workbench.test.mjs scripts/availability.test.mjs scripts/availability-render.test.mjs scripts/novel-reader.test.mjs scripts/automatic-txt.test.mjs scripts/performance-ui.test.mjs scripts/qidian-capture.test.mjs scripts/official-page.test.mjs scripts/session-page.test.mjs scripts/simple-flow.test.mjs scripts/release-privacy.test.mjs scripts/software-update.test.mjs",
     "build": "npm run build --workspace @opennovel/desktop",
     "desktop:dev": "npm run tauri --workspace @opennovel/desktop -- dev",
     "desktop:build": "npm run tauri --workspace @opennovel/desktop -- build --no-bundle",
@@ -26,7 +26,8 @@
     "release:notices": "node scripts/release-notices.mjs",
     "desktop:package": "npm run release:notices && npm run release:privacy && npm run tauri --workspace @opennovel/desktop -- build --config src-tauri/tauri.installer.conf.json --bundles nsis",
     "desktop:package:integrated": "npm run release:notices && npm run release:privacy -- --integrated && npm run tauri --workspace @opennovel/desktop -- build --config src-tauri/tauri.integrated.conf.json --bundles nsis && npm run release:privacy -- --installer",
-    "release:privacy": "node scripts/release-privacy.mjs"
+    "release:privacy": "node scripts/release-privacy.mjs",
+    "update:prepare": "python scripts/updater_release.py prepare"
   },
   "devDependencies": {
     "eslint": "^10.12.0",

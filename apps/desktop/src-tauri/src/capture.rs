@@ -1,3 +1,4 @@
+use crate::operation::OperationState as State;
 use crate::{AppState, accounts::window_label};
 use opennovel_core::{SessionCatalog, SessionChapter, SessionSaveReceipt};
 use serde::Serialize;
@@ -8,7 +9,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tauri::{Manager, State};
+use tauri::Manager;
 
 pub enum CapturedPage {
     Catalog(SessionCatalog),

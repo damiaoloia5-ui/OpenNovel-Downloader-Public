@@ -4,12 +4,15 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import sys
+import base64
 from unittest.mock import patch
 import zipfile
 
 SPEC = importlib.util.spec_from_file_location('prepare_github_release', Path(__file__).resolve().parents[1] / 'prepare_github_release.py')
 release = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 class ReleaseArchiveTests(unittest.TestCase):
@@ -99,6 +102,40 @@ class ReleaseArchiveTests(unittest.TestCase):
         self.lock['files']['corresponding-source.tar.gz']['sha256'] = '0' * 64
         with self.assertRaisesRegex(ValueError, 'corresponding source'):
             release.prepare(self.root, self.delivery, self.output)
+        self.assertFalse(self.output.exists())
+
+    def signed_fixture(self):
+        from updater_release import manifest
+        directory = self.root / 'signed'
+        directory.mkdir()
+        name = 'OpenNovel-0.3.19-Windows-x64-setup.exe'
+        (directory / name).write_bytes((self.delivery / self.installer).read_bytes())
+        signature = base64.b64encode(b'original\ntrusted comment: timestamp:1\tversion:0.3.19\nfixture').decode()
+        (directory / (name + '.sig')).write_text(signature)
+        (directory / 'latest.json').write_text(json.dumps(manifest('0.3.19', signature)), encoding='utf-8')
+        proof = {'passed': True, 'version': '0.3.19', 'installer_sha256': self.manifest['installer_sha256'],
+                 'manifest_sha256': release.digest(directory / 'latest.json')}
+        (directory / 'verification.json').write_text(json.dumps(proof))
+        return directory
+
+    def test_update_assets_are_allowlisted_and_hashed_in_archive(self):
+        signed = self.signed_fixture()
+        (signed / 'private-key.fixture').write_text('private fixture not for publication')
+        result = release.prepare(self.root, self.delivery, self.output, signed)
+        self.assertTrue(result['updater_signed'])
+        self.assertTrue((self.output / 'latest.json').is_file())
+        self.assertTrue((self.output / 'OpenNovel-0.3.19-Windows-x64-setup.exe.sig').is_file())
+        self.assertFalse((self.output / 'verification.json').exists())
+        self.assertFalse((self.output / 'private-key.fixture').exists())
+
+    def test_changed_update_manifest_is_rejected_before_archive(self):
+        signed = self.signed_fixture()
+        path = signed / 'latest.json'
+        latest = json.loads(path.read_text())
+        latest['platforms']['windows-x86_64']['url'] = 'https://other.example/installer.exe'
+        path.write_text(json.dumps(latest))
+        with self.assertRaisesRegex(ValueError, 'verification receipt'):
+            release.prepare(self.root, self.delivery, self.output, signed)
         self.assertFalse(self.output.exists())
 
 

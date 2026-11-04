@@ -1,4 +1,5 @@
 //! A serial browser-backed adapter. Only the local main window may schedule it.
+use crate::operation::OperationState as State;
 use crate::{ActiveTask, AppState, accounts::window_label};
 use opennovel_core::{
     Error, ImportChapter, JobSnapshot, Result, SessionChapter,
@@ -12,7 +13,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tauri::{Manager, State};
+use tauri::Manager;
 
 fn navigation_interval(value: Option<u64>) -> std::result::Result<Duration, String> {
     match value.unwrap_or(3000) {

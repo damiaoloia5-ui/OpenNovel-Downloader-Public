@@ -27,7 +27,7 @@ jobs:
           cache-on-failure: true
       - run: npm ci
       - run: python scripts/verify_project.py --package basic --native
-      - name: Install, reinstall and uninstall on disposable runner
+      - name: Install, reinstall, updater mode and uninstall on disposable runner
         run: python scripts/verify_installer.py
       - name: Install pinned dependency auditor
         run: cargo install cargo-audit --version 0.22.2 --locked

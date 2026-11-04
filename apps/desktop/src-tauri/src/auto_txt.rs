@@ -62,6 +62,11 @@ impl AutoTxtService {
                             {
                                 continue;
                             }
+                            // Include the background exporter in the same update gate as IPC.
+                            // Keep the lease until all file and export-record writes complete.
+                            let Ok(_operation) = crate::operation::Lease::enter() else {
+                                continue;
+                            };
                             let destination = library.export_destination(&book.id, &directory);
                             let destination = match destination {
                                 Ok(value) => PathBuf::from(value.directory),
@@ -168,14 +173,14 @@ fn process(
 
 #[tauri::command]
 pub fn automatic_txt_snapshot(
-    state: tauri::State<'_, crate::AppState>,
+    state: crate::operation::OperationState<'_, crate::AppState>,
 ) -> Result<Vec<AutoTxtStatus>, String> {
     state.auto_txt.snapshot()
 }
 #[tauri::command]
 pub fn retry_automatic_txt(
     book_id: String,
-    state: tauri::State<'_, crate::AppState>,
+    state: crate::operation::OperationState<'_, crate::AppState>,
 ) -> Result<(), String> {
     let book = state
         .library

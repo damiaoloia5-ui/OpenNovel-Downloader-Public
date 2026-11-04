@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use crate::operation::OperationState as State;
 mod account_download;
 mod accounts;
 mod auto_txt;
@@ -9,7 +10,9 @@ mod folder_dialog;
 mod install_check;
 mod local_engine;
 mod official_reader;
+mod operation;
 mod profiles;
+mod software_update;
 use account_download::{account_download_jobs, resume_account_download, start_account_download};
 use accounts::{account_list, close_account, create_account, open_account};
 use capture::{confirm_account_page, preview_account_page, preview_platform_catalog};
@@ -24,7 +27,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex, atomic::AtomicBool},
 };
-use tauri::{Manager, State};
+use tauri::Manager;
 
 struct AppState {
     engine: Arc<local_engine::EngineControl>,
@@ -861,6 +864,24 @@ async fn export_book(
 
 fn main() {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if args.first().is_some_and(|a| a == "--verify-update") {
+        let code = match args.as_slice() {
+            [_, manifest, installer] => {
+                if software_update::verify_local(
+                    &PathBuf::from(manifest),
+                    &PathBuf::from(installer),
+                )
+                .is_ok()
+                {
+                    0
+                } else {
+                    1
+                }
+            }
+            _ => 2,
+        };
+        std::process::exit(code);
+    }
     if args.first().is_some_and(|a| a == "--adopt-library") {
         let result = (|| -> opennovel_core::Result<()> {
             let [_, path] = args.as_slice() else {
@@ -892,6 +913,8 @@ fn main() {
         std::process::exit(code);
     }
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(software_update::UpdateState::default())
         .setup(|app| {
             if std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_some() {
                 return Err("检测到全局 WebView2 数据目录覆盖，无法保证用户隔离。请移除 WEBVIEW2_USER_DATA_FOLDER 后重启。".into());
@@ -958,6 +981,12 @@ fn main() {
         .invoke_handler({
             let dispatch: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
                 Box::new(tauri::generate_handler![
+                    software_update::software_update_status,
+                    software_update::check_software_update,
+                    software_update::download_software_update,
+                    software_update::cancel_software_download,
+                    software_update::install_software_update,
+                    software_update::open_software_releases,
                     profiles::local_profiles,
                     profiles::create_local_profile,
                     profiles::switch_local_profile,
@@ -1027,6 +1056,10 @@ fn main() {
                 ]);
             move |invoke: tauri::ipc::Invoke<tauri::Wry>| {
                 let webview = invoke.message.webview_ref();
+                if operation::installing() && invoke.message.command() != "software_update_status" {
+                    invoke.resolver.reject("正在准备安装更新，请稍候");
+                    return true;
+                }
                 if profiles::is_switching(webview.app_handle()) {
                     invoke.resolver.reject("正在切换用户，请在新窗口继续操作");
                     return true;

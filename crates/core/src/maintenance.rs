@@ -144,10 +144,21 @@ impl Library {
     /// A bundle is database + verified manifest. Export records remain, generated files can be
     /// regenerated from saved chapters; credentials and external export files are never bundled.
     pub fn backup(&self, directory: impl AsRef<Path>) -> Result<BackupManifest> {
-        let dir = directory.as_ref();
+        let db = self.connection()?;
+        Self::backup_connection(&db, directory.as_ref())
+    }
+    /// Back up an inactive profile without migrating it or recovering its jobs.
+    pub fn backup_inactive(
+        database: &Path,
+        directory: &Path,
+    ) -> Result<(BackupManifest, std::fs::File)> {
+        let lease = Self::check_available(database)?;
+        let db = Connection::open_with_flags(database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        Ok((Self::backup_connection(&db, directory)?, lease))
+    }
+    fn backup_connection(db: &Connection, dir: &Path) -> Result<BackupManifest> {
         std::fs::create_dir(dir)?;
         let path = dir.join("library.db");
-        let db = self.connection()?;
         db.backup(rusqlite::MAIN_DB, &path, None)?;
         let saved = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         check(&saved)?;

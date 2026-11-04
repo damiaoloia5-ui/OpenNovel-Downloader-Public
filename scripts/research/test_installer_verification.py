@@ -16,7 +16,7 @@ class InstallerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
             expected = verifier.seed_profile_state(root)
-            self.assertEqual(len(expected), 3)
+            self.assertEqual(len(expected), 5)
             verifier.verify_preserved(expected)
             registry = json.loads((root / 'profiles.json').read_text())
             self.assertEqual(registry['selected'], registry['profiles'][0]['id'])

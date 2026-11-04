@@ -27,7 +27,7 @@ pub fn preflight(
 }
 
 #[tauri::command]
-pub fn default_export_root(state: tauri::State<'_, crate::AppState>) -> String {
+pub fn default_export_root(state: crate::operation::OperationState<'_, crate::AppState>) -> String {
     state.exports.to_string_lossy().into_owned()
 }
 
@@ -35,7 +35,7 @@ pub fn default_export_root(state: tauri::State<'_, crate::AppState>) -> String {
 pub async fn choose_save_directory(
     current: Option<String>,
     window: tauri::WebviewWindow,
-    state: tauri::State<'_, crate::AppState>,
+    state: crate::operation::OperationState<'_, crate::AppState>,
 ) -> Result<Option<String>, String> {
     static PICKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     use std::sync::atomic::Ordering;
@@ -65,7 +65,7 @@ pub async fn choose_save_directory(
 #[tauri::command]
 pub async fn book_export_destination(
     book_id: String,
-    state: tauri::State<'_, crate::AppState>,
+    state: crate::operation::OperationState<'_, crate::AppState>,
 ) -> Result<ExportDestination, String> {
     let library = std::sync::Arc::clone(&state.library);
     let root = state.exports.clone();
@@ -76,7 +76,7 @@ pub async fn book_export_destination(
 pub async fn set_book_export_directory(
     book_id: String,
     directory: Option<String>,
-    state: tauri::State<'_, crate::AppState>,
+    state: crate::operation::OperationState<'_, crate::AppState>,
 ) -> Result<ExportDestination, String> {
     let library = std::sync::Arc::clone(&state.library);
     let root = state.exports.clone();
@@ -94,7 +94,7 @@ pub async fn set_book_export_directory(
 pub async fn choose_book_export_directory(
     book_id: String,
     window: tauri::WebviewWindow,
-    state: tauri::State<'_, crate::AppState>,
+    state: crate::operation::OperationState<'_, crate::AppState>,
 ) -> Result<Option<ExportDestination>, String> {
     static PICKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     use std::sync::atomic::Ordering;

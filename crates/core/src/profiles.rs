@@ -128,6 +128,18 @@ impl ProfileStore {
         let _lock = self.lock()?;
         Ok(self.read()?.profiles)
     }
+    /// Save a consistent registry copy for upgrade recovery; never replaces a previous copy.
+    pub fn backup_registry(&self, destination: &Path) -> Result<()> {
+        let _lock = self.lock()?;
+        let registry = self.read()?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(destination)?;
+        file.write_all(&serde_json::to_vec_pretty(&registry)?)?;
+        file.sync_all()?;
+        Ok(())
+    }
     pub fn resolve(&self, id: Option<&str>) -> Result<ProfilePaths> {
         let _lock = self.lock()?;
         let r = self.read()?;

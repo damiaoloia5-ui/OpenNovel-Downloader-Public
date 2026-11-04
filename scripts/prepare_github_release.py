@@ -23,7 +23,7 @@ def git(repo, *args):
     return subprocess.check_output(['git', '-C', str(repo), *args])
 
 
-def prepare(repo, delivery, output):
+def prepare(repo, delivery, output, updater=None):
     repo, delivery, output = map(lambda p: Path(p).resolve(), (repo, delivery, output))
     if output.exists():
         raise ValueError('output already exists; old releases must not be overwritten')
@@ -50,6 +50,22 @@ def prepare(repo, delivery, output):
             raise ValueError('delivery artifact changed: ' + entry['name'])
         if entry['name'] == installer and actual != manifest.get('installer_sha256'):
             raise ValueError('installer differs from source manifest')
+    update_materials = {}
+    if tuple(map(int, version.split('.'))) >= (0, 3, 20) and updater is None:
+        raise ValueError('signed updater assets are required for version 0.3.20 and later')
+    if updater is not None:
+        from updater_release import manifest as update_manifest
+        updater = Path(updater).resolve()
+        signature = (updater / (public_installer + '.sig')).read_text(encoding='utf-8').strip()
+        latest = json.loads((updater / 'latest.json').read_text(encoding='utf-8'))
+        expected = update_manifest(version, signature)
+        proof = json.loads((updater / 'verification.json').read_text(encoding='utf-8'))
+        if (latest != expected or digest(updater / public_installer) != manifest['installer_sha256']
+                or proof.get('passed') is not True or proof.get('version') != version
+                or proof.get('installer_sha256') != manifest['installer_sha256']
+                or proof.get('manifest_sha256') != digest(updater / 'latest.json')):
+            raise ValueError('signed update verification receipt mismatch')
+        update_materials = {name: (updater / name).read_bytes() for name in ('latest.json', public_installer + '.sig')}
     lock = json.loads(git(repo, 'show', f'{commit}:scripts/research/native_engine_lock.json'))
     source_name = 'corresponding-source.tar.gz'
     with zipfile.ZipFile(delivery / portable) as archive:
@@ -73,6 +89,8 @@ def prepare(repo, delivery, output):
             raise ValueError('artifact changed while copying')
     for name, data in materials.items():
         (output / name).write_bytes(data)
+    for name, data in update_materials.items():
+        (output / name).write_bytes(data)
     source_zip = output / f'OpenNovel-{version}-source.zip'
     git(repo, 'archive', '--format=zip', f'--prefix=OpenNovel-{version}/', f'--output={source_zip}', commit)
     with zipfile.ZipFile(source_zip) as archive:
@@ -81,7 +99,7 @@ def prepare(repo, delivery, output):
     record = {
         'schema_version': 1, 'version': version, 'tag': 'v' + version,
         'source_commit': commit, 'package': 'Windows x64 integrated',
-        'authenticode_signed': False, 'ready_for_stable_release': False,
+        'authenticode_signed': False, 'updater_signed': bool(update_materials), 'ready_for_stable_release': False,
         'scope': 'Reviewed local delivery archive; not independent Windows or purchased-content acceptance.',
         'assets': [{'name': p.name, 'bytes': p.stat().st_size, 'sha256': digest(p)}
                    for p in sorted(output.iterdir())],
@@ -116,6 +134,11 @@ Windows x64 一体化版。普通用户下载 `{public_installer}`；
 GitHub Releases 是下载渠道，本地归档也应另存到独立备份介质。
 '''
     (output / 'RELEASE_NOTES.md').write_text(notes, encoding='utf-8')
+    if update_materials:
+        with (output / 'RELEASE_NOTES.md').open('a', encoding='utf-8') as stream:
+            stream.write('\n本版内置公开仓库自动更新：启动检查，用户确认后下载、验签、备份各书库并安装。\n'
+                         '0.3.19 及以前需先手动安装本版一次。更新签名已启用，Windows Authenticode 仍未办理。\n'
+                         '维护者必须将 latest.json、安装包和 .sig 一起上传到新的 Release，完成后再发布。\n')
     sums = ''.join(f'{digest(p)}  {p.name}\n' for p in sorted(output.iterdir()))
     (output / 'SHA256SUMS.txt').write_text(sums, encoding='utf-8')
     return record
@@ -125,8 +148,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--delivery', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--updater', type=Path, help='signed updater directory with native verification receipt')
     args = parser.parse_args()
-    result = prepare(Path(__file__).resolve().parents[1], args.delivery, args.output)
+    result = prepare(Path(__file__).resolve().parents[1], args.delivery, args.output, args.updater)
     print(json.dumps({'prepared': True, 'version': result['version'], 'source_commit': result['source_commit'],
                       'published': False}, indent=2))
 

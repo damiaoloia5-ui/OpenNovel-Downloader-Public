@@ -1,6 +1,7 @@
+use crate::operation::OperationState as State;
 use opennovel_core::profiles::{LocalProfile, ProfilePaths, ProfileStore};
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{Manager, State};
+use tauri::Manager;
 
 pub struct ProfileState {
     pub store: ProfileStore,
