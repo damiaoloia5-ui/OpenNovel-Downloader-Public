@@ -167,6 +167,38 @@ fn profile_roundtrip(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn runtime_roundtrip(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    use opennovel_core::{
+        session_directory::{SessionDirectory, cleanup},
+        traffic::TrafficGate,
+    };
+    let gate = TrafficGate::at(root.join("original-traffic"), "fanqie")?;
+    let lease = gate.acquire()?;
+    if gate.acquire().is_ok() {
+        return Err("平台重复访问锁未生效".into());
+    }
+    lease.defer(60)?;
+    drop(lease);
+    if gate.acquire().is_ok() {
+        return Err("平台冷却未持久化".into());
+    }
+    let sessions = root.join("original-sessions");
+    let session = SessionDirectory::new(&sessions)?;
+    let path = session.path().to_owned();
+    std::fs::write(
+        path.join("original.txt"),
+        b"original temporary browser fixture",
+    )?;
+    if cleanup(&sessions)?.active != 1 || !path.is_dir() {
+        return Err("活动会话未保留".into());
+    }
+    drop(session);
+    if path.exists() {
+        return Err("原创临时会话清理失败".into());
+    }
+    Ok(())
+}
+
 pub fn run(output: &Path) -> Result<bool, Box<dyn std::error::Error>> {
     if !output.is_absolute() {
         return Err("检查输出目录必须是绝对路径".into());
@@ -178,6 +210,7 @@ pub fn run(output: &Path) -> Result<bool, Box<dyn std::error::Error>> {
     let local = local_roundtrip(&root).map_err(|e| e.to_string());
     let word = word_roundtrip(&root).map_err(|e| e.to_string());
     let profiles = profile_roundtrip(&root).map_err(|e| e.to_string());
+    let runtime_safety = runtime_roundtrip(&root).map_err(|e| e.to_string());
     #[cfg(windows)]
     let folder_dialog = crate::folder_dialog::check(&root);
     #[cfg(not(windows))]
@@ -188,6 +221,7 @@ pub fn run(output: &Path) -> Result<bool, Box<dyn std::error::Error>> {
         && local.is_ok()
         && word.is_ok()
         && profiles.is_ok()
+        && runtime_safety.is_ok()
         && folder_dialog.is_ok();
     let report = json!({
         "schema_version": 1, "version": env!("CARGO_PKG_VERSION"),
@@ -197,6 +231,7 @@ pub fn run(output: &Path) -> Result<bool, Box<dyn std::error::Error>> {
         "original_sample_word": {"ready": word.is_ok(), "result": word},
         "selected_word_range_checked": word.is_ok(),
         "local_user_isolation": {"ready": profiles.is_ok(), "result": profiles},
+        "runtime_safety": {"ready": runtime_safety.is_ok(), "result": runtime_safety},
         "deleted_sample_txt_recovered": local.is_ok(),
         "chosen_directory_and_simple_filename_checked": local.is_ok(),
         "directory_selected_before_save_checked": local.is_ok(),

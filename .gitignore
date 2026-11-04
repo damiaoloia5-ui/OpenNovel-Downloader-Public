@@ -17,6 +17,7 @@ __pycache__/
 *.db.lock
 local-engine-choice.json
 source-cooldown.json
+traffic-v1/
 profiles.json
 profiles.lock
 profiles/

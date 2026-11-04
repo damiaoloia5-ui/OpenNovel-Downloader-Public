@@ -701,6 +701,20 @@ async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> 
     ) {
         return Err("任务不能继续".into());
     }
+    let traffic = if snapshot.source == opennovel_core::sources::LOCAL_ENGINE_SOURCE {
+        match opennovel_core::traffic::TrafficGate::for_user("fanqie").and_then(|g| g.acquire()) {
+            Ok(lease) => Some(lease),
+            Err(error) => {
+                state
+                    .library
+                    .record_worker_failure(job, &error.to_string())
+                    .map_err(|e| e.to_string())?;
+                return Err(error.to_string());
+            }
+        }
+    } else {
+        None
+    };
     let token = Arc::new(AtomicBool::new(false));
     {
         let mut registrations = state.cancellations.lock().map_err(|_| "任务管理器不可用")?;
@@ -768,7 +782,8 @@ async fn launch(job: &str, state: &AppState, selection: Option<Vec<String>>) -> 
                 let book = library.book_summary(&snapshot.book_id)?;
                 let items = library.pending_download_ids(&job_id, selection.as_deref())?;
                 let client = local_engine::EngineAdapter::new(runtime, book.remote_id, items)
-                    .with_control(engine_control);
+                    .with_control(engine_control)
+                    .with_traffic(traffic);
                 if let Some(chapters) = selection {
                     library.retry_chapters(&job_id, &client, &token, &chapters)
                 } else {
@@ -897,6 +912,8 @@ fn main() {
             };
             let library = Arc::new(Library::open(&paths.database)?);
             std::fs::create_dir_all(&paths.directory)?;
+            // Only marked inactive sessions are eligible. Locked files remain for retry.
+            let _ = opennovel_core::session_directory::cleanup(&paths.sessions);
             let exports = paths.exports.clone();
             let auto_txt = auto_txt::AutoTxtService::start(Arc::clone(&library), exports.clone())?;
             app.manage(official_reader::OfficialReaderState::default());

@@ -769,6 +769,8 @@ pub struct EngineAdapter {
     approved: std::collections::HashSet<String>,
     control: Option<Arc<EngineControl>>,
     worker: Mutex<Option<Worker>>,
+    // Drop/terminate the worker before releasing the cross-process platform lock.
+    traffic: Option<opennovel_core::traffic::TrafficLease>,
 }
 
 impl EngineAdapter {
@@ -778,12 +780,17 @@ impl EngineAdapter {
             book,
             approved: items.iter().cloned().collect(),
             control: None,
+            traffic: None,
             items,
             worker: Mutex::new(None),
         }
     }
     pub fn with_control(mut self, control: Arc<EngineControl>) -> Self {
         self.control = Some(control);
+        self
+    }
+    pub fn with_traffic(mut self, traffic: Option<opennovel_core::traffic::TrafficLease>) -> Self {
+        self.traffic = traffic;
         self
     }
 }
@@ -805,6 +812,9 @@ impl SourceAdapter for EngineAdapter {
         if let Some(control) = &self.control {
             control.check_cooldown()?;
         }
+        if let Some(traffic) = &self.traffic {
+            traffic.wait(Duration::from_millis(500), cancelled)?;
+        }
         if book != self.book || !self.approved.contains(&chapter.id) {
             return Err(stopped());
         }
@@ -825,6 +835,15 @@ impl SourceAdapter for EngineAdapter {
             return Err(Error::Cancelled);
         }
         if value["op"] == "error" {
+            if let Some(traffic) = &self.traffic {
+                match value["kind"].as_str() {
+                    Some("rate_limited") => {
+                        traffic.defer(value["retry_after_seconds"].as_u64().unwrap_or(60))?
+                    }
+                    Some("access_challenge") => traffic.defer(60)?,
+                    _ => (),
+                }
+            }
             if let Some(control) = &self.control {
                 match value["kind"].as_str() {
                     Some("rate_limited") => {

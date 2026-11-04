@@ -10,7 +10,7 @@ use std::sync::{
 use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 pub struct BrowserSession {
-    pub _directory: tempfile::TempDir,
+    pub _directory: opennovel_core::session_directory::SessionDirectory,
     pub blocked_navigation: Arc<AtomicBool>,
     pub generation: String,
     pub revision: Arc<AtomicU64>,
@@ -143,10 +143,7 @@ pub(crate) fn open_official_window(
         window.unminimize().map_err(|_| "无法恢复官网窗口")?;
         return window.set_focus().map_err(|_| "无法聚焦官网窗口".into());
     }
-    std::fs::create_dir_all(&state.session_root).map_err(|_| "无法建立独立会话目录")?;
-    let directory = tempfile::Builder::new()
-        .prefix("session-")
-        .tempdir_in(&state.session_root)
+    let directory = opennovel_core::session_directory::SessionDirectory::new(&state.session_root)
         .map_err(|_| "无法建立独立会话目录")?;
     let blocked = Arc::new(AtomicBool::new(false));
     let navigation_blocked = Arc::clone(&blocked);

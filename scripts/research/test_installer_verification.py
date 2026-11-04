@@ -11,6 +11,20 @@ import verify_installer as verifier
 
 
 class InstallerTests(unittest.TestCase):
+    def test_profile_fixture_is_valid_scoped_and_never_overwrites(self):
+        import json
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            expected = verifier.seed_profile_state(root)
+            self.assertEqual(len(expected), 3)
+            verifier.verify_preserved(expected)
+            registry = json.loads((root / 'profiles.json').read_text())
+            self.assertEqual(registry['selected'], registry['profiles'][0]['id'])
+            self.assertEqual(len(registry['profiles']), 2)
+            with self.assertRaises(FileExistsError):
+                verifier.seed_profile_state(root)
+            verifier.verify_preserved(expected)
+
     def test_non_hosted_run_refuses_before_registry_or_process_access(self):
         for env in [{}, {'GITHUB_ACTIONS': 'true', 'RUNNER_ENVIRONMENT': 'self-hosted', 'RUNNER_OS': 'Windows'}]:
             with self.subTest(env=env), patch.dict(os.environ, env, clear=True), \

@@ -24,6 +24,9 @@ pub(super) struct WebClient {
     hosts: &'static [&'static str],
     pub(super) next_request: Mutex<Instant>,
     cooldown: Mutex<Option<Instant>>,
+    traffic: crate::traffic::TrafficGate,
+    #[cfg(test)]
+    _test_root: tempfile::TempDir,
 }
 
 enum RequestFailure {
@@ -67,6 +70,15 @@ impl WebClient {
     }
 
     fn build(hosts: &'static [&'static str], allow_header_folding: bool) -> Result<Self> {
+        let key = hosts
+            .first()
+            .ok_or_else(|| Error::Invalid("缺少来源主机".into()))?;
+        #[cfg(test)]
+        let test_root = tempfile::tempdir()?;
+        #[cfg(test)]
+        let traffic = crate::traffic::TrafficGate::at(test_root.path(), key)?;
+        #[cfg(not(test))]
+        let traffic = crate::traffic::TrafficGate::for_user(key)?;
         let client = Client::builder()
             .http1_allow_obsolete_multiline_headers_in_responses(allow_header_folding)
             .user_agent(concat!(
@@ -90,6 +102,9 @@ impl WebClient {
             hosts,
             next_request: Mutex::new(Instant::now()),
             cooldown: Mutex::new(None),
+            traffic,
+            #[cfg(test)]
+            _test_root: test_root,
         })
     }
 
@@ -135,6 +150,7 @@ impl WebClient {
         &self,
         url: &Url,
         maximum: usize,
+        traffic: &crate::traffic::TrafficLease,
     ) -> std::result::Result<Vec<u8>, RequestFailure> {
         let mut response = self.client.get(url.clone()).send().await.map_err(|error| {
             let retryable = error.is_timeout() || error.is_connect() || error.is_body();
@@ -148,6 +164,7 @@ impl WebClient {
         let status = response.status().as_u16();
         if status == 429 || (status == 503 && response.headers().contains_key("retry-after")) {
             let seconds = retry_after_seconds(response.headers());
+            traffic.defer(seconds).map_err(RequestFailure::Stop)?;
             let until = Instant::now() + Duration::from_secs(seconds);
             {
                 let mut cooldown = self
@@ -164,6 +181,7 @@ impl WebClient {
             ))));
         }
         if matches!(status, 401 | 403) || response.headers().contains_key("bdturing-verify") {
+            traffic.defer(60).map_err(RequestFailure::Stop)?;
             return Err(RequestFailure::Stop(Error::AccessChallenge(format!(
                 "官网要求验证、登录或拒绝当前访问（HTTP {status}），已停止后续章节请求"
             ))));
@@ -209,6 +227,7 @@ impl WebClient {
         if cancelled.load(Ordering::Acquire) {
             return Err(Error::Cancelled);
         }
+        let traffic = self.traffic.acquire()?;
         static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
         let runtime = RUNTIME.get_or_init(|| {
             tokio::runtime::Builder::new_multi_thread()
@@ -227,7 +246,12 @@ impl WebClient {
                             tokio::time::sleep(Duration::from_millis(500 * attempt)).await;
                             self.wait_turn().await?;
                         }
-                        match self.request_once(&url, maximum).await {
+                        loop {
+                            let delay=traffic.reserve(request_interval())?;
+                            if delay.is_zero() { break; }
+                            tokio::time::sleep(delay).await;
+                        }
+                        match self.request_once(&url, maximum, &traffic).await {
                             Ok(bytes) => return Ok(bytes),
                             Err(RequestFailure::Stop(error)) => return Err(error),
                             Err(RequestFailure::Transient(error)) if attempt == 2 => return Err(error),
@@ -390,6 +414,10 @@ mod tests {
             worker.join().unwrap();
             let began = Instant::now();
             let error = client.request(url, &AtomicBool::new(false), 128).unwrap_err();
+            assert!(error.to_string().contains("仍在限流"));
+            let mut recreated = WebClient::new(&["fanqienovel.com"]).unwrap();
+            recreated.traffic = client.traffic.clone();
+            let error = recreated.request("http://127.0.0.1:1/".parse().unwrap(), &AtomicBool::new(false), 128).unwrap_err();
             assert!(error.to_string().contains("仍在限流"));
             assert!(began.elapsed() < Duration::from_millis(200));
             assert_eq!(calls.load(Ordering::Acquire), 1);

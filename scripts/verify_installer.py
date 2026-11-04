@@ -75,6 +75,24 @@ def verify_preserved(expected):
         raise ValueError('Original test library or export was changed or deleted')
 
 
+def seed_profile_state(root):
+    """Only call after require_hosted_runner and the no-existing-data checks."""
+    import uuid
+    first, second = str(uuid.uuid4()), str(uuid.uuid4())
+    files = {
+        root / 'profiles.json': json.dumps({'version': 1, 'selected': first, 'profiles': [
+            {'id': first, 'name': 'Original A', 'database': str(root / 'library.db')},
+            {'id': second, 'name': 'Original B', 'database': None}]}).encode(),
+        root / 'profiles' / second / 'exports' / 'original.txt': b'Original second profile export',
+        root / 'traffic-v1' / 'qidian.json': b'{"next_ms":0,"cooldown_ms":0}',
+    }
+    for path, content in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open('xb') as stream:
+            stream.write(content)
+    return {path: sha256(path) for path in files}
+
+
 def verify_nsis_binary(installed, original):
     # Tauri bundler 2.10.1 patches UNK -> NSS before NSIS compression, then
     # restores the unpatched build output. Compare the entire expected payload,
@@ -150,6 +168,7 @@ def main():
         if receipt.get('partial') is not False or receipt.get('saved_chapters') != 2:
             raise ValueError('Original export fixture is incomplete')
         expected = {database: sha256(database), exported: sha256(exported)}
+        expected.update(seed_profile_state(appdata[0]))
         command = nsis_command(installer, ['/S', '/NS'], '/D=' + str(destination))
         for stage in ['install', 'reinstall']:
             run(command, output, stage)
@@ -184,6 +203,7 @@ def main():
         verify_preserved(expected)
         report['steps'].append({'name': 'uninstall-preserves-original-library-and-export', 'passed': True})
         report['passed'] = True
+        report['multiple_profile_registry_exports_and_traffic_preserved'] = True
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         report['error'] = str(error)
     finally:

@@ -115,6 +115,7 @@ async fn prepare_resume(
 }
 
 struct AccountReader {
+    traffic: opennovel_core::traffic::TrafficLease,
     platform: String,
     source: String,
     interval: Duration,
@@ -354,6 +355,7 @@ impl SourceAdapter for AccountReader {
         };
         // Reading normal pages must never turn a login page into an unattended login flow.
         if current != expected {
+            self.traffic.wait(self.interval, cancelled)?;
             window
                 .navigate(
                     expected
@@ -416,7 +418,14 @@ impl SourceAdapter for AccountReader {
                     "读取期间页面导航发生变化，自动保存已停止".into(),
                 ));
             }
-            if let Some(content) = stable.observe(raw)? {
+            let observed = stable.observe(raw);
+            if matches!(
+                observed,
+                Err(Error::Restricted(_) | Error::AccessChallenge(_))
+            ) {
+                self.traffic.defer(60)?;
+            }
+            if let Some(content) = observed? {
                 return Ok(content);
             }
             wait(Duration::from_millis(400), cancelled)?;
@@ -544,6 +553,9 @@ fn launch(
     if registrations.values().any(|r| r.source == expected_source) {
         return Err("该平台已有自动保存任务，请完成或暂停后再继续，避免多账号叠加访问".into());
     }
+    let traffic = opennovel_core::traffic::TrafficGate::for_user(&account.platform)
+        .and_then(|g| g.acquire())
+        .map_err(|e| e.to_string())?;
     let job_id = if let Some((book, selection, destination)) = new {
         if registrations.values().any(|r| r.book_id == book) {
             return Err("该书有任务正在停止中，请稍候".into());
@@ -600,6 +612,7 @@ fn launch(
         job_id: job_id.clone(),
     };
     let reader = AccountReader {
+        traffic,
         platform: account.platform,
         source: expected_source.into(),
         interval,

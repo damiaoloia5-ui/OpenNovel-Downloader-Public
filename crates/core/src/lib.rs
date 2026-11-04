@@ -16,8 +16,10 @@ pub mod profiles;
 mod reading;
 mod revisions;
 mod session_capture;
+pub mod session_directory;
 pub mod sources;
 mod storage;
+pub mod traffic;
 mod txt_supplement;
 pub use txt_supplement::TxtSupplementPreview;
 
