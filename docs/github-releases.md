@@ -1,5 +1,10 @@
 # GitHub 下载与历史版本
 
+公开下载入口：[全部版本](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public/releases)，
+首个发布版本：[v0.3.19](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public/releases/tag/v0.3.19)。
+原仓库保持私有（本地 `origin`）；公开仓库使用独立 `public` 远端。仅推送已审查且明确获准公开的提交，
+不自动镜像后续私有开发。两仓库的 `v0.3.19` 均指向 `5dcbc93`，未来版本使用新标签。
+
 源码用 Git 保存，安装包放 GitHub Releases，不把 EXE、ZIP、书库或构建目录提交进 Git。
 Actions artifact 是检查产物，可能到期，不能用作长期下载入口。
 
@@ -16,6 +21,8 @@ python scripts/prepare_github_release.py --delivery .artifacts/release-hardening
 输出路径必须不存在；失败保留现场，不覆盖旧目录。仅有完整 `SHA256SUMS.txt` 的归档才能
 进入发布审核。输出包含安装器、便携包、固定提交的应用源码 ZIP、完整引擎源码、
 许可通知、release.json、发布说明和校验清单。不上传上级 `.artifacts`、原始检查日志或用户数据。
+公开安装器统一使用无空格的 `OpenNovel-<版本>-Windows-x64-setup.exe`，避免托管服务改名后
+与校验清单不一致；原交付目录及二进制内容不变。
 现有工具明确准备未签名、尚未完成稳定验收的一体化版本，不代替 `release_readiness.py`。
 正式签名版需使用签名流程和实际验收证据，不得直接改布尔字段来冒充通过。
 

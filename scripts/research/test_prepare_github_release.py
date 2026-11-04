@@ -61,6 +61,8 @@ class ReleaseArchiveTests(unittest.TestCase):
         self.assertEqual(result['source_commit'], 'a' * 40)
         self.assertFalse((self.output / 'library.db').exists())
         self.assertFalse((self.output / 'session.log').exists())
+        self.assertEqual(release.digest(self.output / 'OpenNovel-0.3.19-Windows-x64-setup.exe'), self.manifest['installer_sha256'])
+        self.assertFalse((self.output / self.installer).exists())
         lines = (self.output / 'SHA256SUMS.txt').read_text().splitlines()
         self.assertEqual(len(lines), len(list(self.output.iterdir())) - 1)
         for line in lines:

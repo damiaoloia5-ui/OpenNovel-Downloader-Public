@@ -36,6 +36,7 @@ def prepare(repo, delivery, output):
     if source_version != version or receipt.get('passed') is not True or receipt.get('private_library_included') is not False:
         raise ValueError('source version or reviewed delivery receipt mismatch')
     installer = f'OpenNovel Downloader_{version}_x64-setup.exe'
+    public_installer = f'OpenNovel-{version}-Windows-x64-setup.exe'
     portable = f'OpenNovel-{version}-Windows.zip'
     files = receipt.get('files', [])
     if len(files) != 2 or {f['name'] for f in files} != {installer, portable}:
@@ -66,7 +67,7 @@ def prepare(repo, delivery, output):
         raise ValueError('engine corresponding source differs from committed lock')
     output.mkdir(parents=True, exist_ok=False)
     for entry in files:
-        target = output / entry['name']
+        target = output / (public_installer if entry['name'] == installer else entry['name'])
         shutil.copyfile(delivery / entry['name'], target)
         if digest(target) != entry['sha256']:
             raise ValueError('artifact changed while copying')
@@ -88,7 +89,7 @@ def prepare(repo, delivery, output):
     (output / 'release.json').write_text(json.dumps(record, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     notes = f'''# OpenNovel Downloader {version}
 
-Windows x64 一体化版。普通用户下载 `OpenNovel Downloader_{version}_x64-setup.exe`；
+Windows x64 一体化版。普通用户下载 `{public_installer}`；
 便携使用下载 `OpenNovel-{version}-Windows.zip` 并完整解压。不要只复制主程序。
 安装包内置 WebView2 离线安装器，便携包需要系统已有 WebView2。
 无需另装 Python、Rust、Node 或 Docker；首次启动建立独立空白书库。

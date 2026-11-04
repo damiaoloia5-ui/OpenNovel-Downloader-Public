@@ -1,5 +1,9 @@
 # OpenNovel Downloader
 
+**下载：[Windows x64 安装包](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public/releases/download/v0.3.19/OpenNovel-0.3.19-Windows-x64-setup.exe) · [便携 ZIP](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public/releases/download/v0.3.19/OpenNovel-0.3.19-Windows.zip) · [全部历史版本及校验值](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public/releases)**
+
+公开源码位于 [OpenNovel-Downloader-Public](https://github.com/damiaoloia5-ui/OpenNovel-Downloader-Public)。v0.3.19 已发布，安装包尚未正式代码签名；支持范围及未完成验收见下文。每个版本独立保存安装包、便携包、完整对应源码与校验值，并启用 Release 不可变保护。主程序和引擎分别保留许可证。
+
 2026-11-03 · **v0.3.19 Windows x64 一体化版**：更新主程序及独立引擎的安全依赖，收紧主窗口 CSP，加入可重复依赖审计及 CI 检查，修复书旗官方免费链接 `aut=0` 被误拒绝。全量受控检查、原生权限隔离通过；新引擎实测免费样本 117/117 章并核对自动 TXT。本轮书旗正文复测遇限流，真实已购全书、独立干净系统和正式签名仍未完成，**不标为正式稳定版或全平台完整下载**。见[发布前功能与安全验收](docs/verification/2026-11-03-release-security.md)及[安全说明](SECURITY.md)。
 
 2026-11-03 · v0.3.18：修复九平台账户被旧数据库约束阻止、首次官网窗口加载时误停、飞卢普通文字章节缺少声明字数的问题；新增咪咕官网公开试读导出，保留作者与简介；当前页 TXT 支持自选文件夹、简洁命名和同名保护。飞卢两本公开首章已在真实浏览器验证，一本前两章原生保存及自动 TXT、咪咕原生界面试读导出通过。真实已购全书、七猫/咪咕 App 全文及图片正文仍未验收，不能宣称全部平台完整可用。见 [本轮验证与剩余条件](docs/verification/2026-11-03-reader-completion.md)。
