@@ -526,6 +526,21 @@ test('migu official book links start only catalog-marked free chapters through t
     } finally {f.close();}
   }
 });
+test('source list reflects Migu public saving and retains the account verification boundary',async()=>{
+  const f=await mount(App,{},({api})=>{
+    api.sourceCapabilities=async()=>[{id:'migu-web',name:'咪咕官网免费章节',can_inspect:true,can_download:true,note:'仅明确免费章节',example:'https://www.cmread.com/yuekan/novel/123.html'}];
+  });
+  try {
+    walk(f.root).find(n=>n.tag==='details'&&n.props.class==='nav-more').props.open=true;
+    await click(f.button('小说来源'));
+    const card=walk(f.root).find(n=>n.tag==='article'&&n.textContent.includes('咪咕官网免费章节'));
+    assert.ok(card);
+    assert.match(card.textContent,/免费正文保存/);
+    assert.doesNotMatch(card.textContent,/账户当前页实验/);
+    assert.match(f.root.textContent,/真实已购全书仍待验收/);
+    assert.doesNotMatch(f.root.textContent,/咪咕仅作品页识别/);
+  } finally {f.close();}
+});
 test('multi-platform catalog confirmation starts the matching session queue after explicit acknowledgement',async()=>{
  const links={zongheng:'https://www.zongheng.com/detail/123','17k':'https://www.17k.com/book/123.html',jinjiang:'https://www.jjwxc.net/onebook.php?novelid=123',qimao:'https://www.qimao.com/shuku/123/',shuqi:'https://www.shuqi.com/book/123.html',ciweimao:'https://www.ciweimao.com/book/123',faloo:'https://b.faloo.com/123.html'};
  for(const [p,url] of Object.entries(links)){

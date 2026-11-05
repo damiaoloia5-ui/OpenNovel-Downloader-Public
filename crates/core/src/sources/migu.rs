@@ -8,6 +8,7 @@ use std::sync::atomic::AtomicBool;
 
 const ORIGIN: &str = "https://n.cmread.com";
 const CONTENT_PATH: &str = "/nap/f/ms.content.wechatService/wechatForChapterContentAction.json";
+const CATALOG_PAGE_SIZE: usize = 100;
 
 pub struct Migu {
     http: WebClient,
@@ -58,6 +59,10 @@ fn component<'a>(value: &'a Value, name: &str) -> Result<&'a Value> {
         return Err(page::changed("咪咕页面组件异常"));
     }
     Ok(&result["data"])
+}
+
+fn catalog_url(book: &str, start: usize, count: usize) -> String {
+    format!("{ORIGIN}/nap/p/catalogForWap.jsp?bid={book}&start={start}&count={count}&order=0&vt=9")
 }
 
 impl Migu {
@@ -181,10 +186,19 @@ impl Migu {
         {
             return Err(page::changed("咪咕目录分页地址越界"));
         }
+        let counts: Vec<_> = url
+            .query_pairs()
+            .filter(|(key, _)| key == "count")
+            .map(|(_, value)| value.into_owned())
+            .collect();
+        let count = match counts.as_slice() {
+            [value] if value == "10" => 10,
+            [value] if value == "100" => CATALOG_PAGE_SIZE,
+            _ => return Err(page::changed("咪咕目录分页大小未知")),
+        };
         for (key, expected) in [
             ("bid", catalog.remote_id.clone()),
             ("start", (catalog.chapters.len() + 1).to_string()),
-            ("count", "10".into()),
             ("order", "0".into()),
         ] {
             let values: Vec<_> = url
@@ -197,10 +211,10 @@ impl Migu {
             }
         }
         // Reconstruct only reading parameters, discarding tracking and referral data.
-        Ok(Some(format!(
-            "{ORIGIN}/nap/p/catalogForWap.jsp?bid={}&start={}&count=10&order=0&vt=9",
-            catalog.remote_id,
-            catalog.chapters.len() + 1
+        Ok(Some(catalog_url(
+            &catalog.remote_id,
+            catalog.chapters.len() + 1,
+            count,
         )))
     }
 
@@ -216,11 +230,18 @@ impl Migu {
         )?;
         let data = Self::page_data(&raw)?;
         let (mut catalog, total) = Self::metadata(&data, book)?;
-        let mut next = Self::append_catalog(
+        let initial_next = Self::append_catalog(
             &mut catalog,
             &component(&data, "wap_reading_page")?["chapterList"],
             total,
         )?;
+        if initial_next.is_none() {
+            return Ok(catalog);
+        }
+        // The server rounds start to a count-sized page boundary. Restart at
+        // one when changing page size and cross-check the embedded first page.
+        let initial = std::mem::take(&mut catalog.chapters);
+        let mut next = Some(catalog_url(book, 1, CATALOG_PAGE_SIZE));
         while let Some(url) = next {
             let raw = self.http.text(&url, &stop, 3 * 1024 * 1024)?;
             let value: Value =
@@ -230,6 +251,15 @@ impl Migu {
                 &component(&value, "bkdetail_catalog")?["chapter"],
                 total,
             )?;
+            if catalog.chapters.len() < initial.len()
+                || initial.iter().zip(&catalog.chapters).any(|(first, full)| {
+                    first.id != full.id
+                        || first.title != full.title
+                        || first.restricted != full.restricted
+                })
+            {
+                return Err(page::changed("咪咕完整目录与作品页首段不一致，请重新读取"));
+            }
         }
         Ok(catalog)
     }
@@ -303,8 +333,20 @@ impl Migu {
         }
         let paragraphs: Vec<String> = html
             .select(&page::selector("p"))
-            .map(|p| p.text().collect::<String>().trim().to_owned())
-            .filter(|p| !p.is_empty())
+            .flat_map(|p| {
+                let mut parts = vec![String::new()];
+                for node in p.descendants() {
+                    if let Some(text) = node.value().as_text() {
+                        parts.last_mut().expect("first part exists").push_str(text);
+                    } else if node.value().as_element().is_some_and(|e| e.name() == "br") {
+                        parts.push(String::new());
+                    }
+                }
+                parts
+                    .into_iter()
+                    .map(|part| part.trim().to_owned())
+                    .filter(|part| !part.is_empty())
+            })
             .collect();
         let all_text: String = html.root_element().text().collect();
         let selected_text = paragraphs.join("");
@@ -315,13 +357,16 @@ impl Migu {
         {
             return Err(page::changed("咪咕正文包含段落之外的文字，未保存"));
         }
+        if paragraphs.iter().flat_map(|p| p.chars()).any(|c| {
+            matches!(c, '\u{e000}'..='\u{f8ff}' | '\u{f0000}'..='\u{ffffd}' | '\u{100000}'..='\u{10fffd}' | '\u{fffd}')
+        }) {
+            return Err(page::changed("咪咕正文含未知字形，未保存本章"));
+        }
         if paragraphs.is_empty()
             || paragraphs.iter().any(|p| {
-                p.chars()
-                    .any(|c| matches!(c, '\u{e000}'..='\u{f8ff}' | '\u{fffd}'))
-                    || ["订阅本章", "购买本章", "试读结束", "解锁本章"]
-                        .iter()
-                        .any(|s| p.contains(s))
+                ["订阅本章", "购买本章", "试读结束", "解锁本章"]
+                    .iter()
+                    .any(|s| p.contains(s))
             })
         {
             return Err(Error::Restricted("咪咕正文为空或含限制提示".into()));

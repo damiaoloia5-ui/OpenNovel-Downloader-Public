@@ -135,3 +135,72 @@ fn official_links_and_json_extraction_preserve_boundaries() {
     );
     assert!(Migu::page_data("var pageData = executeCode()").is_err());
 }
+
+#[test]
+fn larger_catalog_pages_preserve_every_chapter_and_access_flag() {
+    let mut c = catalog();
+    for start in [1, 101, 201] {
+        let end = (start + 99).min(235);
+        let rows: Vec<_> = (start..=end)
+            .map(|position| {
+                chapter(
+                    &(1000 + position).to_string(),
+                    position,
+                    u8::from(position > 91),
+                )
+            })
+            .collect();
+        let next = if end < 235 {
+            format!(
+                "/nap/p/catalogForWap.jsp?bid=123&start={}&count=100&order=0",
+                end + 1
+            )
+        } else {
+            String::new()
+        };
+        let block =
+            json!({"totalRecordCount":235,"volumeInfo":[{"chapterInfo":rows}],"nextPageUrl":next});
+        let returned = Migu::append_catalog(&mut c, &block, 235).unwrap();
+        assert_eq!(returned.is_some(), end < 235);
+        if let Some(url) = returned {
+            assert!(url.contains("count=100"));
+        }
+    }
+    assert_eq!(c.chapters.len(), 235);
+    assert_eq!(c.chapters.iter().filter(|c| !c.restricted).count(), 91);
+    assert_eq!(c.chapters.last().unwrap().id, "1235");
+    c.validate().unwrap();
+}
+
+#[test]
+fn catalog_batches_reject_replayed_pages_and_ambiguous_page_sizes() {
+    let first = json!({"totalRecordCount":200,"volumeInfo":[{"chapterInfo":(1..=100).map(|p| chapter(&(1000+p).to_string(),p,0)).collect::<Vec<_>>()}],"nextPageUrl":"/nap/p/catalogForWap.jsp?bid=123&start=101&count=100&order=0"});
+    let mut c = catalog();
+    Migu::append_catalog(&mut c, &first, 200).unwrap();
+    assert!(Migu::append_catalog(&mut c, &first, 200).is_err());
+    for query in ["count=100&count=10", "count=1000", "count=0", "count=abc"] {
+        let mut bad = first.clone();
+        bad["nextPageUrl"] =
+            format!("/nap/p/catalogForWap.jsp?bid=123&start=101&{query}&order=0").into();
+        assert!(Migu::append_catalog(&mut catalog(), &bad, 200).is_err());
+    }
+}
+
+#[test]
+fn visible_line_breaks_are_preserved_and_unknown_glyphs_stop_the_job() {
+    let mut value = response();
+    value["chapterContent"]["chapterContent"] =
+        "<p><span>第一行<br>第二行</span><br><br>第三行</p><p>另一段 &amp; 原创。</p>".into();
+    let (paragraphs, _) = Migu::parse_content(&value.to_string(), "123", &selected(), 1).unwrap();
+    assert_eq!(
+        paragraphs,
+        ["第一行", "第二行", "第三行", "另一段 & 原创。"]
+    );
+    for glyph in ['\u{e001}', '\u{f0001}', '\u{100001}', '\u{fffd}'] {
+        value["chapterContent"]["chapterContent"] = format!("<p>原创{glyph}</p>").into();
+        assert!(matches!(
+            Migu::parse_content(&value.to_string(), "123", &selected(), 1),
+            Err(Error::SourceChanged(_))
+        ));
+    }
+}

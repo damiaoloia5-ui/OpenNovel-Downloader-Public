@@ -235,10 +235,10 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         </template>
 
         <template v-if="page === 'sources'">
-          <div class="source-intro"><h2>已接入与待适配平台</h2><p>纵横、17K、番茄、七猫、晋江与书旗提供实验性官网免费正文保存；起点提供账户内保存实验。刺猬猫、飞卢已接入目录和账户连续保存实验；纵横、17K、晋江、七猫、书旗也可尝试官网账户通道。真实已购全书未验收；咪咕仅作品页识别，正文未接通。所选范围完成不代表整本完整。</p></div>
+          <div class="source-intro"><h2>已接入与待适配平台</h2><p>番茄、七猫、晋江、纵横、17K、书旗和咪咕支持尝试保存官网明确开放的免费正文。咪咕可在“添加小说”中直接粘贴作品链接。起点、刺猬猫、飞卢等提供官网账户连续保存实验，真实已购全书仍待验收。具体范围请查看下方各平台说明及任务结果。</p></div>
           <div class="source-list">
             <article><span class="source-monogram">本</span><div><h3>本地 JSON 内容</h3><p>用户提供的作品与章节 · 任务恢复 · TXT / EPUB</p></div><span class="available">已接入</span></article>
-            <article v-for="source in sourceInfos" :key="source.id"><span class="source-monogram">{{ source.name.slice(0,1) }}</span><div><h3>{{ source.name }}</h3><p>{{ source.note }}</p><small>{{ source.example }}</small></div><span :class="source.can_download ? 'available' : 'pending-label'">{{ source.id==='qidian-session'?'账户内自动保存':['ciweimao-web','faloo-web','migu-web'].includes(source.id)?'账户当前页实验':source.can_inspect===false?'待适配':source.can_download ? '实验性下载' : '仅详情/目录' }}</span></article>
+            <article v-for="source in sourceInfos" :key="source.id"><span class="source-monogram">{{ source.name.slice(0,1) }}</span><div><h3>{{ source.name }}</h3><p>{{ source.note }}</p><small>{{ source.example }}</small></div><span :class="source.can_download ? 'available' : 'pending-label'">{{ source.id==='qidian-session'?'账户内自动保存':['ciweimao-web','faloo-web'].includes(source.id)?'账户当前页实验':source.can_inspect===false?'待适配':source.can_download ? '免费正文保存' : '仅详情/目录' }}</span></article>
           </div>
           <p class="footnote">来源能力按目录、正文、账户与访问限制分别记录。付费平台留在后续路线，目前不承诺未购 VIP 正文获取能力。</p>
         </template>
