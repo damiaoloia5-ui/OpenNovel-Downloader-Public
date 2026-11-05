@@ -18,6 +18,14 @@ fn xml(value: &str) -> String {
 }
 
 pub(crate) fn write_docx(output: &mut std::fs::File, content: &BookContent) -> Result<()> {
+    write_docx_with_metadata(output, content, None)
+}
+
+pub(crate) fn write_docx_with_metadata(
+    output: &mut std::fs::File,
+    content: &BookContent,
+    metadata: Option<[String; 3]>,
+) -> Result<()> {
     let mut archive = ZipWriter::new(output);
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     for (name, value) in [
@@ -45,24 +53,30 @@ pub(crate) fn write_docx(output: &mut std::fs::File, content: &BookContent) -> R
     archive.start_file("word/document.xml", options)?;
     archive.write_all(br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>"#)?;
     paragraph(&mut archive, "Title", &content.summary.title)?;
-    for value in [
-        format!("作者：{}", content.summary.author),
-        format!("来源：{}", content.summary.source_label()),
-        content.summary.source_url().unwrap_or_default(),
-        format!(
-            "本地保存 {} / {} 章{}",
-            content.summary.saved_chapters,
-            content.summary.total_chapters,
-            if content.summary.saved_chapters < content.summary.total_chapters {
-                "（部分内容）"
-            } else {
-                ""
-            }
-        ),
-        "作品简介".into(),
-    ] {
+    paragraph(
+        &mut archive,
+        "Metadata",
+        &format!("作者：{}", content.summary.author),
+    )?;
+    for value in metadata.unwrap_or_else(|| {
+        [
+            format!("来源：{}", content.summary.source_label()),
+            content.summary.source_url().unwrap_or_default(),
+            format!(
+                "本地保存 {} / {} 章{}",
+                content.summary.saved_chapters,
+                content.summary.total_chapters,
+                if content.summary.saved_chapters < content.summary.total_chapters {
+                    "（部分内容）"
+                } else {
+                    ""
+                }
+            ),
+        ]
+    }) {
         paragraph(&mut archive, "Metadata", &value)?;
     }
+    paragraph(&mut archive, "Metadata", "作品简介")?;
     let description = if content.description.trim().is_empty() {
         "来源未提供简介"
     } else {

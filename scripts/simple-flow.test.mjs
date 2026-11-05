@@ -449,7 +449,7 @@ test('official login flow requires readable preview and acknowledgement before a
     await click(f.button('我已登录，识别当前页'));
     assert.ok(f.button('确认，保存当前页为 TXT').props.disabled);
     await acknowledge(f);await click(f.button('确认，保存当前页为 TXT'));
-    assert.deepEqual(f.state.calls.find(c=>c[0]==='official-save'),['official-save','faloo','official-token',true,undefined]);
+    assert.deepEqual(f.state.calls.find(c=>c[0]==='official-save'),['official-save','faloo','official-token',true,undefined,'txt']);
     await click(f.button('打开 TXT 所在文件夹'));
     assert.ok(f.state.calls.some(c=>c[0]==='official-reveal'&&c[1]==='official-export'));
     assert.equal(f.state.calls.filter(c=>c[0]==='start'||c[0]==='download').length,0);
@@ -462,12 +462,28 @@ test('migu public excerpt can be exported without login and never starts a compl
   await click(f.button('打开这本书'));await click(f.button('识别官网试读'));assert.match(f.root.textContent,/官网公开试读/);
   assert.ok(f.button('确认，保存当前页为 TXT').props.disabled);await click(f.button('选择 TXT 保存文件夹'));await acknowledge(f);await click(f.button('确认，保存当前页为 TXT'));
   assert.deepEqual(f.state.calls.find(c=>c[0]==='official-open'),['official-open','migu',url,false]);
-  assert.deepEqual(f.state.calls.find(c=>c[0]==='official-save'),['official-save','migu','official-token',true,'D:/chosen-original']);assert.equal(f.state.calls.filter(c=>c[0]==='start'||c[0]==='download').length,0);
+   assert.deepEqual(f.state.calls.find(c=>c[0]==='official-save'),['official-save','migu','official-token',true,'D:/chosen-original','txt']);assert.equal(f.state.calls.filter(c=>c[0]==='start'||c[0]==='download').length,0);
  }finally{f.close();}
 });
 test('protected official pages never expose a save action or start an automatic job',async()=>{
   const f=await mount(Official,{initialUrl:'https://www.ciweimao.com/book/123'},({state})=>{state.officialPage={status:'protected',book_title:'原创图片页',paragraphs:[]};});
   try{await click(f.button('打开刺猬猫，去登录'));await click(f.button('我已登录，识别当前页'));assert.match(f.root.textContent,/图片、画布/);assert.equal(f.button('确认，保存当前页为 TXT'),undefined);assert.equal(f.state.calls.filter(c=>c[0]==='official-save').length,0);}finally{f.close();}
+});
+
+test('official excerpt inherits Word selection and exports with its visible scope',async()=>{
+  const f=await mount(Official,{initialUrl:'https://n.cmread.com/nap/p/wap_detail_new.jsp?bid=123',initialFormat:'docx'},({state,api})=>{
+    state.officialPage={status:'excerpt',book_title:'原创山路',paragraphs:['原创试读'],declared_words:null};
+    api.saveOfficialReader=async(...args)=>{state.calls.push(['official-save',...args]);return {id:'word-export',path:'D:/original-excerpt.docx'};};
+  });
+  try {
+    await click(f.button('打开这本书'));await click(f.button('识别官网试读'));
+    assert.ok(f.button('确认，保存当前页为 Word').props.disabled);
+    await acknowledge(f);await click(f.button('确认，保存当前页为 Word'));
+    assert.deepEqual(f.state.calls.find(c=>c[0]==='official-save'),['official-save','migu','official-token',true,undefined,'docx']);
+    await click(f.button('打开 Word 所在文件夹'));
+    assert.ok(f.state.calls.some(c=>c[0]==='official-reveal'&&c[1]==='word-export'));
+    assert.equal(f.state.calls.filter(c=>['start','download','import'].includes(c[0])).length,0);
+  } finally {f.close();}
 });
 test('late official opening and failures cannot authorize or label a different selected book',async()=>{
   for(const failed of [false,true]){

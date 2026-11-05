@@ -48,7 +48,7 @@ onUnmounted(()=>{disposed=true;readEpoch++;window.removeEventListener('focus',re
 </script>
 <template>
   <PlatformSavePanel v-if="otherSession||sessionBookPlatform(initialUrl||'')" :book-id="otherSession?.id" :initial-url="initialUrl" :initial-directory="initialDirectory" :initial-options="initialOptions" @saved="emit('saved',$event)" @read="emit('read',$event)" />
-  <OfficialReaderPanel v-else-if="!embedded&&officialBookPlatform(initialUrl||'')==='migu'" :initial-url="initialUrl" :initial-directory="initialDirectory" />
+  <OfficialReaderPanel v-else-if="!embedded&&officialBookPlatform(initialUrl||'')==='migu'" :initial-url="initialUrl" :initial-directory="initialDirectory" :initial-format="initialOptions?.format" />
   <details v-else-if="!embedded"><summary>其他平台：登录并连续保存</summary><PlatformSavePanel @saved="emit('saved',$event)" @read="emit('read',$event)" /><details><summary>当前页文字采集与咪咕识别</summary><OfficialReaderPanel /></details></details>
   <section v-if="!otherSession&&!sessionBookPlatform(initialUrl||'')&&!officialBookPlatform(initialUrl||'')" class="account-panel" aria-label="起点保存引导">
     <h2>{{ embedded?'保存这本书':'跟着提示保存小说' }} <small>起点 · 实验性</small></h2>

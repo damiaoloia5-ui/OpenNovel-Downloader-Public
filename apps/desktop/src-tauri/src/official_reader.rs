@@ -157,6 +157,7 @@ pub async fn save_official_reader(
     token: String,
     acknowledged: bool,
     directory: Option<String>,
+    format: Option<String>,
     state: State<'_, AppState>,
     reader: State<'_, OfficialReaderState>,
 ) -> Result<PageExport, String> {
@@ -164,6 +165,14 @@ pub async fn save_official_reader(
         return Err("请先确认阅读权限与当前页采集范围".into());
     }
     let id = session_id(&platform)?;
+    let format = opennovel_core::ExportFormat::parse(format.as_deref().unwrap_or("txt"))
+        .map_err(|e| e.to_string())?;
+    if !matches!(
+        format,
+        opennovel_core::ExportFormat::Txt | opennovel_core::ExportFormat::Docx
+    ) {
+        return Err("当前页支持 TXT 或 Word 格式".into());
+    }
     let directory = match directory.filter(|d| !d.trim().is_empty()) {
         Some(path) => {
             let path = PathBuf::from(path.trim());
@@ -192,7 +201,7 @@ pub async fn save_official_reader(
     {
         return Err("官网会话已关闭或预览过期，请重新识别".into());
     }
-    let path = tauri::async_runtime::spawn_blocking(move || preview.page.save_txt(&directory))
+    let path = tauri::async_runtime::spawn_blocking(move || preview.page.save(&directory, format))
         .await
         .map_err(|_| "保存中断")?
         .map_err(|e| e.to_string())?;
@@ -249,7 +258,7 @@ pub async fn reveal_official_reader(
         .cloned()
         .ok_or("本次导出记录已失效；文件仍保留在导出目录")?;
     if !path.is_file() {
-        return Err("TXT 已移动或删除".into());
+        return Err("导出文件已移动或删除".into());
     }
     #[cfg(target_os = "windows")]
     std::process::Command::new("explorer.exe")

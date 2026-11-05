@@ -160,6 +160,47 @@ fn migu_mobile_preview_keeps_identity_metadata_and_explicit_excerpt_scope() {
     let raw = serde_json::json!({"platform":"migu","url":url,"status":"excerpt","book_id":"123","chapter_id":"","book_title":"原创山路","chapter_title":"官网公开试读","author":"原创作者","description":"关于山间行走的原创故事。","paragraphs":["第一章","旅人抵达山顶，看到灯火。"],"declared_words":null});
     let page = OfficialPage::parse(&raw.to_string(), "migu", url).unwrap();
     let dir = tempfile::tempdir().unwrap();
+    let word = page
+        .save(dir.path(), opennovel_core::ExportFormat::Docx)
+        .unwrap();
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&word).unwrap()).unwrap();
+    let mut document = String::new();
+    use std::io::Read;
+    archive
+        .by_name("word/document.xml")
+        .unwrap()
+        .read_to_string(&mut document)
+        .unwrap();
+    roxmltree::Document::parse(&document).unwrap();
+    assert!(document.contains("官网公开试读摘录") && document.contains("不计入书库完成进度"));
+    assert!(
+        document.contains("原创作者")
+            && document.contains("关于山间")
+            && document.contains("看到灯火")
+    );
+    assert!(!document.contains("本地保存") && !document.contains("1 / 1"));
+    let mut styles = String::new();
+    archive
+        .by_name("word/styles.xml")
+        .unwrap()
+        .read_to_string(&mut styles)
+        .unwrap();
+    assert!(
+        styles.contains("Times New Roman")
+            && styles.contains("宋体")
+            && styles.contains("firstLineChars=\"200\"")
+    );
+    drop(archive);
+    std::fs::write(&word, "用户批注").unwrap();
+    let another = page
+        .save(dir.path(), opennovel_core::ExportFormat::Docx)
+        .unwrap();
+    assert_ne!(word, another);
+    assert_eq!(std::fs::read_to_string(&word).unwrap(), "用户批注");
+    assert!(
+        page.save(dir.path(), opennovel_core::ExportFormat::Epub)
+            .is_err()
+    );
     let file = page.save_txt(dir.path()).unwrap();
     let txt = std::fs::read_to_string(file).unwrap();
     assert!(

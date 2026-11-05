@@ -128,7 +128,7 @@ export interface OfficialPreview {token:string;page:OfficialPage}
 export interface OfficialExport {id:string;path:string}
 export function openOfficialReader(platform:string,bookUrl:string,login:boolean):Promise<void>{return invoke('open_official_reader',{platform,bookUrl,login});}
 export function inspectOfficialReader(platform:string):Promise<OfficialPreview>{return invoke('inspect_official_reader',{platform});}
-export function saveOfficialReader(platform:string,token:string,acknowledged:boolean,directory?:string):Promise<OfficialExport>{return invoke('save_official_reader',{platform,token,acknowledged,directory:directory||null});}
+export function saveOfficialReader(platform:string,token:string,acknowledged:boolean,directory?:string,format?:'txt'|'docx'):Promise<OfficialExport>{return invoke('save_official_reader',{platform,token,acknowledged,directory:directory||null,format:format||'txt'});}
 export function chooseOfficialExportDirectory():Promise<string|null>{return invoke('choose_official_export_directory');}
 export function revealOfficialReader(id:string):Promise<void>{return invoke('reveal_official_reader',{id});}
 export function closeOfficialReader(platform:string):Promise<void>{return invoke('close_official_reader',{platform});}

@@ -271,6 +271,15 @@ impl OfficialPage {
         Ok(())
     }
     pub fn save_txt(&self, directory: &Path) -> Result<String> {
+        self.save(directory, crate::ExportFormat::Txt)
+    }
+
+    pub fn save(&self, directory: &Path, format: crate::ExportFormat) -> Result<String> {
+        let extension = match format {
+            crate::ExportFormat::Txt => "txt",
+            crate::ExportFormat::Docx => "docx",
+            _ => return Err(Error::Invalid("当前页支持 TXT 或 Word 格式".into())),
+        };
         if !["text", "excerpt"].contains(&self.status.as_str()) {
             return Err(Error::Restricted("当前页面没有可保存的普通文字".into()));
         }
@@ -289,30 +298,68 @@ impl OfficialPage {
             }
         );
         let mut file = tempfile::NamedTempFile::new_in(directory)?;
-        writeln!(
-            file,
-            "{}\n作者：{}\n{}\n来源：{}\n简介：{}\n",
-            self.book_title, self.author, self.chapter_title, self.url, self.description
-        )?;
-        writeln!(
-            file,
-            "{}\n",
-            if self.status == "excerpt" {
-                "官网公开试读摘录；不是完整章节或全书，不计入书库完成进度。"
+        if matches!(format, crate::ExportFormat::Docx) {
+            let content = crate::BookContent {
+                summary: crate::BookSummary {
+                    id: self.book_id.clone(),
+                    remote_id: self.book_id.clone(),
+                    title: self.book_title.clone(),
+                    author: self.author.clone(),
+                    source: self.platform.clone(),
+                    saved_chapters: 0,
+                    total_chapters: 0,
+                },
+                description: self.description.clone(),
+                chapters: vec![ImportChapter {
+                    id: self.chapter_id.clone(),
+                    title: self.chapter_title.clone(),
+                    paragraphs: self.paragraphs.clone(),
+                }],
+                modified: String::new(),
+            };
+            let scope = if self.status == "excerpt" {
+                "官网公开试读摘录，不计入书库完成进度。"
             } else {
-                "当前页可见文字采集；未核验全章或全书完整性。"
+                "当前页可见文字采集，完整性待核验。"
+            };
+            crate::docx::write_docx_with_metadata(
+                file.as_file_mut(),
+                &content,
+                Some([
+                    format!(
+                        "来源：{}",
+                        official_platform_name(&self.platform).unwrap_or("官网")
+                    ),
+                    self.url.clone(),
+                    scope.into(),
+                ]),
+            )?;
+        } else {
+            writeln!(
+                file,
+                "{}\n作者：{}\n{}\n来源：{}\n简介：{}\n",
+                self.book_title, self.author, self.chapter_title, self.url, self.description
+            )?;
+            writeln!(
+                file,
+                "{}\n",
+                if self.status == "excerpt" {
+                    "官网公开试读摘录；不是完整章节或全书，不计入书库完成进度。"
+                } else {
+                    "当前页可见文字采集；未核验全章或全书完整性。"
+                }
+            )?;
+            for paragraph in &self.paragraphs {
+                writeln!(file, "{}\n", paragraph.trim())?;
             }
-        )?;
-        for paragraph in &self.paragraphs {
-            writeln!(file, "{}\n", paragraph.trim())?;
         }
         file.flush()?;
         file.as_file().sync_all()?;
         for number in 1..=1000 {
             let path = directory.join(if number == 1 {
-                format!("{name}.txt")
+                format!("{name}.{extension}")
             } else {
-                format!("{name} ({number}).txt")
+                format!("{name} ({number}).{extension}")
             });
             match file.persist_noclobber(&path) {
                 Ok(_) => return Ok(path.to_string_lossy().into_owned()),
