@@ -201,12 +201,14 @@ fn source_links_and_planned_capabilities_do_not_enable_downloads() {
     }
     for s in source_infos()
         .iter()
-        .filter(|s| ["ciweimao-web", "faloo-web", "migu-web"].contains(&s.id))
+        .filter(|s| ["ciweimao-web", "faloo-web"].contains(&s.id))
     {
         assert!(!s.can_download);
-        assert_eq!(s.can_inspect, s.id != "migu-web");
+        assert!(s.can_inspect);
         assert!(SourceHub::new().adapter(s.id).is_err());
     }
+    let migu = source_infos().iter().find(|s| s.id == "migu-web").unwrap();
+    assert!(migu.can_inspect && migu.can_download);
 }
 struct Original(bool);
 impl SourceAdapter for Original {

@@ -505,9 +505,25 @@ test('late official exports stay with the original context and never appear unde
   }finally{f.close();}
 });
 test('new official links route to their account reader without public HTTP download',async()=>{
-  for(const url of ['https://www.ciweimao.com/book/123','https://b.faloo.com/123.html','https://www.cmread.com/yuekan/novel/123.html']){
+  for(const url of ['https://www.ciweimao.com/book/123','https://b.faloo.com/123.html']){
     const f=await mount(App);
     try{const input=walk(f.root,true).find(n=>n.props.id==='novel-link');input.value=url;input.dispatch('input');await flush();walk(f.root,true).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();assert.match(f.root.textContent,url.includes('cmread.com')?/登录官网，识别当前页/:/登录官网，连续保存/);assert.equal(f.state.calls.filter(c=>c[0]==='inspect'||c[0]==='download').length,0);}finally{f.close();}
+  }
+});
+test('migu official book links start only catalog-marked free chapters through the normal queue',async()=>{
+  for(const url of ['https://www.cmread.com/yuekan/novel/123.html','https://n.cmread.com/nap/p/wap_detail_new.jsp?bid=123']) {
+    const f=await mount(App,{},({api,state})=>{
+      api.sourceCapabilities=async()=>[{id:'migu-web',can_download:true}];
+      api.inspectBook=async()=>{state.calls.push(['inspect']);return {...preview.catalog,source:'migu-web',chapters:[{id:'1',title:'原创免费章',restricted:false},{id:'2',title:'原创受限章',restricted:true}]};};
+    });
+    try {
+      const input=walk(f.root,true).find(n=>n.props.id==='novel-link');
+      input.value=url;input.dispatch('input');await flush();
+      walk(f.root,true).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();await flush();
+      const downloads=f.state.calls.filter(c=>c[0]==='download');
+      assert.equal(downloads.length,1);assert.equal(downloads[0][4],'1');
+      assert.equal(f.state.calls.filter(c=>c[0]==='official-open'||c[0]==='start').length,0);
+    } finally {f.close();}
   }
 });
 test('multi-platform catalog confirmation starts the matching session queue after explicit acknowledgement',async()=>{

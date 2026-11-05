@@ -1,4 +1,4 @@
-use super::{Catalog, Fanqie, Jinjiang, PublicHtml, Qimao, Shuqi, SourceAdapter, page};
+use super::{Catalog, Fanqie, Jinjiang, Migu, PublicHtml, Qimao, Shuqi, SourceAdapter, page};
 use crate::{Error, Result};
 use reqwest::Url;
 use serde::Serialize;
@@ -98,11 +98,11 @@ static SOURCES: [SourceInfo; 10] = [
     },
     SourceInfo {
         id: "migu-web",
-        name: "咪咕悦看（账户识别实验）",
-        can_inspect: false,
-        can_download: false,
+        name: "咪咕官网免费章节",
+        can_inspect: true,
+        can_download: true,
         can_search: false,
-        note: "已找到可访问的咪咕悦看官网，可打开隔离登录窗口并识别作品页；阅读正文路由和已购尚未验证，当前不能保存正文。",
+        note: "读取官网完整分页目录，保存明确免费且无隐藏标记的文字章节；付费与未知结构停止，账号权益全文仍待验证。",
         example: "https://www.cmread.com/yuekan/novel/作品ID.html",
     },
 ];
@@ -145,6 +145,16 @@ pub fn identify(input: &str) -> Result<(&'static str, String)> {
         return Err(invalid_link());
     }
     match url.host_str() {
+        Some("n.cmread.com" | "www.cmread.com") => {
+            let canonical = crate::official_book_link("migu", input)?;
+            let id = canonical
+                .query_pairs()
+                .find(|(key, _)| key == "bid")
+                .ok_or_else(invalid_link)?
+                .1
+                .into_owned();
+            Ok(("migu-web", id))
+        }
         Some("www.zongheng.com" | "book.zongheng.com")
             if url.query().is_none() && url.fragment().is_none() =>
         {
@@ -230,6 +240,7 @@ pub struct SourceHub {
     jinjiang: OnceLock<Jinjiang>,
     zongheng: OnceLock<PublicHtml>,
     seventeen: OnceLock<PublicHtml>,
+    migu: OnceLock<Migu>,
 }
 fn initialize<T>(cell: &OnceLock<T>, create: impl FnOnce() -> Result<T>) -> Result<&T> {
     if cell.get().is_none() {
@@ -259,14 +270,7 @@ impl SourceHub {
             "ciweimao-web" | "faloo-web" => {
                 super::inspect_session_catalog(source.trim_end_matches("-web"), &id)
             }
-            "migu-web" => Err(Error::Restricted(
-                SOURCES
-                    .iter()
-                    .find(|s| s.id == source)
-                    .expect("known source")
-                    .note
-                    .into(),
-            )),
+            "migu-web" => initialize(&self.migu, Migu::new)?.inspect(&id),
             _ => Err(invalid_link()),
         }
     }
@@ -278,6 +282,7 @@ impl SourceHub {
             "zongheng-web" => Ok(initialize(&self.zongheng, || PublicHtml::new(true))?),
             "17k-web" => Ok(initialize(&self.seventeen, || PublicHtml::new(false))?),
             "shuqi-web" => Ok(initialize(&self.shuqi, Shuqi::new)?),
+            "migu-web" => Ok(initialize(&self.migu, Migu::new)?),
             _ => Err(Error::Invalid("该来源没有已实现的下载适配器".into())),
         }
     }

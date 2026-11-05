@@ -1,6 +1,6 @@
 {
   "name": "opennovel-downloader",
-  "version": "0.3.21",
+  "version": "0.3.22",
   "license": "Apache-2.0",
   "private": true,
   "type": "module",

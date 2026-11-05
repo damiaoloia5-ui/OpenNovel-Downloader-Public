@@ -189,6 +189,7 @@ impl BookSummary {
             "ciweimao-web" | "ciweimao-session" => "刺猬猫",
             "faloo-web" | "faloo-session" => "飞卢",
             "local-json" => "本地导入",
+            "migu-web" => "咪咕悦看",
             _ => &self.source,
         }
     }
@@ -197,6 +198,7 @@ impl BookSummary {
             return "官网会话内可读正文（实验性）";
         }
         match self.source.as_str() {
+            "migu-web" => "咪咕官网明确免费章节",
             "fanqie-web" => "番茄公开网页",
             "fanqie-app-local" => "番茄本地引擎（免费内容）",
             "qimao-web" | "qimao-session" => "七猫公开网页",
@@ -211,6 +213,10 @@ impl BookSummary {
     }
     pub fn source_url(&self) -> Option<String> {
         match self.source.as_str() {
+            "migu-web" => Some(format!(
+                "https://n.cmread.com/nap/p/wap_detail_new.jsp?bid={}",
+                self.remote_id
+            )),
             "zongheng-web" | "zongheng-session" => Some(format!(
                 "https://www.zongheng.com/detail/{}",
                 self.remote_id

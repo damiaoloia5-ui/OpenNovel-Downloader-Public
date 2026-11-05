@@ -80,7 +80,14 @@ async function chooseFile(event:Event){const input=event.target as HTMLInputElem
 async function inspect(autoSave=false){
   if(choosingDirectory.value)return;
   try{resolveSaveRange(saveOptions.value);}catch(e){error.value=String(e);return;}
-  if(officialBookPlatform(bookInput.value)){accountUrl.value=bookInput.value.trim();page.value='accounts';error.value='';notice.value=officialBookPlatform(bookInput.value)==='migu'?'打开这本书，加载完成后识别官网试读；公开试读无需登录。':'在平台官网窗口登录，打开可正常阅读的章节，再识别当前页。';return;}
+  const officialPlatform = officialBookPlatform(bookInput.value);
+  if (officialPlatform && officialPlatform !== 'migu') {
+    accountUrl.value = bookInput.value.trim();
+    page.value = 'accounts';
+    error.value = '';
+    notice.value = '在平台官网窗口登录，打开可正常阅读的章节，再识别当前页。';
+    return;
+  }
   const link=qidianBookLink(bookInput.value);if(link){const stored=data.value.books.find(b=>b.source==='qidian-session'&&b.remote_id===qidianBookId(link));if(stored){await action(async()=>{if(directoryTouched.value)await setBookExportDirectory(stored.id,saveDirectory.value);openWorkspace(stored.id,'save');});return;}accountUrl.value=link;page.value='accounts';error.value='';notice.value='按提示完成登录和书名确认，之后会自动保存并生成 TXT。';return;}
   await action(async()=>{
     const epoch=navigationEpoch;catalog.value=null;const input=bookInput.value.trim();

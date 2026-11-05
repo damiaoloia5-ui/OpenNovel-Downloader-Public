@@ -25,7 +25,7 @@ fn platform(value: &str) -> Result<&'static str> {
         "17k" | "www.17k.com" => Ok("17k"),
         "ciweimao" | "www.ciweimao.com" => Ok("ciweimao"),
         "faloo" | "b.faloo.com" => Ok("faloo"),
-        "migu" => Ok("migu"),
+        "migu" | "n.cmread.com" => Ok("migu"),
         _ => Err(Error::Invalid("不支持的平台请求预算".into())),
     }
 }
