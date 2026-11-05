@@ -5,6 +5,7 @@ mod account_download;
 mod accounts;
 mod auto_txt;
 mod capture;
+mod catalog_request;
 mod export_destination;
 mod folder_dialog;
 mod install_check;
@@ -34,6 +35,7 @@ struct AppState {
     auto_txt: auto_txt::AutoTxtService,
     library: Arc<Library>,
     source: Arc<SourceHub>,
+    catalog_requests: Arc<catalog_request::CatalogRequests>,
     cancellations: Arc<Mutex<HashMap<String, ActiveTask>>>,
     exports: PathBuf,
     diagnostic_preview: Mutex<Option<DiagnosticReport>>,
@@ -436,18 +438,56 @@ async fn set_local_engine(
 }
 
 #[tauri::command]
-async fn inspect_book(input: String, state: State<'_, AppState>) -> Result<Catalog, String> {
-    let handle = Arc::clone(&state.source);
-    let engine = state.engine.enabled();
-    blocking(move || inspect_channel(&handle, &input, engine)).await
+async fn begin_catalog_request(state: State<'_, AppState>) -> Result<String, String> {
+    let requests = Arc::clone(&state.catalog_requests);
+    blocking(move || requests.begin()).await
 }
 
-fn inspect_channel(hub: &SourceHub, input: &str, engine: bool) -> opennovel_core::Result<Catalog> {
+#[tauri::command]
+async fn cancel_catalog_request(
+    request_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let requests = Arc::clone(&state.catalog_requests);
+    blocking(move || requests.cancel(&request_id)).await
+}
+
+#[tauri::command]
+async fn inspect_book(
+    input: String,
+    request_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Catalog, String> {
+    let handle = Arc::clone(&state.source);
+    let engine = state.engine.enabled();
+    let stop = request_id
+        .as_deref()
+        .map(|id| state.catalog_requests.stop_flag(id))
+        .transpose()
+        .map_err(|error| error.to_string())?
+        .unwrap_or_default();
+    blocking(move || inspect_channel(&handle, &input, engine, &stop)).await
+}
+
+fn inspect_channel(
+    hub: &SourceHub,
+    input: &str,
+    engine: bool,
+    stop: &AtomicBool,
+) -> opennovel_core::Result<Catalog> {
+    if stop.load(std::sync::atomic::Ordering::Acquire) {
+        return Err(opennovel_core::Error::Cancelled);
+    }
     let (source, id) = identify(input)?;
-    if engine && source == "fanqie-web" {
-        opennovel_core::sources::Fanqie::new()?.inspect_engine(&id)
+    let result = if engine && source == "fanqie-web" {
+        opennovel_core::sources::Fanqie::new()?.inspect_engine_with_stop(&id, stop)
     } else {
-        hub.inspect(input)
+        hub.inspect_with_stop(input, stop)
+    };
+    if stop.load(std::sync::atomic::Ordering::Acquire) {
+        Err(opennovel_core::Error::Cancelled)
+    } else {
+        result
     }
 }
 
@@ -458,15 +498,23 @@ async fn download_book(
     last: usize,
     selection: Option<String>,
     destination: Option<opennovel_core::SaveDestination>,
+    request_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let handle = Arc::clone(&state.source);
     let library = Arc::clone(&state.library);
     let engine = state.engine.enabled();
     let root = state.exports.clone();
+    let requests = Arc::clone(&state.catalog_requests);
+    let stop = request_id
+        .as_deref()
+        .map(|id| requests.stop_flag(id))
+        .transpose()
+        .map_err(|error| error.to_string())?
+        .unwrap_or_default();
     let job = blocking(move || {
         export_destination::preflight(destination.as_ref(), &root)?;
-        let catalog = inspect_channel(&handle, &input, engine)?;
+        let catalog = inspect_channel(&handle, &input, engine, &stop)?;
         let positions = if let Some(selection) = selection.filter(|s| !s.trim().is_empty()) {
             opennovel_core::parse_selection(&selection, catalog.chapters.len())?
         } else {
@@ -475,19 +523,26 @@ async fn download_book(
             }
             (first..=last).collect()
         };
-        if catalog.source == opennovel_core::sources::LOCAL_ENGINE_SOURCE {
-            return library.create_engine_download_with_destination(
+        let create = || {
+            if catalog.source == opennovel_core::sources::LOCAL_ENGINE_SOURCE {
+                return library.create_engine_download_with_destination(
+                    &catalog,
+                    &positions,
+                    destination.as_ref(),
+                );
+            }
+            handle.adapter(&catalog.source)?;
+            library.create_download_selected_with_destination(
                 &catalog,
                 &positions,
                 destination.as_ref(),
-            );
+            )
+        };
+        if let Some(id) = request_id {
+            requests.commit(&id, create)
+        } else {
+            create()
         }
-        handle.adapter(&catalog.source)?;
-        library.create_download_selected_with_destination(
-            &catalog,
-            &positions,
-            destination.as_ref(),
-        )
     })
     .await?;
     launch(&job, &state, None).await?;
@@ -954,6 +1009,7 @@ fn main() {
                 library,
                 auto_txt,
                 source: Arc::default(),
+                catalog_requests: Arc::default(),
                 cancellations: Arc::default(),
                 exports,
                 diagnostic_preview: Mutex::new(None),
@@ -990,6 +1046,8 @@ fn main() {
         .invoke_handler({
             let dispatch: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
                 Box::new(tauri::generate_handler![
+                    begin_catalog_request,
+                    cancel_catalog_request,
                     software_update::software_update_status,
                     software_update::check_software_update,
                     software_update::download_software_update,

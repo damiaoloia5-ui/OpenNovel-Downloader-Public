@@ -47,6 +47,13 @@ pub async fn switch_local_profile(
         return Err("正在切换用户，请稍等".into());
     }
     let checked = (|| {
+        if state
+            .catalog_requests
+            .is_active()
+            .map_err(|error| error.to_string())?
+        {
+            return Err("请先停止目录读取，再切换用户。".into());
+        }
         if !state
             .cancellations
             .lock()

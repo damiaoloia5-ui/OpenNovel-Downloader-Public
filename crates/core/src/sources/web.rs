@@ -437,6 +437,51 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_drops_a_stalled_response_body_and_allows_a_fresh_request() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+        let (sent, received) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut headers = Vec::new();
+            while !headers.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                assert_eq!(stream.read(&mut byte).unwrap(), 1);
+                headers.push(byte[0]);
+            }
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            sent.send(()).unwrap();
+            let _ = released.recv_timeout(Duration::from_secs(5));
+        });
+        let client = WebClient::new(&["fanqienovel.com"]).unwrap();
+        let cancel = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let request = scope.spawn(|| client.request(url, &cancel, 128));
+            received.recv_timeout(Duration::from_secs(5)).unwrap();
+            let began = Instant::now();
+            cancel.store(true, Ordering::Release);
+            assert!(matches!(request.join().unwrap(), Err(Error::Cancelled)));
+            assert!(began.elapsed() < Duration::from_secs(1));
+        });
+        release.send(()).unwrap();
+        server.join().unwrap();
+        let (url, calls, server) = scripted_server(vec![OK]);
+        assert_eq!(
+            client.request(url, &AtomicBool::new(false), 128).unwrap(),
+            b"ok"
+        );
+        server.join().unwrap();
+        assert_eq!(calls.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
     fn cancellation_interrupts_retry_delay_and_scheduler_wait_without_holding_the_mutex() {
         let (url, calls, worker) = scripted_server(vec![BUSY]);
         let client = WebClient::new(&["fanqienovel.com"]).unwrap();

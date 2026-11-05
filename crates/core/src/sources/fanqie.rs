@@ -59,19 +59,27 @@ impl Fanqie {
     }
 
     pub fn inspect(&self, input: &str) -> Result<Catalog> {
-        self.inspect_channel(input, false)
+        self.inspect_with_stop(input, &AtomicBool::new(false))
+    }
+
+    pub fn inspect_with_stop(&self, input: &str, stop: &AtomicBool) -> Result<Catalog> {
+        self.inspect_channel(input, false, stop)
     }
 
     /// Explicit experimental channel; the normal web adapter remains unchanged.
     pub fn inspect_engine(&self, input: &str) -> Result<Catalog> {
-        self.inspect_channel(input, true)
+        self.inspect_engine_with_stop(input, &AtomicBool::new(false))
     }
 
-    fn inspect_channel(&self, input: &str, engine: bool) -> Result<Catalog> {
+    pub fn inspect_engine_with_stop(&self, input: &str, stop: &AtomicBool) -> Result<Catalog> {
+        self.inspect_channel(input, true, stop)
+    }
+
+    fn inspect_channel(&self, input: &str, engine: bool, stop: &AtomicBool) -> Result<Catalog> {
         let id = Self::recognize(input)?;
         let bytes = self.get(
             &format!("https://fanqienovel.com/page/{id}"),
-            &AtomicBool::new(false),
+            stop,
             8 * 1024 * 1024,
         )?;
         let html = String::from_utf8(bytes)

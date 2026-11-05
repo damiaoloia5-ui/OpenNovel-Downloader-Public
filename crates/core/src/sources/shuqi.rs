@@ -42,13 +42,16 @@ impl Shuqi {
         })
     }
     pub fn inspect(&self, book: &str) -> Result<Catalog> {
+        self.inspect_with_stop(book, &AtomicBool::new(false))
+    }
+
+    pub fn inspect_with_stop(&self, book: &str, stop: &AtomicBool) -> Result<Catalog> {
         if !page::numeric(book) {
             return Err(Error::Invalid("书旗作品 ID 无效".into()));
         }
-        let stop = AtomicBool::new(false);
         // The reader provides identities, permission and metadata in one
         // snapshot; the decorative directory embeds VIP badges in titles.
-        let reader = self.reader(book, "", &stop)?;
+        let reader = self.reader(book, "", stop)?;
         let catalog = Catalog {
             source: "shuqi-web".into(),
             remote_id: book.into(),

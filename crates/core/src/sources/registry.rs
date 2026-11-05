@@ -259,19 +259,45 @@ impl SourceHub {
         }
     }
     pub fn inspect(&self, input: &str) -> Result<Catalog> {
+        self.inspect_with_stop(input, &std::sync::atomic::AtomicBool::new(false))
+    }
+
+    pub fn inspect_with_stop(
+        &self,
+        input: &str,
+        stop: &std::sync::atomic::AtomicBool,
+    ) -> Result<Catalog> {
+        use std::sync::atomic::Ordering;
+        if stop.load(Ordering::Acquire) {
+            return Err(Error::Cancelled);
+        }
         let (source, id) = identify(input)?;
-        match source {
-            "fanqie-web" => initialize(&self.fanqie, Fanqie::new)?.inspect(&id),
-            "qimao-web" => initialize(&self.qimao, Qimao::new)?.inspect(&id),
-            "shuqi-web" => initialize(&self.shuqi, Shuqi::new)?.inspect(&id),
-            "jinjiang-web" => initialize(&self.jinjiang, Jinjiang::new)?.inspect(&id),
-            "zongheng-web" => initialize(&self.zongheng, || PublicHtml::new(true))?.inspect(&id),
-            "17k-web" => initialize(&self.seventeen, || PublicHtml::new(false))?.inspect(&id),
-            "ciweimao-web" | "faloo-web" => {
-                super::inspect_session_catalog(source.trim_end_matches("-web"), &id)
-            }
-            "migu-web" => initialize(&self.migu, Migu::new)?.inspect(&id),
-            _ => Err(invalid_link()),
+        let result =
+            match source {
+                "fanqie-web" => initialize(&self.fanqie, Fanqie::new)?.inspect_with_stop(&id, stop),
+                "qimao-web" => initialize(&self.qimao, Qimao::new)?.inspect_with_stop(&id, stop),
+                "shuqi-web" => initialize(&self.shuqi, Shuqi::new)?.inspect_with_stop(&id, stop),
+                "jinjiang-web" => {
+                    initialize(&self.jinjiang, Jinjiang::new)?.inspect_with_stop(&id, stop)
+                }
+                "zongheng-web" => initialize(&self.zongheng, || PublicHtml::new(true))?
+                    .inspect_with_stop(&id, stop),
+                "17k-web" => initialize(&self.seventeen, || PublicHtml::new(false))?
+                    .inspect_with_stop(&id, stop),
+                "ciweimao-web" | "faloo-web" => {
+                    super::session_catalogs::inspect_session_catalog_with_stop(
+                        source.trim_end_matches("-web"),
+                        &id,
+                        stop,
+                    )
+                }
+                "migu-web" => initialize(&self.migu, Migu::new)?.inspect_with_stop(&id, stop),
+                _ => Err(invalid_link()),
+            };
+        if stop.load(Ordering::Acquire) {
+            Err(Error::Cancelled)
+        } else {
+            result
         }
     }
     pub fn adapter(&self, source: &str) -> Result<&dyn SourceAdapter> {

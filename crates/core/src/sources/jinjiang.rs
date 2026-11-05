@@ -91,7 +91,7 @@ impl Jinjiang {
     pub fn inspect(&self, book: &str) -> Result<Catalog> {
         self.inspect_with_stop(book, &AtomicBool::new(false))
     }
-    fn inspect_with_stop(&self, book: &str, stop: &AtomicBool) -> Result<Catalog> {
+    pub fn inspect_with_stop(&self, book: &str, stop: &AtomicBool) -> Result<Catalog> {
         if !page::numeric(book) {
             return Err(page::changed("晋江作品 ID 无效"));
         }

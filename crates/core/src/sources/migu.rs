@@ -219,13 +219,16 @@ impl Migu {
     }
 
     pub fn inspect(&self, book: &str) -> Result<Catalog> {
+        self.inspect_with_stop(book, &AtomicBool::new(false))
+    }
+
+    pub fn inspect_with_stop(&self, book: &str, stop: &AtomicBool) -> Result<Catalog> {
         if !page::numeric(book) {
             return Err(Error::Invalid("咪咕作品 ID 无效".into()));
         }
-        let stop = AtomicBool::new(false);
         let raw = self.http.text(
             &format!("{ORIGIN}/nap/p/wap_detail_new.jsp?bid={book}"),
-            &stop,
+            stop,
             3 * 1024 * 1024,
         )?;
         let data = Self::page_data(&raw)?;
@@ -243,7 +246,7 @@ impl Migu {
         let initial = std::mem::take(&mut catalog.chapters);
         let mut next = Some(catalog_url(book, 1, CATALOG_PAGE_SIZE));
         while let Some(url) = next {
-            let raw = self.http.text(&url, &stop, 3 * 1024 * 1024)?;
+            let raw = self.http.text(&url, stop, 3 * 1024 * 1024)?;
             let value: Value =
                 serde_json::from_str(&raw).map_err(|_| page::changed("咪咕分页目录不是 JSON"))?;
             next = Self::append_catalog(

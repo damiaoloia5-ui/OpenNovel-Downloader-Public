@@ -107,6 +107,7 @@ function fixture(){
     focusAccount:async(id)=>{state.calls.push(['focus',id]);},
     cancelJob:async()=>{},preferences:async()=>[],automaticTxtSnapshot:async()=>structuredClone(state.automatic),sourceCapabilities:async()=>[{id:'qimao-web',can_download:true}],
     localEngineStatus:async()=>({enabled:false,ready:false,message:'原创组件未安装'}),
+    beginCatalogRequest:async()=>'catalog-request',cancelCatalogRequest:async()=>true,
     inspectBook:async()=>{state.calls.push(['inspect']);return {...preview.catalog,source:'qimao-web'};},
     downloadBook:async(...args)=>{state.calls.push(['download',...args]);return 'public-job';},jobDetails:async()=>({job:{book_id:stored.id},items:[]}),
     revealExport:async(id)=>{state.calls.push(['reveal',id]);},
@@ -314,7 +315,7 @@ test('choose destination before saving; cancelling the picker preserves it and r
     await click(f.button('选择文件夹'));await click(f.button('选择文件夹'));
     assert.match(f.root.textContent,/D:\/我的小说/);assert.equal(f.state.calls.length,0);
     walk(f.root,true).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();await flush();
-    assert.deepEqual(f.state.calls.find(c=>c[0]==='download').at(-1),{directory:'D:/我的小说',format:'txt',selection_only:false});
+    assert.deepEqual(f.state.calls.find(c=>c[0]==='download')[5],{directory:'D:/我的小说',format:'txt',selection_only:false});
   }finally{f.close();}
   const g=await mount(App,{},({api})=>{api.chooseSaveDirectory=async()=>'D:/custom';});
   try{await click(g.button('选择文件夹'));await click(g.button('使用默认位置'));assert.doesNotMatch(g.root.textContent,/D:\/custom/);assert.match(g.root.textContent,/D:\/OriginalApp\/exports/);}finally{g.close();}
@@ -585,7 +586,7 @@ test('public range and Word choice are visible before starting and survive catal
    await selectSaveOptions(f);assert.ok(f.button('开始保存为 Word'));assert.equal(f.state.calls.length,0);
    const input=walk(f.root,true).find(n=>n.props.id==='novel-link');input.value='https://www.qimao.com/shuku/123/';input.dispatch('input');await flush();
    walk(f.root,true).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();await flush();
-   assert.deepEqual(f.state.calls.find(c=>c[0]==='download'),['download','https://www.qimao.com/shuku/123/',1,2,'2-2',{directory:null,format:'docx',selection_only:true}]);
+   assert.deepEqual(f.state.calls.find(c=>c[0]==='download'),['download','https://www.qimao.com/shuku/123/',1,2,'2-2',{directory:null,format:'docx',selection_only:true},'catalog-request']);
   }finally{f.close();}
  }
 });
@@ -639,4 +640,94 @@ test('a blocked profile switch keeps the current user and shows recovery',async(
   const select=walk(f.root).find(n=>n.tag==='select');select.options[0].selected=false;select.options[1].selected=true;select.dispatch('change');await flush();
   await click(f.button('切换用户'));assert.match(f.root.textContent,/当前用户：原创甲/);assert.match(f.root.textContent,/请先暂停/);assert.ok(f.button('切换用户'));
  }finally{f.close();}
+});
+
+async function submitPublicBook(f){
+  const input=walk(f.root,true).find(n=>n.props.id==='novel-link');
+  input.value='https://www.qimao.com/shuku/123/';input.dispatch('input');await flush();
+  walk(f.root,true).find(n=>n.tag==='form').props.onSubmit({preventDefault(){}});await flush();
+}
+
+test('stopping before catalog registration returns cancels the registered token without reading',async()=>{
+  let finish;const cancelled=[];
+  const f=await mount(App,{},({api})=>{
+    api.beginCatalogRequest=()=>new Promise(resolve=>{finish=resolve;});
+    api.cancelCatalogRequest=async id=>{cancelled.push(id);return true;};
+  });
+  try{
+    await submitPublicBook(f);await click(f.button('停止读取'));finish('late-token');
+    await waitFor(()=>f.button('开始保存为 TXT')?.props.disabled===false);
+    assert.deepEqual(cancelled,['late-token']);assert.deepEqual(f.state.calls,[]);
+    assert.match(f.root.textContent,/目录读取已停止/);
+  }finally{f.close();}
+});
+
+test('cancelled catalog responses cannot auto-save and a new attempt receives its own token',async()=>{
+  let finish;let attempts=0;const cancelled=[];const observed=[];
+  const f=await mount(App,{},({api})=>{
+    api.beginCatalogRequest=async()=>`request-${++attempts}`;
+    api.cancelCatalogRequest=async id=>{cancelled.push(id);return true;};
+    api.inspectBook=(input,id)=>{observed.push(id);return attempts===1?new Promise(resolve=>{finish=resolve;}):Promise.resolve({...preview.catalog,source:'qimao-web'});};
+  });
+  try{
+    await submitPublicBook(f);await click(f.button('停止读取'));
+    finish({...preview.catalog,source:'qimao-web'});
+    await waitFor(()=>f.button('开始保存为 TXT')?.props.disabled===false);
+    assert.equal(f.state.calls.some(c=>c[0]==='download'),false);
+    assert.ok(cancelled.includes('request-1'));
+    await submitPublicBook(f);await waitFor(()=>f.state.calls.some(c=>c[0]==='download'));
+    assert.deepEqual(observed,['request-1','request-2']);
+    assert.equal(f.state.calls.find(c=>c[0]==='download').at(-1),'request-2');
+  }finally{f.close();}
+});
+
+test('leaving catalog view cancels the background read and ignores its late response',async()=>{
+  let finish;const cancelled=[];
+  const f=await mount(App,{},({api})=>{
+    api.cancelCatalogRequest=async id=>{cancelled.push(id);return true;};
+    api.inspectBook=()=>new Promise(resolve=>{finish=resolve;});
+  });
+  try{
+    await submitPublicBook(f);await click(f.button('我的书库0'));
+    finish({...preview.catalog,source:'qimao-web'});await flush();await flush();
+    assert.ok(cancelled.includes('catalog-request'));
+    assert.equal(f.state.calls.some(c=>c[0]==='download'),false);
+    assert.ok(f.button('添加一本小说'));
+  }finally{f.close();}
+});
+
+test('stopping download preparation distinguishes cancellation from a job already committed',async()=>{
+  for(const committed of [false,true]){
+    let finish;
+    const f=await mount(App,{},({api})=>{
+      api.downloadBook=()=>new Promise((resolve,reject)=>{finish=()=>committed?resolve('committed-job'):reject('任务已取消');});
+      api.cancelCatalogRequest=async()=>!committed;
+    });
+    try{
+      await submitPublicBook(f);await waitFor(()=>!!finish);await click(f.button('停止读取'));finish();
+      await flush();await flush();
+      if(committed){
+        assert.match(f.root.textContent,/任务已创建/);
+        assert.ok(walk(f.root).find(n=>n.props['data-stub']==='BookWorkspace.vue'&&n.textContent===stored.id));
+        assert.doesNotMatch(f.root.textContent,/目录读取已停止/);
+      }else{
+        assert.match(f.root.textContent,/目录读取已停止/);
+        assert.doesNotMatch(f.root.textContent,/任务已取消|任务已创建/);
+      }
+    }finally{f.close();}
+  }
+});
+
+test('a start failure arriving after stop remains visible and clears the stopping notice',async()=>{
+  let finish;
+  const f=await mount(App,{},({api})=>{
+    api.downloadBook=()=>new Promise((resolve,reject)=>{finish=()=>reject('任务启动失败，请在保存进度重试');});
+    api.cancelCatalogRequest=async()=>false;
+  });
+  try{
+    await submitPublicBook(f);await waitFor(()=>!!finish);await click(f.button('停止读取'));finish();
+    await flush();await flush();
+    assert.match(f.root.textContent,/任务启动失败，请在保存进度重试/);
+    assert.doesNotMatch(f.root.textContent,/正在停止|目录读取已停止/);
+  }finally{f.close();}
 });

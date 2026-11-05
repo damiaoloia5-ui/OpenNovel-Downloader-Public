@@ -21,6 +21,7 @@ import {catalogAvailability,sourceHint} from './availabilityModel';
 import {qidianBookLink,qidianBookId,officialBookPlatform} from './workflow';
 import type {WorkbenchTab} from './workbenchModel';
 import {preferences,sourceCapabilities,cancelJob,desktopAvailable,downloadBook,exportJob,importBook,inspectBook,jobDetails,pauseJob,resumeJob,retryChapters,revealExport,snapshotIfChanged,type BookPreferences,type SourceInfo,type JobDetails,type Snapshot,type Catalog} from './api';
+import {beginCatalogRequest,cancelCatalogRequest} from './api';
 
 const page=ref<'download'|'library'|'tasks'|'sources'|'tools'|'accounts'|'help'|'book'>('download');
 const pageHeading=ref<HTMLElement|null>(null);
@@ -39,6 +40,7 @@ const firstChapter=ref(1);const lastChapter=ref(1);const selection=ref('');
 const access=computed(()=>catalog.value?catalogAvailability(catalog.value,sourceInfos.value):null);
 const automaticFiles=ref<AutoTxtStatus[]>([]);
 const data=ref<Snapshot>({books:[],jobs:[]});const error=ref('');const notice=ref('');const working=ref(false);
+const catalogPreparing=ref(false);const catalogCancelled=ref(false);let catalogRequestId:string|null=null;
 const filter=ref('');const archiveFilter=ref('active');const fileInput=ref<HTMLInputElement|null>(null);
 const openedJob=ref('');const details=ref<JobDetails|null>(null);const chapterFilter=ref('missing');const detailPage=ref(1);
 const filteredItems=computed(()=>details.value?.items.filter(i=>chapterFilter.value==='all'||(chapterFilter.value==='missing'?i.state!=='completed':i.state===chapterFilter.value))??[]);
@@ -54,7 +56,7 @@ const taskPages=computed(()=>Math.max(1,Math.ceil(filteredJobs.value.length/20))
 const saved=computed(()=>data.value.books.reduce((n,b)=>n+b.saved_chapters,0));const active=computed(()=>data.value.jobs.filter(j=>['queued','running'].includes(j.state)).length);
 const labels:Record<string,string>={queued:'等待执行',running:'正在保存',paused:'中断待继续',cancelled:'已取消',failed:'执行失败',partial:'部分保存',blocked:'网页访问受限',completed:'所选范围完成'};
 let navigationEpoch=0;let timer:ReturnType<typeof setTimeout>|undefined;let disposed=false;let refreshing=false;let minimized=false;let unlistenResize:(()=>void)|undefined;
-watch(page,async value=>{navigationEpoch++;if(value==='help'){notice.value='';error.value='';}await nextTick();pageHeading.value?.focus();},{flush:'sync'});
+watch(page,async value=>{navigationEpoch++;if(catalogPreparing.value)void stopCatalog();if(value==='help'){notice.value='';error.value='';}await nextTick();pageHeading.value?.focus();},{flush:'sync'});
 watch([filter,archiveFilter],()=>{bookPage.value=1;});watch(bookPages,n=>{bookPage.value=Math.min(bookPage.value,n);});
 watch(taskFilter,()=>{taskPage.value=1;});watch(taskPages,n=>{taskPage.value=Math.min(taskPage.value,n);});
 function openWorkspace(id:string,tab:WorkbenchTab='overview',account=''){workspaceBook.value=id;workspaceTab.value=tab;workspaceAccount.value=account;error.value='';notice.value='';page.value='book';}
@@ -75,6 +77,35 @@ async function showDetails(id:string){if(openedJob.value===id){openedJob.value='
 async function retryChapter(id:string,chapter:string){await action(async()=>{await retryChapters(id,[chapter]);notice.value='只重试所选失败章节，其他章节保持原状态。';});}
 async function saveJob(id:string,format:'txt'|'epub'){await action(async()=>{const r=await exportJob(id,format);notice.value=`本次任务选章已导出（${r.saved_chapters}/${r.total_chapters} 章${r.partial?'，部分内容':''}）：${r.path}`;});}
 async function action(work:()=>Promise<void>){if(working.value)return;working.value=true;error.value='';notice.value='';try{await work();await refresh();}catch(e){error.value=String(e);}finally{working.value=false;}}
+async function stopCatalog(){
+  if(!catalogPreparing.value||catalogCancelled.value)return;
+  catalogCancelled.value=true;
+  notice.value='正在停止目录读取…';
+  if(catalogRequestId){
+    try{await cancelCatalogRequest(catalogRequestId);}
+    catch(e){error.value=`停止请求未确认，请等待当前读取结束。${String(e)}`;}
+  }
+}
+async function catalogAction(work:(requestId:string)=>Promise<void>){
+  await action(async()=>{
+    catalogPreparing.value=true;catalogCancelled.value=false;
+    try{
+      catalogRequestId=await beginCatalogRequest();
+      if(!catalogCancelled.value&&!disposed)await work(catalogRequestId);
+    }catch(e){if(!catalogCancelled.value||String(e)!=='任务已取消'){catalogCancelled.value=false;notice.value='';throw e;}}
+    finally{
+      try{if(catalogRequestId)await cancelCatalogRequest(catalogRequestId);}
+      finally{
+        if(catalogCancelled.value&&!disposed){catalog.value=null;notice.value='目录读取已停止，可以重新开始。';}
+        catalogRequestId=null;catalogPreparing.value=false;catalogCancelled.value=false;
+      }
+    }
+  });
+}
+async function openPreparedJob(id:string,epoch:number){
+  catalogPreparing.value=false;catalogCancelled.value=false;
+  await openCreatedJob(id,epoch);
+}
 async function openCreatedJob(id:string,epoch:number){try{const result=await jobDetails(id);if(disposed||epoch!==navigationEpoch)return;openWorkspace(result.job.book_id,'save');notice.value='任务已创建，保存结束后会按所选格式自动生成文件；请在本书工作台查看。';}catch{if(disposed||epoch!==navigationEpoch)return;page.value='tasks';notice.value='任务已创建，暂时无法读取作品信息，请在任务进度中查看。';}}
 async function chooseFile(event:Event){const input=event.target as HTMLInputElement;const file=input.files?.[0];if(!file)return;await action(async()=>{if(file.size>16*1024*1024)throw new Error('文件超过 16 MiB，请拆分后导入。');const epoch=navigationEpoch;const id=await importBook(await file.text(),{directory:saveDirectory.value,format:saveOptions.value.format});await openCreatedJob(id,epoch);});input.value='';}
 async function inspect(autoSave=false){
@@ -89,40 +120,40 @@ async function inspect(autoSave=false){
     return;
   }
   const link=qidianBookLink(bookInput.value);if(link){const stored=data.value.books.find(b=>b.source==='qidian-session'&&b.remote_id===qidianBookId(link));if(stored){await action(async()=>{if(directoryTouched.value)await setBookExportDirectory(stored.id,saveDirectory.value);openWorkspace(stored.id,'save');});return;}accountUrl.value=link;page.value='accounts';error.value='';notice.value='按提示完成登录和书名确认，之后会自动保存并生成 TXT。';return;}
-  await action(async()=>{
+  await catalogAction(async requestId=>{
     const epoch=navigationEpoch;catalog.value=null;const input=bookInput.value.trim();
-    let result=await inspectBook(input);if(disposed||epoch!==navigationEpoch||bookInput.value.trim()!==input)return;
+    let result=await inspectBook(input,requestId);if(catalogCancelled.value||disposed||epoch!==navigationEpoch||bookInput.value.trim()!==input)return;
     if(result.source==='fanqie-web'&&result.chapters.some(c=>c.restricted)){
       if(!engineStatus.value||engineStatus.value.remembered&&!engineStatus.value.enabled){try{engineStatus.value=await localEngineStatus();}catch{engineStatus.value=null;}}
-      if(disposed||epoch!==navigationEpoch||bookInput.value.trim()!==input)return;
+      if(catalogCancelled.value||disposed||epoch!==navigationEpoch||bookInput.value.trim()!==input)return;
       if(autoSave&&engineStatus.value?.remembered&&engineStatus.value.installed&&!engineStatus.value.ready){notice.value='正在准备本地增强服务，首次准备可能需要几分钟…';engineStatus.value=await setLocalEngine(true);}
-      if(disposed||epoch!==navigationEpoch||bookInput.value.trim()!==input)return;
-      if(engineStatus.value?.enabled){result=await inspectBook(input);sourceInfos.value=await sourceCapabilities();}
+      if(catalogCancelled.value||disposed||epoch!==navigationEpoch||bookInput.value.trim()!==input)return;
+      if(engineStatus.value?.enabled){result=await inspectBook(input,requestId);sourceInfos.value=await sourceCapabilities();}
     }
     if(!sourceInfos.value.length)sourceInfos.value=await sourceCapabilities();
-    if(disposed||epoch!==navigationEpoch||bookInput.value.trim()!==input)return;
+    if(catalogCancelled.value||disposed||epoch!==navigationEpoch||bookInput.value.trim()!==input)return;
     const stored=data.value.books.find(b=>b.source===result.source&&b.remote_id===result.remote_id);
-    if(autoSave&&stored&&!optionsTouched.value){if(directoryTouched.value)await setBookExportDirectory(stored.id,saveDirectory.value);openWorkspace(stored.id,'save');return;}
+    if(autoSave&&stored&&!optionsTouched.value){if(directoryTouched.value)await setBookExportDirectory(stored.id,saveDirectory.value);if(catalogCancelled.value||disposed||epoch!==navigationEpoch)return;catalogPreparing.value=false;openWorkspace(stored.id,'save');return;}
     catalog.value=result;inspectedInput.value=input;firstChapter.value=1;lastChapter.value=result.chapters.length;selection.value='';
     if(autoSave&&result.source==='fanqie-web'&&result.chapters.some(c=>c.restricted)){
       if(!engineStatus.value){try{engineStatus.value=await localEngineStatus();}catch{engineStatus.value=null;}}
-      if(disposed||epoch!==navigationEpoch)return;
+      if(catalogCancelled.value||disposed||epoch!==navigationEpoch)return;
       if(engineOffer.value){notice.value='这本书有网页受限章节。可启用本地增强，尝试更多明确免费的章节。';return;}
       if(engineStatus.value?.remembered&&!engineStatus.value.ready){notice.value=engineStatus.value.message;return;}
     }
     if(autoSave){const range=catalogAvailability(result,sourceInfos.value);if(!range.supported||!range.open){notice.value='已识别目录，当前没有可自动保存的开放章，请查看下方范围说明。';return;}
-      if(disposed||epoch!==navigationEpoch)return;const chosen=resolveSaveRange(saveOptions.value,result.chapters.length);const id=await downloadBook(input,1,result.chapters.length,chosen||range.selection,{directory:saveDirectory.value,format:saveOptions.value.format,selection_only:!!chosen});await openCreatedJob(id,epoch);}
+      if(catalogCancelled.value||disposed||epoch!==navigationEpoch)return;const chosen=resolveSaveRange(saveOptions.value,result.chapters.length);const id=await downloadBook(input,1,result.chapters.length,chosen||range.selection,{directory:saveDirectory.value,format:saveOptions.value.format,selection_only:!!chosen},requestId);await openPreparedJob(id,epoch);}
   });
 }
 async function selectSearchResult(input:string){bookInput.value=input;await inspect();}
-async function startDownload(openOnly=false){await action(async()=>{if(!catalogCanDownload.value)throw new Error(catalogSource.value?.note||'该来源暂不支持正文下载');if(bookInput.value.trim()!==inspectedInput.value)throw new Error('链接已改变，请重新读取目录。');const range=resolveSaveRange(saveOptions.value,catalog.value!.chapters.length);const chosen=selection.value.trim()||range||(openOnly?access.value?.selection:'');if(openOnly&&!chosen)throw new Error('当前目录没有标记开放的章节。');const epoch=navigationEpoch;const id=await downloadBook(inspectedInput.value,firstChapter.value,lastChapter.value,chosen,{directory:saveDirectory.value,format:saveOptions.value.format,selection_only:!!range||!!selection.value.trim()});await openCreatedJob(id,epoch);});}
+async function startDownload(openOnly=false){await catalogAction(async requestId=>{if(!catalogCanDownload.value)throw new Error(catalogSource.value?.note||'该来源暂不支持正文下载');if(bookInput.value.trim()!==inspectedInput.value)throw new Error('链接已改变，请重新读取目录。');const range=resolveSaveRange(saveOptions.value,catalog.value!.chapters.length);const chosen=selection.value.trim()||range||(openOnly?access.value?.selection:'');if(openOnly&&!chosen)throw new Error('当前目录没有标记开放的章节。');const epoch=navigationEpoch;const id=await downloadBook(inspectedInput.value,firstChapter.value,lastChapter.value,chosen,{directory:saveDirectory.value,format:saveOptions.value.format,selection_only:!!range||!!selection.value.trim()},requestId);await openPreparedJob(id,epoch);});}
 function sourceLabel(id:string){const info=sourceInfos.value.find(s=>s.id===id);return id==='local-json'?'本地 JSON':info?`${info.name} · 实验性`:id;}
 function coverTone(id:string){let hash=0;for(const char of id)hash=(hash*31+char.charCodeAt(0))>>>0;return ['jade','slate','clay','plum','blue'][hash%5];}
 async function engineChanged(){try{const next=await sourceCapabilities();if(!working.value&&sourceInfos.value.find(s=>s.id==='fanqie-app-local')?.can_download!==next.find(s=>s.id==='fanqie-app-local')?.can_download){catalog.value=null;inspectedInput.value='';}sourceInfos.value=next;}catch(e){error.value=String(e);}}
 async function enableEngineForBook(){const input=inspectedInput.value;const epoch=navigationEpoch;let enabled=false;await action(async()=>{notice.value='正在准备本地增强服务，请稍候…';const current=await setLocalEngine(true);engineStatus.value=current;if(!current.enabled)throw new Error(current.message);sourceInfos.value=await sourceCapabilities();enabled=true;});if(enabled&&!disposed&&epoch===navigationEpoch&&bookInput.value.trim()===input)await inspect(true);}
 async function openEngineBook(input:string){bookInput.value=input;page.value='download';await nextTick();await inspect();}
 onMounted(()=>{if(!desktopAvailable)return;void localEngineStatus().then(async value=>{if(disposed)return;engineStatus.value=value;await engineChanged();}).catch(()=>{if(!disposed)engineStatus.value={enabled:false,ready:false,message:'增强组件检查暂不可用，请重新检查；普通网页保存仍可使用。'};});void sourceCapabilities().then(r=>sourceInfos.value=r).catch(e=>error.value=String(e));void getCurrentWindow().onResized(visibilityChanged).then(unlisten=>{if(disposed)unlisten();else unlistenResize=unlisten;}).catch(e=>error.value=String(e));void poll();document.addEventListener('visibilitychange',visibilityChanged);});
-onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();document.removeEventListener('visibilitychange',visibilityChanged);});
+onUnmounted(()=>{disposed=true;void stopCatalog();if(timer)clearTimeout(timer);unlistenResize?.();document.removeEventListener('visibilitychange',visibilityChanged);});
 </script>
 
 <template>
@@ -156,6 +187,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearTimeout(timer);unlistenResize?.();d
         <div v-if="!desktopAvailable" class="message warning" role="status">当前是浏览器界面预览。请运行桌面应用以使用本地书库和导出功能。</div>
         <div v-if="error" class="message failure" role="alert">{{ error }}<button aria-label="关闭错误提示" @click="error = ''">×</button></div>
         <div v-if="notice" class="message success" role="status">{{ notice }}<button aria-label="关闭提示" @click="notice = ''">×</button></div>
+        <div v-if="catalogPreparing" class="message warning" role="status"><span>{{ catalogCancelled?'正在停止，等待当前操作结束…':'正在读取作品目录…' }}</span><button type="button" :disabled="catalogCancelled" @click="stopCatalog">{{ catalogCancelled?'正在停止…':'停止读取' }}</button></div>
         <div v-if="page!=='book'" class="page-heading">
           <div><h1 ref="pageHeading" tabindex="-1">{{ page==='help'?'使用指引':page === 'download' ? '添加小说' : page === 'library' ? '我的书库' : page === 'tasks' ? '保存进度' : page==='accounts'?'登录与保存正文':page==='tools'?'备份与诊断':'小说来源' }}</h1><p class="intro">{{ page==='help'?'从添加到导出，按步骤完成。':page === 'download' ? '只需粘贴小说链接，软件会带你完成，先选章节、格式和位置，再开始保存。' : page === 'library' ? '选择作品，阅读或导出已经保存的正文。' : page === 'tasks' ? '查看保存进度，继续中断的任务。' : page==='accounts'?'选择平台，登录官网并核对目录；仅保存实际可读正文，已购能力仍需实测。':page==='tools'?'创建书库备份、恢复副本，查看诊断信息。':'查看各个平台已验证的支持范围。' }}</p></div>
           <button v-if="page==='library'" class="primary" @click="page='download'"><AppIcon name="plus" :size="18" />添加一本小说</button>

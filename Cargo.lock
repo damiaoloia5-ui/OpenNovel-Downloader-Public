@@ -2572,7 +2572,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "opennovel-cli"
-version = "0.3.23"
+version = "0.3.24"
 dependencies = [
  "clap",
  "opennovel-core",
@@ -2583,7 +2583,7 @@ dependencies = [
 
 [[package]]
 name = "opennovel-core"
-version = "0.3.23"
+version = "0.3.24"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2606,7 +2606,7 @@ dependencies = [
 
 [[package]]
 name = "opennovel-desktop"
-version = "0.3.23"
+version = "0.3.24"
 dependencies = [
  "opennovel-core",
  "reqwest 0.13.5",

@@ -63,6 +63,10 @@ impl PublicHtml {
         })
     }
     pub fn inspect(&self, book: &str) -> Result<Catalog> {
+        self.inspect_with_stop(book, &AtomicBool::new(false))
+    }
+
+    pub fn inspect_with_stop(&self, book: &str, stop: &AtomicBool) -> Result<Catalog> {
         if !page::numeric(book) {
             return Err(page::changed("作品 ID 无效"));
         }
@@ -71,9 +75,7 @@ impl PublicHtml {
         } else {
             format!("https://www.17k.com/list/{book}.html")
         };
-        let html = self
-            .http
-            .text(&url, &AtomicBool::new(false), 8 * 1024 * 1024)?;
+        let html = self.http.text(&url, stop, 8 * 1024 * 1024)?;
         Self::parse_catalog(&html, book, self.zongheng)
     }
     pub fn parse_catalog(html: &str, book: &str, zongheng: bool) -> Result<Catalog> {

@@ -19,18 +19,21 @@ impl Qimao {
         })
     }
     pub fn inspect(&self, book: &str) -> Result<Catalog> {
+        self.inspect_with_stop(book, &AtomicBool::new(false))
+    }
+
+    pub fn inspect_with_stop(&self, book: &str, stop: &AtomicBool) -> Result<Catalog> {
         if !page::numeric(book) {
             return Err(Error::Invalid("七猫作品 ID 无效".into()));
         }
-        let stop = AtomicBool::new(false);
         let html = self.http.text(
             &format!("https://www.qimao.com/shuku/{book}/"),
-            &stop,
+            stop,
             8 * 1024 * 1024,
         )?;
         let json = self.http.text(
             &format!("https://www.qimao.com/api/book/chapter-list?book_id={book}"),
-            &stop,
+            stop,
             8 * 1024 * 1024,
         )?;
         Self::parse_catalog(&html, &json, book)

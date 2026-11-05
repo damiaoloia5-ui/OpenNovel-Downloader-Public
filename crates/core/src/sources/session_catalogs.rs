@@ -5,21 +5,28 @@ use scraper::Html;
 use std::sync::atomic::AtomicBool;
 
 pub fn inspect_session_catalog(platform: &str, book: &str) -> Result<Catalog> {
+    inspect_session_catalog_with_stop(platform, book, &AtomicBool::new(false))
+}
+
+pub(super) fn inspect_session_catalog_with_stop(
+    platform: &str,
+    book: &str,
+    stop: &AtomicBool,
+) -> Result<Catalog> {
     if !page::numeric(book) {
         return Err(page::changed("作品身份无效"));
     }
-    let stop = AtomicBool::new(false);
     match platform {
         "ciweimao" => {
             let http = WebClient::new(&["www.ciweimao.com"])?;
             let detail = http.text(
                 &format!("https://www.ciweimao.com/book/{book}"),
-                &stop,
+                stop,
                 8 * 1024 * 1024,
             )?;
             let directory = http.text(
                 &format!("https://www.ciweimao.com/chapter-list/{book}/book_detail"),
-                &stop,
+                stop,
                 8 * 1024 * 1024,
             )?;
             parse_ciweimao_catalog(&detail, &directory, book)
@@ -28,7 +35,7 @@ pub fn inspect_session_catalog(platform: &str, book: &str) -> Result<Catalog> {
             let http = WebClient::new(&["b.faloo.com"])?;
             let bytes = http.get(
                 &format!("https://b.faloo.com/{book}.html"),
-                &stop,
+                stop,
                 8 * 1024 * 1024,
             )?;
             let (html, _, _) = encoding_rs::GBK.decode(&bytes);

@@ -96,8 +96,10 @@ export function openSoftwareReleases():Promise<void> {return invoke('open_softwa
 
 export function snapshot(): Promise<Snapshot> { return invoke('library_snapshot'); }
 export function snapshotIfChanged(known:string|null):Promise<{revision:string;snapshot:Snapshot}|null> {return invoke('library_snapshot_if_changed',{known});}
-export function inspectBook(input: string): Promise<Catalog> { return invoke('inspect_book', { input }); }
-export function downloadBook(input: string, first: number, last: number,selection?:string,destination?:SaveDestination): Promise<string> { return invoke('download_book', { input, first, last,selection:selection || null,destination:destination??null }); }
+export function beginCatalogRequest():Promise<string> {return invoke('begin_catalog_request');}
+export function cancelCatalogRequest(requestId:string):Promise<boolean> {return invoke('cancel_catalog_request',{requestId});}
+export function inspectBook(input: string,requestId?:string): Promise<Catalog> { return invoke('inspect_book', { input,requestId:requestId??null }); }
+export function downloadBook(input: string, first: number, last: number,selection?:string,destination?:SaveDestination,requestId?:string): Promise<string> { return invoke('download_book', { input, first, last,selection:selection || null,destination:destination??null,requestId:requestId??null }); }
 export function bookDetails(bookId:string):Promise<BookDetails> {return invoke('book_details',{bookId});}
 export function readChapter(bookId:string,chapterId:string):Promise<ChapterContent> {return invoke('read_chapter',{bookId,chapterId});}
 export function exportJob(jobId:string,format:'txt'|'epub'|'docx'):Promise<Receipt> {return invoke('export_job',{jobId,format});}
